@@ -231,9 +231,10 @@ def test_cron_abandoned_carts_skip_low_value(mock_db_cls, mock_slack_cls, mock_c
 
 # ── Cron: Morning Digest ──
 
+@patch("src.api.app.ShopifyClient")
 @patch("src.api.app.SlackNotifier")
 @patch("src.api.app.Database")
-def test_cron_morning_digest(mock_db_cls, mock_slack_cls, client, cron_headers):
+def test_cron_morning_digest(mock_db_cls, mock_slack_cls, mock_shopify_cls, client, cron_headers):
     """Morning digest should send revenue, orders, and customer counts."""
     mock_db = MagicMock()
     mock_db_cls.return_value = mock_db
@@ -244,12 +245,54 @@ def test_cron_morning_digest(mock_db_cls, mock_slack_cls, client, cron_headers):
     ]
     mock_db.get_abandoned_carts_pending_recovery.return_value = []
 
+    mock_shopify = AsyncMock()
+    mock_shopify_cls.return_value = mock_shopify
+    mock_shopify.get_webhooks.return_value = [
+        {"topic": "orders/create"},
+        {"topic": "customers/create"},
+        {"topic": "checkouts/create"},
+    ]
+
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
     response = client.post("/cron/morning-digest", headers=cron_headers)
     assert response.status_code == 200
     mock_slack.send_blocks.assert_called_once()
+    mock_shopify.get_webhooks.assert_called_once()
+
+
+@patch("src.api.app.ShopifyClient")
+@patch("src.api.app.SlackNotifier")
+@patch("src.api.app.Database")
+def test_cron_morning_digest_missing_webhooks(mock_db_cls, mock_slack_cls, mock_shopify_cls, client, cron_headers):
+    """Morning digest should alert when webhook subscriptions are missing."""
+    mock_db = MagicMock()
+    mock_db_cls.return_value = mock_db
+    mock_db.get_stats_range.return_value = [{"revenue": 0, "order_count": 0, "new_customers": 0}]
+    mock_db.get_pending_messages.return_value = []
+    mock_db.get_abandoned_carts_pending_recovery.return_value = []
+
+    mock_shopify = AsyncMock()
+    mock_shopify_cls.return_value = mock_shopify
+    mock_shopify.get_webhooks.return_value = [
+        {"topic": "orders/create"},
+    ]  # Missing customers/create and checkouts/create
+
+    mock_slack = AsyncMock()
+    mock_slack_cls.return_value = mock_slack
+
+    response = client.post("/cron/morning-digest", headers=cron_headers)
+    assert response.status_code == 200
+
+    blocks = mock_slack.send_blocks.call_args[0][0]
+    warning_texts = [
+        b["text"]["text"] for b in blocks
+        if b["type"] == "section" and "missing" in b.get("text", {}).get("text", "").lower()
+    ]
+    assert len(warning_texts) == 1
+    assert "checkouts/create" in warning_texts[0]
+    assert "customers/create" in warning_texts[0]
 
 
 # ── Cron: Weekly Rollup ──

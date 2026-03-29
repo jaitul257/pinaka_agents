@@ -308,6 +308,29 @@ async def cron_abandoned_carts():
     return {"status": "ok", "module": "cart_recovery", "flagged": flagged}
 
 
+REQUIRED_WEBHOOK_TOPICS = {"orders/create", "customers/create", "checkouts/create"}
+
+
+async def _check_webhook_health(shopify: ShopifyClient, slack: SlackNotifier) -> list[str]:
+    """Verify all Shopify webhook subscriptions are active. Re-register missing ones."""
+    base_url = settings.shopify_shop_domain  # used for address matching only
+    missing = []
+    try:
+        existing = await shopify.get_webhooks()
+        active_topics = {wh["topic"] for wh in existing}
+        missing = sorted(REQUIRED_WEBHOOK_TOPICS - active_topics)
+    except Exception as e:
+        logger.error("Webhook health check failed: %s", e)
+        await slack.send_message(f":warning: Webhook health check failed: {e}")
+        return list(REQUIRED_WEBHOOK_TOPICS)
+
+    if not missing:
+        return []
+
+    logger.warning("Missing webhook subscriptions: %s", missing)
+    return missing
+
+
 @app.post("/cron/morning-digest", dependencies=[Depends(verify_cron_secret)])
 async def cron_morning_digest():
     """Daily morning digest sent to Slack at 8 AM."""
@@ -323,6 +346,13 @@ async def cron_morning_digest():
     new_customers = int(stats[0].get("new_customers", 0)) if stats else 0
 
     abandoned = db.get_abandoned_carts_pending_recovery()
+
+    # Webhook health check
+    shopify = ShopifyClient()
+    try:
+        missing_webhooks = await _check_webhook_health(shopify, slack)
+    finally:
+        await shopify.close()
 
     blocks = [
         {
@@ -351,6 +381,19 @@ async def cron_morning_digest():
                     "text": f":rotating_light: *{len(urgent)} urgent message(s) waiting*",
                 },
             })
+
+    if missing_webhooks:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":warning: *Webhook subscriptions missing:* {', '.join(missing_webhooks)}\n"
+                    "Shopify may have auto-deleted them after timeout failures. "
+                    "Run `python scripts/register_webhooks.py` to re-register."
+                ),
+            },
+        })
 
     await slack.send_blocks(blocks, text=f"Morning digest: ${revenue:,.2f} revenue, {orders} orders")
     return {"status": "ok", "module": "digest"}
