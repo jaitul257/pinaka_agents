@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     logger.info("Pinaka Agents shutting down")
 
 
-app = FastAPI(title="Pinaka Agents", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Pinaka Agents", version="0.2.1", lifespan=lifespan)
 
 
 # ── Auth Dependencies ──
