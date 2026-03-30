@@ -422,6 +422,9 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
                 <label style="display:flex; align-items:center; gap:8px; font-size:14px; cursor:pointer;">
                     <input type="checkbox" name="embed" value="1" checked> Embed for customer service search
                 </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:14px; cursor:pointer;">
+                    <input type="checkbox" name="push_shopify" value="1" checked> Create as draft in Shopify
+                </label>
             </div>
         </div>
 
@@ -468,6 +471,7 @@ async def add_product_submit(
     cert_clarity: str = Form(""),
     cert_color: str = Form(""),
     embed: str = Form(""),
+    push_shopify: str = Form(""),
 ):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
@@ -520,6 +524,25 @@ async def add_product_submit(
         except Exception:
             logger.exception("Embedding failed for %s", sku)
 
+    # Push to Shopify as draft
+    if push_shopify:
+        try:
+            from src.core.shopify_client import ShopifyClient
+            shopify = ShopifyClient()
+            tags_list = product_data.get("tags", [])
+            tags_list.append(sku)  # Include SKU as tag for lookup
+            result = await shopify.create_product(
+                title=name,
+                body_html=f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
+                tags=tags_list,
+                product_type=category,
+            )
+            await shopify.close()
+            shopify_id = result.get("id", "")
+            logger.info("Product %s pushed to Shopify as draft (ID: %s)", sku, shopify_id)
+        except Exception:
+            logger.exception("Shopify push failed for %s", sku)
+
     return RedirectResponse(f"/dashboard?msg=Product+{sku}+saved+successfully", status_code=303)
 
 
@@ -568,6 +591,7 @@ async def edit_product_submit(
     cert_clarity: str = Form(""),
     cert_color: str = Form(""),
     embed: str = Form(""),
+    push_shopify: str = Form(""),
 ):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
@@ -613,6 +637,23 @@ async def edit_product_submit(
             emb.embed_product(product_obj)
         except Exception:
             logger.exception("Embedding failed for %s", sku)
+
+    if push_shopify:
+        try:
+            from src.core.shopify_client import ShopifyClient
+            shopify = ShopifyClient()
+            tags_list = product_data.get("tags", [])
+            tags_list.append(sku)
+            result = await shopify.create_product(
+                title=name,
+                body_html=f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
+                tags=tags_list,
+                product_type=category,
+            )
+            await shopify.close()
+            logger.info("Product %s pushed to Shopify as draft (ID: %s)", sku, result.get("id", ""))
+        except Exception:
+            logger.exception("Shopify push failed for %s", sku)
 
     return RedirectResponse(f"/dashboard?msg=Product+{sku}+updated", status_code=303)
 
