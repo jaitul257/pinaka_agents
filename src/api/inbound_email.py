@@ -13,13 +13,18 @@ from src.core.database import Database
 from src.core.settings import settings
 from src.core.slack import SlackNotifier
 from src.customer.classifier import MessageClassifier
+from src.product.embeddings import ProductEmbeddings
 
 logger = logging.getLogger(__name__)
+
+# Categories where product knowledge improves the AI response
+PRODUCT_CATEGORIES = {"product_question", "sizing_question", "custom_request"}
 
 # Lazy singletons
 _db = None
 _slack = None
 _classifier = None
+_embeddings = None
 
 
 def _get_db():
@@ -41,6 +46,13 @@ def _get_classifier():
     if _classifier is None:
         _classifier = MessageClassifier()
     return _classifier
+
+
+def _get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = ProductEmbeddings()
+    return _embeddings
 
 
 async def handle_inbound_email(request: Request) -> dict[str, Any]:
@@ -84,10 +96,22 @@ async def handle_inbound_email(request: Request) -> dict[str, Any]:
     is_urgent = _get_classifier().is_urgent(category, message_body)
     urgency = "urgent" if is_urgent else "normal"
 
+    # Query product embeddings for product-related questions
+    product_context = ""
+    if category in PRODUCT_CATEGORIES:
+        try:
+            results = _get_embeddings().query(message_body, n_results=3)
+            if results:
+                product_context = "\n\n".join(r["document"] for r in results)
+                logger.info("Found %d product matches for message", len(results))
+        except Exception:
+            logger.exception("Product embedding query failed, continuing without")
+
     # Draft AI response
     draft = await _get_classifier().draft_response(
         customer_message=message_body,
         category=category,
+        product_context=product_context,
         customer_context=customer_context,
     )
 
