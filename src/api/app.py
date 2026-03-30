@@ -134,27 +134,31 @@ async def upload_product(request: Request):
     """Upload a product JSON, save to data/products/, and embed for RAG search."""
     import json as json_mod
     from pathlib import Path
-    from src.product.embeddings import ProductEmbeddings
 
-    data = await request.json()
-    product = Product(**data)
+    try:
+        data = await request.json()
+        product = Product(**data)
 
-    # Save to data/products/
-    products_dir = Path("./data/products")
-    products_dir.mkdir(parents=True, exist_ok=True)
-    filepath = products_dir / f"{product.sku}.json"
-    filepath.write_text(json_mod.dumps(data, indent=2))
+        # Save to data/products/
+        products_dir = Path("./data/products")
+        products_dir.mkdir(parents=True, exist_ok=True)
+        filepath = products_dir / f"{product.sku}.json"
+        filepath.write_text(json_mod.dumps(data, indent=2))
 
-    # Embed immediately
-    embeddings = ProductEmbeddings()
-    embeddings.embed_product(product)
+        # Embed immediately
+        from src.product.embeddings import ProductEmbeddings
+        embeddings = ProductEmbeddings()
+        embeddings.embed_product(product)
 
-    return {
-        "status": "ok",
-        "sku": product.sku,
-        "saved_to": str(filepath),
-        "total_products": embeddings.product_count(),
-    }
+        return {
+            "status": "ok",
+            "sku": product.sku,
+            "saved_to": str(filepath),
+            "total_products": embeddings.product_count(),
+        }
+    except Exception as e:
+        logger.exception("Product upload failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Listing Generation ──
