@@ -341,7 +341,7 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
                 </div>
                 <div class="form-group">
                     <label>Weight (grams)</label>
-                    <input type="number" name="weight_grams" value="{materials.get("weight_grams", 12.5)}" step="0.5" min="0.1">
+                    <input type="number" name="weight_grams" value="{materials.get("weight_grams", 12.5)}" step="0.01" min="0.01">
                 </div>
             </div>
         </div>
