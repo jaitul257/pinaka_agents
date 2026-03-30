@@ -216,6 +216,11 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
             })
             if ss_result.get("orderId"):
                 logger.info("Order #%s pushed to ShipStation (SS ID: %s)", shopify_order_id, ss_result["orderId"])
+                # Store ShipStation order ID for tracking webhook correlation
+                _get_db().update_order_status(
+                    shopify_order_id, order_record.get("status", "paid"),
+                    shipstation_order_id=ss_result["orderId"],
+                )
             elif ss_result.get("error"):
                 logger.error("ShipStation push failed for order #%s: %s", shopify_order_id, ss_result)
         except Exception:

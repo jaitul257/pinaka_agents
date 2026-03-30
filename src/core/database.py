@@ -144,6 +144,66 @@ class Database:
         )
         return result.data[0] if result.data else {}
 
+    def update_order_tracking(
+        self,
+        shopify_order_id: int,
+        tracking_number: str,
+        carrier: str,
+        status: str,
+        tracking_url: str = "",
+        **extra_fields,
+    ) -> dict[str, Any]:
+        """Update order with tracking info from ShipStation webhook."""
+        update_data = {
+            "tracking_number": tracking_number,
+            "shipping_carrier": carrier,
+            "status": status,
+            "tracking_url": tracking_url,
+            **extra_fields,
+        }
+        result = (
+            self._client.table("orders")
+            .update(update_data)
+            .eq("shopify_order_id", shopify_order_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def get_order_by_shipstation_id(self, shipstation_order_id: int) -> dict[str, Any] | None:
+        result = (
+            self._client.table("orders")
+            .select("*")
+            .eq("shipstation_order_id", shipstation_order_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    # ── Listing Drafts ──
+
+    def create_listing_draft(self, data: dict[str, Any]) -> dict[str, Any]:
+        result = self._client.table("listing_drafts").insert(data).execute()
+        return result.data[0] if result.data else {}
+
+    def get_listing_draft(self, draft_id: int) -> dict[str, Any] | None:
+        result = (
+            self._client.table("listing_drafts")
+            .select("*")
+            .eq("id", draft_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    def update_listing_draft_status(
+        self, draft_id: int, status: str, **extra_fields
+    ) -> dict[str, Any]:
+        result = (
+            self._client.table("listing_drafts")
+            .update({"status": status, **extra_fields})
+            .eq("id", draft_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
     # ── Messages ──
 
     def create_message(self, message_data: dict[str, Any]) -> dict[str, Any]:

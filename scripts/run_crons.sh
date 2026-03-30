@@ -22,6 +22,7 @@ case "${CRON_JOB}" in
   daily-stats)
     call_cron "/cron/daily-stats"
     call_cron "/cron/sync-products"
+    call_cron "/cron/sync-shopify-products"
     ;;
   morning-digest)
     call_cron "/cron/morning-digest"

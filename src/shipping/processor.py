@@ -341,5 +341,146 @@ class ShippingProcessor:
             "shipstation_order_id": ss_result.get("orderId"),
         }
 
+    # ── Tracking Webhook Handler ──
+
+    async def handle_tracking_update(self, resource_url: str, resource_type: str) -> dict[str, Any]:
+        """Process a ShipStation tracking webhook.
+
+        ShipStation webhooks only send a resource_url. We GET it to fetch full details,
+        then update order status, send emails, and notify Slack.
+        """
+        from src.core.email import EmailSender
+
+        # Fetch full shipment/order details from ShipStation
+        response = await self._shipstation.get(resource_url.replace(settings.shipstation_base_url, ""))
+        if response.status_code != 200:
+            logger.error("Failed to fetch ShipStation resource %s: %s", resource_url, response.status_code)
+            return {"error": f"Failed to fetch resource: {response.status_code}"}
+
+        data = response.json()
+
+        # Extract tracking info (works for both shipment and order resources)
+        if resource_type == "SHIP_NOTIFY" or resource_type == "ITEM_SHIP_NOTIFY":
+            tracking_number = data.get("trackingNumber", "")
+            carrier = data.get("carrierCode", "")
+            order_key = data.get("orderKey", "")
+            order_number = data.get("orderNumber", "")
+            ship_date = data.get("shipDate", "")
+        else:
+            # ORDER_NOTIFY: data is the order object
+            tracking_number = ""
+            carrier = ""
+            order_key = data.get("orderKey", "")
+            order_number = data.get("orderNumber", "")
+            ship_date = ""
+            # Check shipments within order
+            shipments = data.get("shipments", [])
+            if shipments:
+                latest = shipments[0]
+                tracking_number = latest.get("trackingNumber", "")
+                carrier = latest.get("carrierCode", "")
+                ship_date = latest.get("shipDate", "")
+
+        if not order_key:
+            logger.warning("ShipStation webhook missing orderKey")
+            return {"error": "missing_order_key"}
+
+        # orderKey was set to shopify_order_id in create_shipstation_order()
+        try:
+            shopify_order_id = int(order_key)
+        except (ValueError, TypeError):
+            logger.warning("Non-integer orderKey from ShipStation: %s", order_key)
+            return {"error": "invalid_order_key"}
+
+        # Look up order in Supabase
+        order = self._db.get_order_by_shopify_id(shopify_order_id)
+        if not order:
+            logger.warning("Order not found for ShipStation webhook: %s", shopify_order_id)
+            return {"error": "order_not_found"}
+
+        previous_status = order.get("status", "")
+
+        # Build tracking URL
+        tracking_url = ""
+        if tracking_number:
+            carrier_lower = carrier.lower()
+            if "fedex" in carrier_lower:
+                tracking_url = f"https://www.fedex.com/fedextrack/?trknbr={tracking_number}"
+            elif "ups" in carrier_lower:
+                tracking_url = f"https://www.ups.com/track?tracknum={tracking_number}"
+            elif "usps" in carrier_lower or "stamps" in carrier_lower:
+                tracking_url = f"https://tools.usps.com/go/TrackConfirmAction?tLabels={tracking_number}"
+            else:
+                tracking_url = f"https://track.aftership.com/{tracking_number}"
+
+        # Update order in Supabase
+        if tracking_number and previous_status != "delivered":
+            from datetime import datetime as dt
+            update_fields = {
+                "shipped_at": ship_date or dt.utcnow().isoformat(),
+            }
+            self._db.update_order_tracking(
+                shopify_order_id=shopify_order_id,
+                tracking_number=tracking_number,
+                carrier=carrier,
+                status="shipped",
+                tracking_url=tracking_url,
+                **update_fields,
+            )
+
+            # Send shipping notification email (only on first ship, not re-sends)
+            if previous_status != "shipped":
+                buyer_email = order.get("buyer_email", "")
+                buyer_name = order.get("buyer_name", "")
+                if buyer_email:
+                    email = EmailSender()
+                    email.send_shipping_notification(
+                        to_email=buyer_email,
+                        customer_name=buyer_name or buyer_email,
+                        order_number=order_number or str(shopify_order_id),
+                        tracking_number=tracking_number,
+                        carrier=carrier,
+                        tracking_url=tracking_url,
+                    )
+
+                # Slack notification
+                await self._slack.send_shipping_update(
+                    order_number=order_number or str(shopify_order_id),
+                    customer_name=order.get("buyer_name", "") or order.get("buyer_email", ""),
+                    tracking_number=tracking_number,
+                    carrier=carrier,
+                    tracking_url=tracking_url,
+                )
+
+                # Update Shopify fulfillment status
+                from src.core.shopify_client import ShopifyClient
+                shopify = ShopifyClient()
+                try:
+                    await shopify.create_fulfillment(
+                        order_id=shopify_order_id,
+                        tracking_number=tracking_number,
+                        tracking_company=carrier,
+                    )
+                    logger.info("Shopify fulfillment created for order #%s", shopify_order_id)
+                except Exception:
+                    logger.exception("Shopify fulfillment failed for order #%s", shopify_order_id)
+                finally:
+                    await shopify.close()
+
+        result = {
+            "shopify_order_id": shopify_order_id,
+            "tracking_number": tracking_number,
+            "carrier": carrier,
+            "tracking_url": tracking_url,
+            "previous_status": previous_status,
+            "new_status": "shipped",
+        }
+
+        logger.info(
+            "Tracking update for order #%s: %s via %s",
+            shopify_order_id, tracking_number, carrier,
+        )
+        return result
+
     async def close(self) -> None:
         await self._shipstation.close()

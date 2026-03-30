@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     logger.info("Pinaka Agents shutting down")
 
 
-app = FastAPI(title="Pinaka Agents", version="0.2.1", lifespan=lifespan)
+app = FastAPI(title="Pinaka Agents", version="0.3.0", lifespan=lifespan)
 
 
 # ── Auth Dependencies ──
@@ -119,6 +119,36 @@ async def shopify_checkouts_webhook(request: Request, background_tasks: Backgrou
     return await handle_checkout_webhook(request, background_tasks)
 
 
+# ── ShipStation Webhook ──
+
+@app.post("/webhook/shipstation")
+async def shipstation_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle ShipStation tracking/shipment webhooks."""
+    # Validate shared secret via query param
+    secret = request.query_params.get("secret", "")
+    if settings.shipstation_webhook_secret and secret != settings.shipstation_webhook_secret:
+        raise HTTPException(status_code=401, detail="Invalid secret")
+
+    data = await request.json()
+    resource_url = data.get("resource_url", "")
+    resource_type = data.get("resource_type", "")
+
+    if not resource_url:
+        return {"status": "ignored", "reason": "no_resource_url"}
+
+    async def _process_tracking():
+        shipping = ShippingProcessor()
+        try:
+            await shipping.handle_tracking_update(resource_url, resource_type)
+        except Exception:
+            logger.exception("ShipStation webhook processing failed: %s", resource_url)
+        finally:
+            await shipping.close()
+
+    background_tasks.add_task(_process_tracking)
+    return {"status": "received"}
+
+
 # ── Inbound Email (SendGrid Inbound Parse) ──
 
 @app.post("/inbound/email")
@@ -134,31 +164,27 @@ async def upload_product(request: Request):
     """Upload a product JSON, save to data/products/, and embed for RAG search."""
     import json as json_mod
     from pathlib import Path
+    from src.product.embeddings import ProductEmbeddings
 
-    try:
-        data = await request.json()
-        product = Product(**data)
+    data = await request.json()
+    product = Product(**data)
 
-        # Save to data/products/
-        products_dir = Path("./data/products")
-        products_dir.mkdir(parents=True, exist_ok=True)
-        filepath = products_dir / f"{product.sku}.json"
-        filepath.write_text(json_mod.dumps(data, indent=2))
+    # Save to data/products/
+    products_dir = Path("./data/products")
+    products_dir.mkdir(parents=True, exist_ok=True)
+    filepath = products_dir / f"{product.sku}.json"
+    filepath.write_text(json_mod.dumps(data, indent=2))
 
-        # Embed immediately
-        from src.product.embeddings import ProductEmbeddings
-        embeddings = ProductEmbeddings()
-        embeddings.embed_product(product)
+    # Embed immediately
+    embeddings = ProductEmbeddings()
+    embeddings.embed_product(product)
 
-        return {
-            "status": "ok",
-            "sku": product.sku,
-            "saved_to": str(filepath),
-            "total_products": embeddings.product_count(),
-        }
-    except Exception as e:
-        logger.exception("Product upload failed")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "status": "ok",
+        "sku": product.sku,
+        "saved_to": str(filepath),
+        "total_products": embeddings.product_count(),
+    }
 
 
 # ── Listing Generation ──
@@ -173,15 +199,26 @@ async def generate_listing(request: Request):
     generator = ListingGenerator()
     result = generator.generate(product, variant)
 
-    # Send to Slack for founder review
+    # Persist draft to Supabase for Slack approval flow
+    db = Database()
+    draft = db.create_listing_draft({
+        "sku": product.sku,
+        "title": result["title"],
+        "description": result["description"],
+        "tags": result.get("tags", []),
+        "status": "pending_review",
+    })
+
+    # Send to Slack for founder review (use draft ID so approval handler can find it)
     slack = SlackNotifier()
     await slack.send_listing_review(
         title=result["title"],
         description=result["description"],
         tags=result["tags"],
-        listing_draft_id=product.sku,
+        listing_draft_id=str(draft.get("id", product.sku)),
     )
 
+    result["draft_id"] = draft.get("id")
     return result
 
 
@@ -202,6 +239,31 @@ async def cron_sync_products():
         "embedded": embedded,
         "total_in_index": embeddings.product_count(),
         "was": before,
+    }
+
+
+@app.post("/cron/sync-shopify-products", dependencies=[Depends(verify_cron_secret)])
+async def cron_sync_shopify_products():
+    """Pull products from Shopify and embed them in ChromaDB for RAG search."""
+    from src.product.embeddings import ProductEmbeddings
+
+    shopify = ShopifyClient()
+    embeddings = ProductEmbeddings()
+    synced = 0
+
+    try:
+        products = await shopify.get_products(limit=50)
+        for product in products:
+            embeddings.embed_shopify_product(product)
+            synced += 1
+    finally:
+        await shopify.close()
+
+    return {
+        "status": "ok",
+        "module": "shopify_product_sync",
+        "synced": synced,
+        "total_in_index": embeddings.product_count(),
     }
 
 
@@ -408,7 +470,7 @@ async def _check_webhook_health(shopify: ShopifyClient, slack: SlackNotifier) ->
         missing = sorted(REQUIRED_WEBHOOK_TOPICS - active_topics)
     except Exception as e:
         logger.error("Webhook health check failed: %s", e)
-        await slack.send_message(f":warning: Webhook health check failed: {e}")
+        await slack.send_alert(f"Webhook health check failed: {e}", level="warning")
         return list(REQUIRED_WEBHOOK_TOPICS)
 
     if not missing:
@@ -673,8 +735,51 @@ async def webhook_slack(request: Request):
         tombstone = SlackNotifier.tombstone_blocks("Order Cancelled", f"Order #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
+    # ── Listing Actions ──
+    elif action_id == "approve_listing":
+        draft = db.get_listing_draft(int(value))
+        if draft:
+            shopify = ShopifyClient()
+            try:
+                product = await shopify.create_product(
+                    title=draft["title"],
+                    body_html=draft["description"],
+                    tags=draft.get("tags", []),
+                )
+                shopify_product_id = product.get("id")
+                db.update_listing_draft_status(
+                    draft["id"], "published", shopify_product_id=shopify_product_id,
+                )
+                detail = f"Listing #{value} published to Shopify as draft (ID: {shopify_product_id})"
+            except Exception as e:
+                logger.exception("Failed to publish listing #%s to Shopify", value)
+                detail = f"Listing #{value} — Shopify publish failed: {e}"
+            finally:
+                await shopify.close()
+        else:
+            detail = f"Listing #{value} not found"
+        tombstone = SlackNotifier.tombstone_blocks("Published to Shopify (Draft)", detail, timestamp)
+        await slack.update_message(channel, message_ts, tombstone)
+
+    elif action_id == "reject_listing":
+        db.update_listing_draft_status(int(value), "rejected")
+        tombstone = SlackNotifier.tombstone_blocks("Listing Rejected", f"Draft #{value}", timestamp)
+        await slack.update_message(channel, message_ts, tombstone)
+
+    # ── Budget Actions ──
+    elif action_id == "apply_budget_change":
+        logger.info("Budget change acknowledged: $%s/day", value)
+        tombstone = SlackNotifier.tombstone_blocks(
+            "Budget Change Noted", f"${value}/day — apply manually in ad platforms", timestamp,
+        )
+        await slack.update_message(channel, message_ts, tombstone)
+
+    elif action_id == "dismiss_budget":
+        tombstone = SlackNotifier.tombstone_blocks("Dismissed", "Budget recommendation", timestamp)
+        await slack.update_message(channel, message_ts, tombstone)
+
     # ── Dismiss/Edit Actions ──
-    elif action_id in ("dismiss", "edit_response", "edit_cart_recovery", "edit_crafting_update", "edit_listing"):
+    elif action_id in ("dismiss", "contact_customer_exception", "edit_response", "edit_cart_recovery", "edit_crafting_update", "edit_listing"):
         tombstone = SlackNotifier.tombstone_blocks("Dismissed", action_id, timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 

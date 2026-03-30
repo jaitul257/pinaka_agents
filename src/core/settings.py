@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     sendgrid_service_reply_template_id: str = ""
     sendgrid_crafting_update_template_id: str = ""
     sendgrid_order_confirmation_template_id: str = ""
+    sendgrid_shipping_notification_template_id: str = ""
+    sendgrid_delivery_confirmation_template_id: str = ""
 
     # ── Anthropic ──
     anthropic_api_key: str = ""
@@ -44,6 +46,7 @@ class Settings(BaseSettings):
     shipstation_api_key: str = ""
     shipstation_api_secret: str = ""
     shipstation_base_url: str = "https://ssapi.shipstation.com"
+    shipstation_webhook_secret: str = ""  # Shared secret for inbound webhook validation
 
     # ── Slack ──
     slack_bot_token: str = ""

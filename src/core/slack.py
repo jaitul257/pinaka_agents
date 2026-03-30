@@ -510,6 +510,83 @@ class SlackNotifier:
 
         return await self.send_blocks(blocks, text=f"Crafting update for order #{order_number}")
 
+    async def send_shipping_update(
+        self,
+        order_number: str,
+        customer_name: str,
+        tracking_number: str,
+        carrier: str,
+        tracking_url: str = "",
+    ) -> dict[str, Any]:
+        """Shipping notification when a package ships."""
+        tracking_text = f"<{tracking_url}|{tracking_number}>" if tracking_url else tracking_number
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": ":package: Order Shipped"},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Order:* #{order_number}"},
+                    {"type": "mrkdwn", "text": f"*Customer:* {customer_name}"},
+                    {"type": "mrkdwn", "text": f"*Carrier:* {carrier}"},
+                    {"type": "mrkdwn", "text": f"*Tracking:* {tracking_text}"},
+                ],
+            },
+        ]
+        return await self.send_blocks(blocks, text=f"Order #{order_number} shipped via {carrier}")
+
+    async def send_delivery_exception(
+        self,
+        order_number: str,
+        customer_name: str,
+        tracking_number: str,
+        exception_detail: str,
+    ) -> dict[str, Any]:
+        """Urgent alert when a delivery exception occurs."""
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": ":rotating_light: DELIVERY EXCEPTION"},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Order:* #{order_number}"},
+                    {"type": "mrkdwn", "text": f"*Customer:* {customer_name}"},
+                    {"type": "mrkdwn", "text": f"*Tracking:* {tracking_number}"},
+                ],
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Issue:* {exception_detail}"},
+            },
+            {"type": "divider"},
+            {
+                "type": "actions",
+                "block_id": f"delivery_exception_{order_number}",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Contact Customer"},
+                        "style": "primary",
+                        "action_id": "contact_customer_exception",
+                        "value": str(order_number),
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Dismiss"},
+                        "action_id": "dismiss",
+                        "value": str(order_number),
+                    },
+                ],
+            },
+        ]
+        return await self.send_blocks(
+            blocks, text=f"@channel DELIVERY EXCEPTION: Order #{order_number}"
+        )
+
     @staticmethod
     def tombstone_blocks(action: str, detail: str, timestamp: str) -> list[dict[str, Any]]:
         """Generate tombstone blocks to replace a message after action is taken."""

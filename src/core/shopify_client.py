@@ -118,20 +118,82 @@ class ShopifyClient:
         response.raise_for_status()
         return response.json().get("webhook", {})
 
+    # ── Products (create) ──
+
+    async def create_product(
+        self,
+        title: str,
+        body_html: str,
+        tags: list[str],
+        product_type: str = "",
+        vendor: str = "Pinaka Jewellery",
+    ) -> dict[str, Any]:
+        """Create a product in Shopify as a draft."""
+        response = await self._client.request(
+            "POST",
+            "/products.json",
+            json={
+                "product": {
+                    "title": title,
+                    "body_html": body_html,
+                    "tags": ", ".join(tags),
+                    "product_type": product_type,
+                    "vendor": vendor,
+                    "status": "draft",
+                }
+            },
+        )
+        response.raise_for_status()
+        return response.json().get("product", {})
+
     # ── Fulfillment ──
+
+    async def get_fulfillment_orders(self, order_id: int) -> list[dict[str, Any]]:
+        """Get fulfillment orders for a Shopify order (required by Fulfillment Orders API)."""
+        response = await self._client.request(
+            "GET", f"/orders/{order_id}/fulfillment_orders.json"
+        )
+        response.raise_for_status()
+        return response.json().get("fulfillment_orders", [])
 
     async def create_fulfillment(
         self, order_id: int, tracking_number: str, tracking_company: str
     ) -> dict[str, Any]:
-        """Create a fulfillment with tracking info."""
+        """Create a fulfillment via the Fulfillment Orders API.
+
+        Uses notify_customer=False because we send branded emails via SendGrid.
+        """
+        # Get fulfillment order IDs
+        fulfillment_orders = await self.get_fulfillment_orders(order_id)
+        if not fulfillment_orders:
+            logger.warning("No fulfillment orders found for order %s", order_id)
+            return {}
+
+        # Use the first open fulfillment order
+        fo = next(
+            (fo for fo in fulfillment_orders if fo.get("status") == "open"),
+            fulfillment_orders[0],
+        )
+        fo_id = fo["id"]
+
+        line_items = [
+            {"id": li["id"], "quantity": li["quantity"]}
+            for li in fo.get("line_items", [])
+        ]
+
         response = await self._client.request(
             "POST",
-            f"/orders/{order_id}/fulfillments.json",
+            "/fulfillments.json",
             json={
                 "fulfillment": {
-                    "tracking_number": tracking_number,
-                    "tracking_company": tracking_company,
-                    "notify_customer": True,
+                    "line_items_by_fulfillment_order": [
+                        {"fulfillment_order_id": fo_id, "fulfillment_order_line_items": line_items}
+                    ],
+                    "tracking_info": {
+                        "number": tracking_number,
+                        "company": tracking_company,
+                    },
+                    "notify_customer": False,
                 }
             },
         )

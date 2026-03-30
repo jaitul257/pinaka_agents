@@ -101,6 +101,48 @@ class EmailSender:
             to_name=customer_name,
         )
 
+    def send_shipping_notification(
+        self,
+        to_email: str,
+        customer_name: str,
+        order_number: str,
+        tracking_number: str,
+        carrier: str,
+        tracking_url: str = "",
+    ) -> bool:
+        """Send shipping notification email with tracking info."""
+        return self.send(
+            to_email=to_email,
+            template_id=settings.sendgrid_shipping_notification_template_id,
+            template_data={
+                "customer_name": customer_name,
+                "order_number": order_number,
+                "tracking_number": tracking_number,
+                "carrier": carrier,
+                "tracking_url": tracking_url,
+                "founder_name": settings.founder_name,
+            },
+            to_name=customer_name,
+        )
+
+    def send_delivery_confirmation(
+        self,
+        to_email: str,
+        customer_name: str,
+        order_number: str,
+    ) -> bool:
+        """Send delivery confirmation email."""
+        return self.send(
+            to_email=to_email,
+            template_id=settings.sendgrid_delivery_confirmation_template_id,
+            template_data={
+                "customer_name": customer_name,
+                "order_number": order_number,
+                "founder_name": settings.founder_name,
+            },
+            to_name=customer_name,
+        )
+
     def send_order_confirmation(
         self,
         to_email: str,
