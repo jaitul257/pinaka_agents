@@ -100,3 +100,36 @@ class EmailSender:
             },
             to_name=customer_name,
         )
+
+    def send_order_confirmation(
+        self,
+        to_email: str,
+        customer_name: str,
+        order_number: str,
+        line_items: list[dict[str, Any]],
+        total: float,
+        shipping_address: str = "",
+    ) -> bool:
+        """Send order confirmation email after purchase."""
+        items_summary = [
+            {
+                "title": item.get("title", "Item"),
+                "quantity": item.get("quantity", 1),
+                "price": item.get("price", "0"),
+            }
+            for item in line_items
+        ]
+        return self.send(
+            to_email=to_email,
+            template_id=settings.sendgrid_order_confirmation_template_id,
+            template_data={
+                "customer_name": customer_name,
+                "order_number": order_number,
+                "items": items_summary,
+                "total": f"${total:,.2f}",
+                "shipping_address": shipping_address,
+                "made_to_order_days": settings.made_to_order_days,
+                "founder_name": settings.founder_name,
+            },
+            to_name=customer_name,
+        )

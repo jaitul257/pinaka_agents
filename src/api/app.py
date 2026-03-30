@@ -22,6 +22,8 @@ from src.core.shopify_client import ShopifyClient
 from src.core.slack import SlackNotifier
 from src.customer.classifier import MessageClassifier
 from src.finance.calculator import FinanceCalculator
+from src.listings.generator import ListingGenerator
+from src.product.schema import Product
 from src.shipping.processor import ShippingProcessor
 
 logger = logging.getLogger(__name__)
@@ -114,6 +116,30 @@ async def shopify_customers_webhook(request: Request, background_tasks: Backgrou
 async def shopify_checkouts_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle checkouts/create and checkouts/update webhooks."""
     return await handle_checkout_webhook(request, background_tasks)
+
+
+# ── Listing Generation ──
+
+@app.post("/api/listings/generate", dependencies=[Depends(verify_cron_secret)])
+async def generate_listing(request: Request):
+    """Generate AI-powered Shopify product listing from product data."""
+    data = await request.json()
+    product = Product(**data["product"])
+    variant = data.get("variant")
+
+    generator = ListingGenerator()
+    result = generator.generate(product, variant)
+
+    # Send to Slack for founder review
+    slack = SlackNotifier()
+    await slack.send_listing_review(
+        title=result["title"],
+        description=result["description"],
+        tags=result["tags"],
+        listing_draft_id=product.sku,
+    )
+
+    return result
 
 
 # ── Cron Endpoints (secured) ──

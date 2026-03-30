@@ -16,15 +16,19 @@ from typing import Any
 from fastapi import BackgroundTasks, HTTPException, Request
 
 from src.core.database import Database
+from src.core.email import EmailSender
 from src.core.events import event_bus
 from src.core.settings import settings
 from src.core.slack import SlackNotifier
+from src.shipping.processor import ShippingProcessor
 
 logger = logging.getLogger(__name__)
 
 # Lazy singletons — avoid connecting at import time
 _db = None
 _slack = None
+_email = None
+_shipping = None
 
 
 def _get_db():
@@ -39,6 +43,20 @@ def _get_slack():
     if _slack is None:
         _slack = SlackNotifier()
     return _slack
+
+
+def _get_email():
+    global _email
+    if _email is None:
+        _email = EmailSender()
+    return _email
+
+
+def _get_shipping():
+    global _shipping
+    if _shipping is None:
+        _shipping = ShippingProcessor()
+    return _shipping
 
 
 def verify_shopify_hmac(body: bytes, hmac_header: str) -> bool:
@@ -166,6 +184,45 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
             for item in order_data.get("line_items", [])
         ],
     )
+
+    # Run fraud check
+    fraud_result = _get_shipping().check_fraud(order_record)
+    if fraud_result.is_flagged:
+        insurance_note = ""
+        if fraud_result.insurance_gap > 0:
+            insurance_note = (
+                f"Carrier cap: ${settings.carrier_insurance_cap:,.2f}. "
+                f"Gap: ${fraud_result.insurance_gap:,.2f}. Supplemental required."
+            )
+        await _get_slack().send_fraud_alert(
+            receipt_id=shopify_order_id,
+            buyer_name=customer_name or customer_email,
+            total=total,
+            flag_reason=" | ".join(fraud_result.reasons),
+            insurance_note=insurance_note,
+        )
+        logger.warning("Order #%s flagged for fraud: %s", shopify_order_id, fraud_result.reasons)
+
+    # Send order confirmation email
+    if customer_email:
+        shipping_addr = order_data.get("shipping_address", {})
+        addr_parts = [
+            shipping_addr.get("address1", ""),
+            shipping_addr.get("city", ""),
+            shipping_addr.get("province", ""),
+            shipping_addr.get("zip", ""),
+            shipping_addr.get("country", ""),
+        ]
+        address_str = ", ".join(p for p in addr_parts if p)
+
+        _get_email().send_order_confirmation(
+            to_email=customer_email,
+            customer_name=customer_name or customer_email,
+            order_number=str(order_data.get("order_number", shopify_order_id)),
+            line_items=order_data.get("line_items", []),
+            total=total,
+            shipping_address=address_str,
+        )
 
     logger.info("Order #%s processed: $%.2f from %s", shopify_order_id, total, customer_name)
 
