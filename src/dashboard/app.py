@@ -301,7 +301,7 @@ st.sidebar.markdown('<div class="gold-divider"></div>', unsafe_allow_html=True)
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Overview", "Orders", "Customers", "Finance", "Marketing", "Customer Service"],
+    ["Overview", "Orders", "Customers", "Products", "Finance", "Marketing", "Customer Service"],
     label_visibility="collapsed",
 )
 
@@ -508,6 +508,215 @@ elif page == "Customers":
 
     except Exception as e:
         st.warning(f"Could not load customer data. ({e})")
+
+
+elif page == "Products":
+    st.markdown("# Products")
+    st.markdown('<div class="gold-divider"></div>', unsafe_allow_html=True)
+
+    import json as json_mod
+    from pathlib import Path
+
+    products_dir = Path("./data/products")
+    products_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load existing products
+    existing_products = []
+    for path in sorted(products_dir.glob("*.json")):
+        try:
+            with open(path) as f:
+                prod = json_mod.load(f)
+                prod["_file"] = path.name
+                existing_products.append(prod)
+        except Exception:
+            pass
+
+    # Summary
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Products", len(existing_products))
+    with col2:
+        try:
+            from src.product.embeddings import ProductEmbeddings
+            emb = ProductEmbeddings()
+            st.metric("Embedded for Search", emb.product_count())
+        except Exception:
+            st.metric("Embedded for Search", "—")
+    with col3:
+        categories = set(p.get("category", "") for p in existing_products)
+        st.metric("Categories", len(categories))
+
+    # Existing products table
+    if existing_products:
+        st.markdown("### Your Products")
+        for prod in existing_products:
+            pricing = prod.get("pricing", {})
+            first_variant = next(iter(pricing.values()), {})
+            retail = first_variant.get("retail", 0)
+            cost = first_variant.get("cost", 0)
+            margin = ((retail - cost) / retail * 100) if retail > 0 else 0
+
+            with st.expander(f"**{prod.get('name', 'Unnamed')}** — ${retail:,.0f} ({margin:.0f}% margin)"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**SKU:** {prod.get('sku', '—')}")
+                    st.markdown(f"**Category:** {prod.get('category', '—')}")
+                    materials = prod.get("materials", {})
+                    st.markdown(f"**Metal:** {materials.get('metal', '—')}")
+                    st.markdown(f"**Carats:** {materials.get('total_carat', '—')}ct")
+                    st.markdown(f"**Diamond:** {', '.join(materials.get('diamond_type', []))}")
+                with col2:
+                    st.markdown(f"**Occasions:** {', '.join(prod.get('occasions', []))}")
+                    cert = prod.get("certification", {})
+                    if cert:
+                        st.markdown(f"**Cert:** {cert.get('grading_lab', '')} #{cert.get('certificate_number', '')}")
+                    st.markdown(f"**Tags:** {', '.join(prod.get('tags', [])[:5])}...")
+
+                st.markdown(f"*{prod.get('story', '')[:200]}...*")
+                st.caption(f"File: {prod.get('_file', '')}")
+
+    st.markdown("---")
+    st.markdown("### Add New Product")
+
+    with st.form("add_product", clear_on_submit=True):
+        st.markdown("**Basic Info**")
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input("Product Name *", placeholder="Diamond Tennis Bracelet - Natural")
+            sku = st.text_input("SKU *", placeholder="DTB-NAT-7-14KYG")
+            category = st.selectbox("Category *", ["Bracelets", "Necklaces", "Rings", "Earrings", "Pendants", "Other"])
+        with col2:
+            metal = st.selectbox("Metal *", [
+                "14K Yellow Gold", "14K White Gold", "14K Rose Gold",
+                "18K Yellow Gold", "18K White Gold", "18K Rose Gold",
+                "Platinum", "Sterling Silver",
+            ])
+            total_carat = st.number_input("Total Carat Weight *", min_value=0.1, max_value=50.0, value=3.0, step=0.1)
+            diamond_type_str = st.text_input("Diamond Type (comma-separated) *", value="lab-grown, VS1-VS2, F-G color, round brilliant")
+
+        st.markdown("**Pricing**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            variant_name = st.text_input("Variant Name", value="default-7inch")
+        with col2:
+            retail_price = st.number_input("Retail Price ($) *", min_value=0.0, value=2850.0, step=50.0)
+        with col3:
+            cost_price = st.number_input("Cost ($, private) *", min_value=0.0, value=450.0, step=10.0)
+
+        weight_grams = st.number_input("Weight (grams)", min_value=0.1, value=12.5, step=0.5)
+
+        st.markdown("**Story & Details**")
+        story = st.text_area("Product Story *", placeholder="Every diamond in this bracelet was individually selected...", height=100)
+        care = st.text_area("Care Instructions", value="Clean gently with warm soapy water and a soft brush. Store in the provided jewelry box when not worn. Bring it to us anytime for complimentary professional cleaning — that's our Free Lifetime Care promise.", height=80)
+        occasions_str = st.text_input("Occasions (comma-separated)", value="anniversary, birthday, graduation, promotion, self-purchase")
+        tags_str = st.text_input("Tags (comma-separated)", placeholder="tennis bracelet, lab grown diamond, 14k gold...")
+
+        st.markdown("**Certification (optional)**")
+        col1, col2 = st.columns(2)
+        with col1:
+            cert_lab = st.selectbox("Grading Lab", ["None", "IGI", "GIA"])
+            cert_number = st.text_input("Certificate Number", placeholder="LG-2026-0001")
+        with col2:
+            cert_carat = st.number_input("Certified Carat", min_value=0.0, value=0.0, step=0.01)
+            cert_clarity = st.text_input("Clarity", placeholder="VS1")
+            cert_color = st.text_input("Color", placeholder="F")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            generate_listing = st.checkbox("Generate AI listing draft (sends to Slack for review)")
+        with col2:
+            embed_product = st.checkbox("Embed for customer service search", value=True)
+
+        submitted = st.form_submit_button("Save Product", type="primary")
+
+        if submitted:
+            if not name or not sku or not story:
+                st.error("Please fill in all required fields (Name, SKU, Story).")
+            else:
+                diamond_types = [t.strip() for t in diamond_type_str.split(",") if t.strip()]
+                occasions = [o.strip() for o in occasions_str.split(",") if o.strip()]
+                tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+
+                product_data = {
+                    "sku": sku,
+                    "name": name,
+                    "category": category,
+                    "materials": {
+                        "metal": metal,
+                        "weight_grams": weight_grams,
+                        "diamond_type": diamond_types,
+                        "total_carat": total_carat,
+                    },
+                    "pricing": {
+                        variant_name: {
+                            "cost": cost_price,
+                            "retail": retail_price,
+                        }
+                    },
+                    "story": story,
+                    "care_instructions": care,
+                    "occasions": occasions,
+                    "tags": tags,
+                }
+
+                if cert_lab != "None" and cert_number:
+                    product_data["certification"] = {
+                        "certificate_number": cert_number,
+                        "grading_lab": cert_lab,
+                        "carat_weight_certified": cert_carat or total_carat,
+                        "clarity": cert_clarity,
+                        "color": cert_color,
+                    }
+
+                # Save to file
+                filepath = products_dir / f"{sku}.json"
+                filepath.write_text(json_mod.dumps(product_data, indent=2))
+                st.success(f"Product saved to {filepath.name}")
+
+                # Embed for search
+                if embed_product:
+                    try:
+                        from src.product.schema import Product
+                        from src.product.embeddings import ProductEmbeddings
+                        emb = ProductEmbeddings()
+                        product_obj = Product(**product_data)
+                        emb.embed_product(product_obj)
+                        st.success(f"Embedded for search ({emb.product_count()} total products in index)")
+                    except Exception as e:
+                        st.warning(f"Saved but embedding failed: {e}")
+
+                # Generate listing
+                if generate_listing:
+                    try:
+                        from src.product.schema import Product
+                        from src.listings.generator import ListingGenerator
+                        from src.core.slack import SlackNotifier
+                        import asyncio
+
+                        product_obj = Product(**product_data)
+                        generator = ListingGenerator()
+                        result = generator.generate(product_obj, variant_name)
+
+                        st.markdown("**Generated Listing Preview:**")
+                        st.markdown(f"**Title:** {result['title']}")
+                        st.markdown(f"**Description:** {result['description'][:300]}...")
+                        st.markdown(f"**Tags:** {', '.join(result['tags'])}")
+
+                        # Send to Slack
+                        async def send_to_slack():
+                            slack = SlackNotifier()
+                            await slack.send_listing_review(
+                                title=result["title"],
+                                description=result["description"],
+                                tags=result["tags"],
+                                listing_draft_id=sku,
+                            )
+                        asyncio.run(send_to_slack())
+                        st.success("Listing draft sent to Slack for review")
+                    except Exception as e:
+                        st.warning(f"Listing generation failed: {e}")
+
+                st.cache_data.clear()
 
 
 elif page == "Finance":
