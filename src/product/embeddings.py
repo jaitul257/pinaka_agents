@@ -1,14 +1,13 @@
-"""Product embedding pipeline using Chroma and OpenAI embeddings.
+"""Product embedding pipeline using ChromaDB's built-in embeddings.
 
-Embeds product data for RAG queries. Pipeline is idempotent — can be
-regenerated from source JSON in ~5 minutes if Chroma data is lost.
+Uses ChromaDB's default all-MiniLM-L6-v2 model (ONNX, no API key needed).
+Pipeline is idempotent — can be regenerated from source JSON if data is lost.
 """
 
 import json
 import logging
 from pathlib import Path
 
-from src.core.settings import settings
 from src.product.schema import Product
 
 logger = logging.getLogger(__name__)
@@ -21,14 +20,12 @@ class ProductEmbeddings:
 
     def __init__(self, persist_dir: str = "./chroma_data"):
         import chromadb
-        from openai import OpenAI
 
         self._chroma = chromadb.PersistentClient(path=persist_dir)
         self._collection = self._chroma.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
-        self._openai = OpenAI(api_key=settings.openai_api_key)
 
     def _product_to_text(self, product: Product) -> str:
         """Convert a product to a text representation for embedding."""
@@ -50,22 +47,12 @@ class ProductEmbeddings:
             )
         return "\n".join(parts)
 
-    def _embed(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings via OpenAI."""
-        response = self._openai.embeddings.create(
-            model=settings.embedding_model,
-            input=texts,
-        )
-        return [item.embedding for item in response.data]
-
     def embed_product(self, product: Product) -> None:
-        """Embed a single product (upsert)."""
+        """Embed a single product (upsert). ChromaDB auto-embeds the document."""
         text = self._product_to_text(product)
-        embeddings = self._embed([text])
 
         self._collection.upsert(
             ids=[product.sku],
-            embeddings=embeddings,
             documents=[text],
             metadatas=[{
                 "sku": product.sku,
@@ -91,9 +78,8 @@ class ProductEmbeddings:
 
     def query(self, question: str, n_results: int = 3) -> list[dict]:
         """RAG query — find most relevant products for a question."""
-        embeddings = self._embed([question])
         results = self._collection.query(
-            query_embeddings=embeddings,
+            query_texts=[question],
             n_results=n_results,
         )
 
@@ -113,18 +99,17 @@ class ProductEmbeddings:
 
     def embed_shopify_product(self, shopify_product: dict) -> None:
         """Embed a product directly from Shopify API data (no Product schema needed)."""
+        import re
+
         product_id = str(shopify_product.get("id", ""))
         title = shopify_product.get("title", "")
         if not product_id or not title:
             return
 
-        # Build text from Shopify product fields
         parts = [f"Product: {title}"]
         if shopify_product.get("product_type"):
             parts.append(f"Category: {shopify_product['product_type']}")
         if shopify_product.get("body_html"):
-            # Strip HTML for embedding
-            import re
             body = re.sub(r"<[^>]+>", "", shopify_product["body_html"])
             parts.append(f"Description: {body[:500]}")
         if shopify_product.get("tags"):
@@ -132,7 +117,6 @@ class ProductEmbeddings:
         if shopify_product.get("vendor"):
             parts.append(f"Brand: {shopify_product['vendor']}")
 
-        # Include variant info (metals, sizes, prices)
         for variant in shopify_product.get("variants", [])[:5]:
             variant_parts = []
             if variant.get("title") and variant["title"] != "Default Title":
@@ -143,11 +127,9 @@ class ProductEmbeddings:
                 parts.append(f"Variant: {', '.join(variant_parts)}")
 
         text = "\n".join(parts)
-        embeddings = self._embed([text])
 
         self._collection.upsert(
             ids=[f"shopify-{product_id}"],
-            embeddings=embeddings,
             documents=[text],
             metadatas=[{
                 "shopify_product_id": product_id,
