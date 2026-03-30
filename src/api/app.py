@@ -127,6 +127,36 @@ async def inbound_email(request: Request):
     return await handle_inbound_email(request)
 
 
+# ── Product Management ──
+
+@app.post("/api/products/upload", dependencies=[Depends(verify_cron_secret)])
+async def upload_product(request: Request):
+    """Upload a product JSON, save to data/products/, and embed for RAG search."""
+    import json as json_mod
+    from pathlib import Path
+    from src.product.embeddings import ProductEmbeddings
+
+    data = await request.json()
+    product = Product(**data)
+
+    # Save to data/products/
+    products_dir = Path("./data/products")
+    products_dir.mkdir(parents=True, exist_ok=True)
+    filepath = products_dir / f"{product.sku}.json"
+    filepath.write_text(json_mod.dumps(data, indent=2))
+
+    # Embed immediately
+    embeddings = ProductEmbeddings()
+    embeddings.embed_product(product)
+
+    return {
+        "status": "ok",
+        "sku": product.sku,
+        "saved_to": str(filepath),
+        "total_products": embeddings.product_count(),
+    }
+
+
 # ── Listing Generation ──
 
 @app.post("/api/listings/generate", dependencies=[Depends(verify_cron_secret)])
@@ -152,6 +182,24 @@ async def generate_listing(request: Request):
 
 
 # ── Cron Endpoints (secured) ──
+
+@app.post("/cron/sync-products", dependencies=[Depends(verify_cron_secret)])
+async def cron_sync_products():
+    """Scan data/products/ directory and embed all product JSON files for RAG search."""
+    from src.product.embeddings import ProductEmbeddings
+
+    embeddings = ProductEmbeddings()
+    before = embeddings.product_count()
+    embedded = embeddings.embed_all_from_directory("./data/products")
+
+    return {
+        "status": "ok",
+        "module": "product_sync",
+        "embedded": embedded,
+        "total_in_index": embeddings.product_count(),
+        "was": before,
+    }
+
 
 @app.post("/cron/daily-stats", dependencies=[Depends(verify_cron_secret)])
 async def cron_daily_stats():

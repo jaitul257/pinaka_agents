@@ -111,5 +111,51 @@ class ProductEmbeddings:
                 })
         return products
 
+    def embed_shopify_product(self, shopify_product: dict) -> None:
+        """Embed a product directly from Shopify API data (no Product schema needed)."""
+        product_id = str(shopify_product.get("id", ""))
+        title = shopify_product.get("title", "")
+        if not product_id or not title:
+            return
+
+        # Build text from Shopify product fields
+        parts = [f"Product: {title}"]
+        if shopify_product.get("product_type"):
+            parts.append(f"Category: {shopify_product['product_type']}")
+        if shopify_product.get("body_html"):
+            # Strip HTML for embedding
+            import re
+            body = re.sub(r"<[^>]+>", "", shopify_product["body_html"])
+            parts.append(f"Description: {body[:500]}")
+        if shopify_product.get("tags"):
+            parts.append(f"Tags: {shopify_product['tags']}")
+        if shopify_product.get("vendor"):
+            parts.append(f"Brand: {shopify_product['vendor']}")
+
+        # Include variant info (metals, sizes, prices)
+        for variant in shopify_product.get("variants", [])[:5]:
+            variant_parts = []
+            if variant.get("title") and variant["title"] != "Default Title":
+                variant_parts.append(variant["title"])
+            if variant.get("price"):
+                variant_parts.append(f"${variant['price']}")
+            if variant_parts:
+                parts.append(f"Variant: {', '.join(variant_parts)}")
+
+        text = "\n".join(parts)
+        embeddings = self._embed([text])
+
+        self._collection.upsert(
+            ids=[f"shopify-{product_id}"],
+            embeddings=embeddings,
+            documents=[text],
+            metadatas=[{
+                "shopify_product_id": product_id,
+                "name": title,
+                "category": shopify_product.get("product_type", ""),
+            }],
+        )
+        logger.info("Embedded Shopify product: %s (%s)", title, product_id)
+
     def product_count(self) -> int:
         return self._collection.count()

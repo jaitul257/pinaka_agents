@@ -1,0 +1,29 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "c8122c6eed126c85416b355cb50ec433"
+name = "Pinaka AI Agents"
+application_url = "https://pinaka-agents-production-198b5.up.railway.app"
+embedded = false
+
+[build]
+
+[webhooks]
+api_version = "2025-01"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhook/shopify/orders"
+
+  [[webhooks.subscriptions]]
+  topics = [ "customers/create" ]
+  uri = "/webhook/shopify/customers"
+
+  [[webhooks.subscriptions]]
+  topics = [ "checkouts/create" ]
+  uri = "/webhook/shopify/checkouts"
+
+[access_scopes]
+scopes = "read_orders,write_orders,read_customers,write_customers,read_products,read_checkouts,read_shipping"
+
+[auth]
+redirect_urls = [ "https://pinaka-agents-production-198b5.up.railway.app/api/auth" ]

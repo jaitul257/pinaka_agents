@@ -59,6 +59,7 @@ def _get_shipping():
     return _shipping
 
 
+
 def verify_shopify_hmac(body: bytes, hmac_header: str) -> bool:
     """Verify Shopify webhook HMAC-SHA256 signature."""
     if not settings.shopify_webhook_secret:
@@ -301,3 +302,5 @@ async def handle_checkout_webhook(request: Request, background_tasks: Background
     _, checkout_data = await validate_shopify_request(request)
     background_tasks.add_task(_process_checkout, checkout_data)
     return {"status": "received"}
+
+
