@@ -17,13 +17,11 @@ dependencies = [
     "python-multipart>=0.0.12",
     "sendgrid>=6.11.0",
     "chromadb>=0.5.0",
-]
-
-[project.optional-dependencies]
-dashboard = [
     "streamlit>=1.38.0",
     "pandas>=2.2.0",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
