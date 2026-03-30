@@ -22,9 +22,23 @@ from src.core.slack import SlackNotifier
 
 logger = logging.getLogger(__name__)
 
-# Module-level singletons
-db = Database()
-slack = SlackNotifier()
+# Lazy singletons — avoid connecting at import time
+_db = None
+_slack = None
+
+
+def _get_db():
+    global _db
+    if _db is None:
+        _db = Database()
+    return _db
+
+
+def _get_slack():
+    global _slack
+    if _slack is None:
+        _slack = SlackNotifier()
+    return _slack
 
 
 def verify_shopify_hmac(body: bytes, hmac_header: str) -> bool:
@@ -68,7 +82,7 @@ async def _process_order(order_data: dict[str, Any]) -> None:
     shopify_order_id = order_data.get("id")
 
     # Idempotency check
-    existing = db.get_order_by_shopify_id(shopify_order_id)
+    existing = _get_db().get_order_by_shopify_id(shopify_order_id)
     if existing:
         logger.info("Order %s already processed, skipping", shopify_order_id)
         return
@@ -82,7 +96,7 @@ async def _process_order(order_data: dict[str, Any]) -> None:
     # Upsert customer
     customer_record = None
     if shopify_customer_id:
-        customer_record = db.upsert_customer({
+        customer_record = _get_db().upsert_customer({
             "shopify_customer_id": shopify_customer_id,
             "email": customer_email,
             "name": customer_name or customer_email,
@@ -102,14 +116,14 @@ async def _process_order(order_data: dict[str, Any]) -> None:
             stage = "repeat"
         else:
             stage = "first_purchase"
-        db.update_customer_lifecycle(customer_record["id"], stage)
+        _get_db().update_customer_lifecycle(customer_record["id"], stage)
 
     # Persist order
     total = float(order_data.get("total_price", "0"))
     subtotal = float(order_data.get("subtotal_price", "0"))
     tax = float(order_data.get("total_tax", "0"))
 
-    order_record = db.upsert_order({
+    order_record = _get_db().upsert_order({
         "shopify_order_id": shopify_order_id,
         "customer_id": customer_record["id"] if customer_record else None,
         "buyer_email": customer_email,
@@ -126,7 +140,7 @@ async def _process_order(order_data: dict[str, Any]) -> None:
     # Cancel any pending abandoned cart recovery for this checkout
     checkout_token = order_data.get("checkout_token", "")
     if checkout_token:
-        db.cancel_cart_recovery(checkout_token)
+        _get_db().cancel_cart_recovery(checkout_token)
 
     # Emit event for other handlers (fraud check, Slack alert, etc.)
     await event_bus.emit("order.created", {
@@ -136,7 +150,7 @@ async def _process_order(order_data: dict[str, Any]) -> None:
     })
 
     # Send Slack alert for new order
-    await slack.send_new_order_alert(
+    await _get_slack().send_new_order_alert(
         order_number=str(order_data.get("order_number", shopify_order_id)),
         customer_name=customer_name or customer_email,
         total=total,
@@ -158,7 +172,7 @@ async def _process_customer(customer_data: dict[str, Any]) -> None:
     email = customer_data.get("email", "")
     name = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
 
-    db.upsert_customer({
+    _get_db().upsert_customer({
         "shopify_customer_id": shopify_customer_id,
         "email": email,
         "name": name or email,
@@ -186,11 +200,11 @@ async def _process_checkout(checkout_data: dict[str, Any]) -> None:
     # Look up customer
     customer_id = None
     if customer_email:
-        customer = db.get_customer_by_email(customer_email)
+        customer = _get_db().get_customer_by_email(customer_email)
         if customer:
             customer_id = customer["id"]
 
-    db.upsert_cart_event({
+    _get_db().upsert_cart_event({
         "shopify_checkout_token": checkout_token,
         "customer_id": customer_id,
         "customer_email": customer_email,
