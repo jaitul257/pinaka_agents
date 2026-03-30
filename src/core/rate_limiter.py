@@ -24,6 +24,7 @@ class RateLimitedClient:
         max_retries: int = 3,
         timeout: float = 30.0,
         headers: dict[str, str] | None = None,
+        auth: tuple[str, str] | None = None,
     ):
         self.base_url = base_url
         self.qps = qps
@@ -36,6 +37,7 @@ class RateLimitedClient:
             base_url=base_url,
             timeout=timeout,
             headers=headers or {},
+            auth=auth,
         )
 
     async def _refill_tokens(self) -> None:

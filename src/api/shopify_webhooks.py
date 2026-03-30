@@ -204,6 +204,23 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
         )
         logger.warning("Order #%s flagged for fraud: %s", shopify_order_id, fraud_result.reasons)
 
+    # Push to ShipStation (skip if flagged for fraud)
+    if not fraud_result.is_flagged and settings.shipstation_api_key:
+        try:
+            ss_result = await _get_shipping().create_shipstation_order({
+                **order_record,
+                "shipping_address": order_data.get("shipping_address", {}),
+                "billing_address": order_data.get("billing_address", {}),
+                "line_items": order_data.get("line_items", []),
+                "order_number": order_data.get("order_number", shopify_order_id),
+            })
+            if ss_result.get("orderId"):
+                logger.info("Order #%s pushed to ShipStation (SS ID: %s)", shopify_order_id, ss_result["orderId"])
+            elif ss_result.get("error"):
+                logger.error("ShipStation push failed for order #%s: %s", shopify_order_id, ss_result)
+        except Exception:
+            logger.exception("ShipStation push failed for order #%s", shopify_order_id)
+
     # Send order confirmation email
     if customer_email:
         shipping_addr = order_data.get("shipping_address", {})

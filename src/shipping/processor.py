@@ -1,7 +1,7 @@
 """Shipping processor with ShipStation integration and fraud detection.
 
-Handles label generation, insurance validation, and fraud checks
-(high-value orders, velocity detection).
+Handles ShipStation order creation, rate fetching, tracking lookups,
+insurance validation, and fraud checks (high-value orders, velocity detection).
 """
 
 import logging
@@ -25,7 +25,7 @@ class FraudCheckResult:
 
 
 class ShippingProcessor:
-    """Process orders for shipping with fraud checks and insurance validation."""
+    """Process orders for shipping with fraud checks and ShipStation integration."""
 
     def __init__(self):
         self._db = Database()
@@ -33,10 +33,210 @@ class ShippingProcessor:
         self._shipstation = RateLimitedClient(
             base_url=settings.shipstation_base_url,
             qps=settings.shipstation_qps,
-            headers={
-                "Content-Type": "application/json",
-            },
+            headers={"Content-Type": "application/json"},
+            auth=(settings.shipstation_api_key, settings.shipstation_api_secret)
+            if settings.shipstation_api_key
+            else None,
         )
+
+    # ── ShipStation API ──
+
+    async def create_shipstation_order(self, order_data: dict[str, Any]) -> dict[str, Any]:
+        """Create an order in ShipStation from a Shopify order.
+
+        Maps Shopify order fields to ShipStation's /orders/createorder format.
+        Returns the ShipStation order response or error dict.
+        """
+        if not settings.shipstation_api_key:
+            logger.warning("ShipStation API key not configured, skipping order push")
+            return {"skipped": True, "reason": "no_api_key"}
+
+        shopify_order_id = order_data.get("shopify_order_id") or order_data.get("id")
+        shipping_addr = order_data.get("shipping_address", {})
+        billing_addr = order_data.get("billing_address", shipping_addr)
+        line_items = order_data.get("line_items", [])
+
+        # Map to ShipStation order format
+        ss_order = {
+            "orderNumber": str(order_data.get("order_number", shopify_order_id)),
+            "orderKey": str(shopify_order_id),
+            "orderDate": order_data.get("created_at", ""),
+            "orderStatus": "awaiting_shipment",
+            "customerEmail": order_data.get("buyer_email", order_data.get("email", "")),
+            "amountPaid": float(order_data.get("total", 0)),
+            "taxAmount": float(order_data.get("tax", 0)),
+            "shippingAmount": float(order_data.get("shipping_cost", 0)),
+            "billTo": {
+                "name": billing_addr.get("name", order_data.get("buyer_name", "")),
+                "street1": billing_addr.get("address1", ""),
+                "street2": billing_addr.get("address2", ""),
+                "city": billing_addr.get("city", ""),
+                "state": billing_addr.get("province_code", billing_addr.get("province", "")),
+                "postalCode": billing_addr.get("zip", ""),
+                "country": billing_addr.get("country_code", billing_addr.get("country", "US")),
+                "phone": billing_addr.get("phone", ""),
+            },
+            "shipTo": {
+                "name": shipping_addr.get("name", order_data.get("buyer_name", "")),
+                "street1": shipping_addr.get("address1", ""),
+                "street2": shipping_addr.get("address2", ""),
+                "city": shipping_addr.get("city", ""),
+                "state": shipping_addr.get("province_code", shipping_addr.get("province", "")),
+                "postalCode": shipping_addr.get("zip", ""),
+                "country": shipping_addr.get("country_code", shipping_addr.get("country", "US")),
+                "phone": shipping_addr.get("phone", ""),
+            },
+            "items": [
+                {
+                    "lineItemKey": str(item.get("id", "")),
+                    "sku": item.get("sku", ""),
+                    "name": item.get("title", item.get("name", "Item")),
+                    "quantity": int(item.get("quantity", 1)),
+                    "unitPrice": float(item.get("price", 0)),
+                    "weight": {
+                        "value": float(item.get("grams", 0)) / 28.3495 if item.get("grams") else 1.0,
+                        "units": "ounces",
+                    },
+                }
+                for item in line_items
+            ],
+            "advancedOptions": {
+                "storeId": None,
+                "customField1": f"Shopify #{shopify_order_id}",
+            },
+            "insuranceOptions": {
+                "provider": "carrier" if float(order_data.get("total", 0)) <= settings.carrier_insurance_cap else "shipsurance",
+                "insureShipment": float(order_data.get("total", 0)) >= settings.insurance_required_above,
+                "insuredValue": float(order_data.get("total", 0)),
+            },
+        }
+
+        response = await self._shipstation.post("/orders/createorder", json=ss_order)
+
+        if response.status_code in (200, 201):
+            result = response.json()
+            ss_order_id = result.get("orderId")
+            logger.info(
+                "ShipStation order created: %s (SS ID: %s)",
+                shopify_order_id, ss_order_id,
+            )
+            return result
+        else:
+            error_msg = response.text
+            logger.error(
+                "ShipStation order creation failed for %s: %s %s",
+                shopify_order_id, response.status_code, error_msg,
+            )
+            return {"error": True, "status_code": response.status_code, "detail": error_msg}
+
+    async def get_shipping_rates(self, order_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """Fetch available shipping rates from ShipStation for an order.
+
+        Returns a list of rate options with carrier, service, price.
+        """
+        if not settings.shipstation_api_key:
+            return []
+
+        shipping_addr = order_data.get("shipping_address", {})
+        total_weight_oz = sum(
+            float(item.get("grams", 0)) / 28.3495 if item.get("grams") else 1.0
+            for item in order_data.get("line_items", [])
+        )
+
+        rate_request = {
+            "carrierCode": "",  # Empty = all carriers
+            "fromPostalCode": settings.ship_from_zip if hasattr(settings, "ship_from_zip") else "10001",
+            "toState": shipping_addr.get("province_code", shipping_addr.get("province", "")),
+            "toCountry": shipping_addr.get("country_code", shipping_addr.get("country", "US")),
+            "toPostalCode": shipping_addr.get("zip", ""),
+            "toCity": shipping_addr.get("city", ""),
+            "weight": {
+                "value": max(total_weight_oz, 1.0),
+                "units": "ounces",
+            },
+            "confirmation": "delivery",
+            "residential": True,
+        }
+
+        response = await self._shipstation.post("/shipments/getrates", json=rate_request)
+
+        if response.status_code == 200:
+            rates = response.json()
+            logger.info("Got %d shipping rates", len(rates))
+            return [
+                {
+                    "carrier": r.get("carrierCode", ""),
+                    "service": r.get("serviceName", ""),
+                    "service_code": r.get("serviceCode", ""),
+                    "price": r.get("shipmentCost", 0) + r.get("otherCost", 0),
+                    "days": r.get("estimatedDeliveryDate", ""),
+                }
+                for r in rates
+            ]
+        else:
+            logger.error("Failed to get rates: %s %s", response.status_code, response.text)
+            return []
+
+    async def get_tracking(self, shipstation_order_id: int) -> dict[str, Any]:
+        """Get tracking info for a ShipStation order.
+
+        Fetches shipments for the order and returns tracking details.
+        """
+        if not settings.shipstation_api_key:
+            return {"error": "no_api_key"}
+
+        response = await self._shipstation.get(
+            f"/orders/{shipstation_order_id}",
+        )
+
+        if response.status_code != 200:
+            return {"error": f"Failed to fetch order: {response.status_code}"}
+
+        order = response.json()
+        ss_order_id = order.get("orderId")
+
+        # Fetch shipments for this order
+        shipments_resp = await self._shipstation.get(
+            "/shipments", params={"orderId": ss_order_id},
+        )
+
+        if shipments_resp.status_code != 200:
+            return {"error": f"Failed to fetch shipments: {shipments_resp.status_code}"}
+
+        data = shipments_resp.json()
+        shipments = data.get("shipments", [])
+
+        if not shipments:
+            return {
+                "status": "no_shipments",
+                "order_status": order.get("orderStatus", "unknown"),
+            }
+
+        latest = shipments[0]
+        return {
+            "status": "shipped",
+            "tracking_number": latest.get("trackingNumber", ""),
+            "carrier": latest.get("carrierCode", ""),
+            "service": latest.get("serviceCode", ""),
+            "ship_date": latest.get("shipDate", ""),
+            "delivery_date": latest.get("deliveryDate", ""),
+            "label_cost": latest.get("shipmentCost", 0),
+        }
+
+    async def list_carriers(self) -> list[dict[str, str]]:
+        """List all carriers configured in ShipStation account."""
+        if not settings.shipstation_api_key:
+            return []
+
+        response = await self._shipstation.get("/carriers")
+        if response.status_code == 200:
+            return [
+                {"code": c.get("code", ""), "name": c.get("name", "")}
+                for c in response.json()
+            ]
+        return []
+
+    # ── Fraud Detection ──
 
     def check_fraud(self, order: dict[str, Any]) -> FraudCheckResult:
         """Run fraud detection checks on an order."""
@@ -91,7 +291,7 @@ class ShippingProcessor:
         }
 
     async def process_order(self, order: dict[str, Any]) -> dict[str, str]:
-        """Process a new order: fraud check, insurance validation, label generation."""
+        """Process a new order: fraud check, insurance validation, push to ShipStation."""
         order_id = order.get("shopify_order_id") or order.get("id")
         total = float(order.get("total", 0))
 
@@ -127,9 +327,19 @@ class ShippingProcessor:
             self._db.update_order_status(order_id, "insurance_hold")
             return {"status": "insurance_hold", "gap": insurance["gap"]}
 
-        # All clear — queue for label generation
+        # Push to ShipStation
+        ss_result = await self.create_shipstation_order(order)
+        if ss_result.get("error"):
+            logger.error("ShipStation push failed for order %s: %s", order_id, ss_result)
+            # Don't block the order, just log it
+            self._db.update_order_status(order_id, "ready_to_ship")
+            return {"status": "ready_to_ship", "shipstation": "failed"}
+
         self._db.update_order_status(order_id, "ready_to_ship")
-        return {"status": "ready_to_ship"}
+        return {
+            "status": "ready_to_ship",
+            "shipstation_order_id": ss_result.get("orderId"),
+        }
 
     async def close(self) -> None:
         await self._shipstation.close()
