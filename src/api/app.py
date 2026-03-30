@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 import sentry_sdk
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 
+from src.api.inbound_email import handle_inbound_email
 from src.api.shopify_webhooks import (
     handle_checkout_webhook,
     handle_customer_webhook,
@@ -116,6 +117,14 @@ async def shopify_customers_webhook(request: Request, background_tasks: Backgrou
 async def shopify_checkouts_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle checkouts/create and checkouts/update webhooks."""
     return await handle_checkout_webhook(request, background_tasks)
+
+
+# ── Inbound Email (SendGrid Inbound Parse) ──
+
+@app.post("/inbound/email")
+async def inbound_email(request: Request):
+    """Receive customer emails via SendGrid Inbound Parse webhook."""
+    return await handle_inbound_email(request)
 
 
 # ── Listing Generation ──
