@@ -79,6 +79,13 @@ async def validate_shopify_request(request: Request) -> tuple[bytes, dict[str, A
 
 async def _process_order(order_data: dict[str, Any]) -> None:
     """Process a Shopify order: persist, upsert customer, check fraud, emit events."""
+    try:
+        await _process_order_inner(order_data)
+    except Exception:
+        logger.exception("Failed to process order %s", order_data.get("id"))
+
+
+async def _process_order_inner(order_data: dict[str, Any]) -> None:
     shopify_order_id = order_data.get("id")
 
     # Idempotency check
