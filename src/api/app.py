@@ -87,6 +87,12 @@ async def health():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
+        "config": {
+            "supabase_url_set": bool(settings.supabase_url),
+            "supabase_key_set": bool(settings.supabase_key),
+            "slack_token_set": bool(settings.slack_bot_token),
+            "shopify_domain": settings.shopify_shop_domain,
+        },
         "modules": {
             "shopify": {"status": "ok"},
             "shipping": {"status": "ok"},
