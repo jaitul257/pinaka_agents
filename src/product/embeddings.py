@@ -8,9 +8,6 @@ import json
 import logging
 from pathlib import Path
 
-import chromadb
-from openai import OpenAI
-
 from src.core.settings import settings
 from src.product.schema import Product
 
@@ -23,6 +20,9 @@ class ProductEmbeddings:
     """Manage product embeddings in Chroma vector DB."""
 
     def __init__(self, persist_dir: str = "./chroma_data"):
+        import chromadb
+        from openai import OpenAI
+
         self._chroma = chromadb.PersistentClient(path=persist_dir)
         self._collection = self._chroma.get_or_create_collection(
             name=COLLECTION_NAME,

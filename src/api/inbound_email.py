@@ -13,7 +13,6 @@ from src.core.database import Database
 from src.core.settings import settings
 from src.core.slack import SlackNotifier
 from src.customer.classifier import MessageClassifier
-from src.product.embeddings import ProductEmbeddings
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +50,7 @@ def _get_classifier():
 def _get_embeddings():
     global _embeddings
     if _embeddings is None:
+        from src.product.embeddings import ProductEmbeddings
         _embeddings = ProductEmbeddings()
     return _embeddings
 
