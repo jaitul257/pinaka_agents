@@ -204,6 +204,38 @@ class Database:
         )
         return result.data[0] if result.data else {}
 
+    # ── Products ──
+
+    def upsert_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
+        """Insert or update a product by SKU."""
+        result = (
+            self._client.table("products")
+            .upsert(product_data, on_conflict="sku")
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def get_product_by_sku(self, sku: str) -> dict[str, Any] | None:
+        result = (
+            self._client.table("products")
+            .select("*")
+            .eq("sku", sku)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    def get_all_products(self) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("products")
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return result.data or []
+
+    def delete_product(self, sku: str) -> None:
+        self._client.table("products").delete().eq("sku", sku).execute()
+
     # ── Messages ──
 
     def create_message(self, message_data: dict[str, Any]) -> dict[str, Any]:

@@ -228,12 +228,34 @@ async def generate_listing(request: Request):
 
 @app.post("/cron/sync-products", dependencies=[Depends(verify_cron_secret)])
 async def cron_sync_products():
-    """Scan data/products/ directory and embed all product JSON files for RAG search."""
+    """Load products from Supabase and embed for RAG search."""
     from src.product.embeddings import ProductEmbeddings
+    from src.product.schema import Product
 
+    db = Database()
     embeddings = ProductEmbeddings()
     before = embeddings.product_count()
-    embedded = embeddings.embed_all_from_directory("./data/products")
+    embedded = 0
+
+    products = db.get_all_products()
+    for p in products:
+        try:
+            product_obj = Product(
+                sku=p["sku"],
+                name=p["name"],
+                category=p.get("category", ""),
+                materials=p.get("materials", {}),
+                pricing=p.get("pricing", {}),
+                story=p.get("story", ""),
+                care_instructions=p.get("care_instructions", ""),
+                occasions=p.get("occasions", []),
+                certification=p.get("certification"),
+                tags=p.get("tags", []),
+            )
+            embeddings.embed_product(product_obj)
+            embedded += 1
+        except Exception:
+            logger.exception("Failed to embed product %s", p.get("sku"))
 
     return {
         "status": "ok",

@@ -6,18 +6,24 @@ Product catalog management, password-gated. Styled per DESIGN.md.
 import hmac
 import json
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, Cookie, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from src.core.database import Database
 from src.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-PRODUCTS_DIR = Path("./data/products")
+_db = None
+
+def _get_db():
+    global _db
+    if _db is None:
+        _db = Database()
+    return _db
 
 # ── Auth ──
 
@@ -203,17 +209,7 @@ async def products_page(dash_token: str | None = Cookie(None), msg: str = ""):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
-    PRODUCTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    products = []
-    for path in sorted(PRODUCTS_DIR.glob("*.json")):
-        try:
-            with open(path) as f:
-                prod = json.load(f)
-                prod["_file"] = path.stem
-                products.append(prod)
-        except Exception:
-            pass
+    products = _get_db().get_all_products()
 
     # Metrics
     total = len(products)
@@ -507,10 +503,22 @@ async def add_product_submit(
             "color": cert_color,
         }
 
-    # Save to file
-    PRODUCTS_DIR.mkdir(parents=True, exist_ok=True)
-    filepath = PRODUCTS_DIR / f"{sku}.json"
-    filepath.write_text(json.dumps(product_data, indent=2))
+    # Save to Supabase
+    db_record = {
+        "sku": sku,
+        "name": name,
+        "category": category,
+        "materials": product_data["materials"],
+        "pricing": product_data["pricing"],
+        "story": story,
+        "care_instructions": care,
+        "occasions": product_data["occasions"],
+        "tags": product_data["tags"],
+    }
+    if product_data.get("certification"):
+        db_record["certification"] = product_data["certification"]
+
+    _get_db().upsert_product(db_record)
 
     # Embed for search
     if embed:
@@ -529,8 +537,8 @@ async def add_product_submit(
         try:
             from src.core.shopify_client import ShopifyClient
             shopify = ShopifyClient()
-            tags_list = product_data.get("tags", [])
-            tags_list.append(sku)  # Include SKU as tag for lookup
+            tags_list = list(product_data.get("tags", []))
+            tags_list.append(sku)
             result = await shopify.create_product(
                 title=name,
                 body_html=f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
@@ -539,6 +547,8 @@ async def add_product_submit(
             )
             await shopify.close()
             shopify_id = result.get("id", "")
+            if shopify_id:
+                _get_db().upsert_product({"sku": sku, "shopify_product_id": shopify_id})
             logger.info("Product %s pushed to Shopify as draft (ID: %s)", sku, shopify_id)
         except Exception:
             logger.exception("Shopify push failed for %s", sku)
@@ -553,12 +563,9 @@ async def edit_product_page(sku: str, dash_token: str | None = Cookie(None)):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
-    filepath = PRODUCTS_DIR / f"{sku}.json"
-    if not filepath.exists():
+    product = _get_db().get_product_by_sku(sku)
+    if not product:
         return RedirectResponse("/dashboard?msg=Product+not+found", status_code=303)
-
-    with open(filepath) as f:
-        product = json.load(f)
 
     body = f"""
         <h1>Edit Product</h1>
@@ -624,9 +631,22 @@ async def edit_product_submit(
             "color": cert_color,
         }
 
-    PRODUCTS_DIR.mkdir(parents=True, exist_ok=True)
-    filepath = PRODUCTS_DIR / f"{sku}.json"
-    filepath.write_text(json.dumps(product_data, indent=2))
+    # Save to Supabase
+    db_record = {
+        "sku": sku,
+        "name": name,
+        "category": category,
+        "materials": product_data["materials"],
+        "pricing": product_data["pricing"],
+        "story": story,
+        "care_instructions": care,
+        "occasions": product_data["occasions"],
+        "tags": product_data["tags"],
+    }
+    if product_data.get("certification"):
+        db_record["certification"] = product_data["certification"]
+
+    _get_db().upsert_product(db_record)
 
     if embed:
         try:
@@ -642,7 +662,7 @@ async def edit_product_submit(
         try:
             from src.core.shopify_client import ShopifyClient
             shopify = ShopifyClient()
-            tags_list = product_data.get("tags", [])
+            tags_list = list(product_data.get("tags", []))
             tags_list.append(sku)
             result = await shopify.create_product(
                 title=name,
@@ -651,7 +671,10 @@ async def edit_product_submit(
                 product_type=category,
             )
             await shopify.close()
-            logger.info("Product %s pushed to Shopify as draft (ID: %s)", sku, result.get("id", ""))
+            shopify_id = result.get("id", "")
+            if shopify_id:
+                _get_db().upsert_product({"sku": sku, "shopify_product_id": shopify_id})
+            logger.info("Product %s pushed to Shopify as draft (ID: %s)", sku, shopify_id)
         except Exception:
             logger.exception("Shopify push failed for %s", sku)
 
@@ -665,8 +688,6 @@ async def delete_product(sku: str, dash_token: str | None = Cookie(None)):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
-    filepath = PRODUCTS_DIR / f"{sku}.json"
-    if filepath.exists():
-        filepath.unlink()
+    _get_db().delete_product(sku)
 
     return RedirectResponse(f"/dashboard?msg=Product+{sku}+deleted", status_code=303)
