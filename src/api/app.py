@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 
@@ -84,9 +85,12 @@ async def _verify_slack_request(request: Request, body: bytes) -> None:
 @app.get("/health")
 async def health():
     """Per-module health status reporting."""
+    env_keys = [k for k in os.environ if k.upper().startswith(("SUPABASE", "SLACK", "SHOPIFY", "ANTHROPIC", "SENDGRID"))]
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
+        "env_vars_found": sorted(env_keys),
+        "env_var_count": len(list(os.environ)),
         "config": {
             "supabase_url_set": bool(settings.supabase_url),
             "supabase_key_set": bool(settings.supabase_key),
