@@ -11,6 +11,7 @@ import sentry_sdk
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 
 from src.api.inbound_email import handle_inbound_email
+from src.dashboard.web import router as dashboard_router
 from src.api.shopify_webhooks import (
     handle_checkout_webhook,
     handle_customer_webhook,
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pinaka Agents", version="0.3.0", lifespan=lifespan)
+app.include_router(dashboard_router)
 
 
 # ── Auth Dependencies ──
