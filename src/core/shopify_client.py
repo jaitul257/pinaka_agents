@@ -172,13 +172,18 @@ class ShopifyClient:
         }
 
         data = await self._graphql(mutation, variables)
-        result = data.get("productCreate", {})
+        result = data.get("productCreate") or {}
 
-        if result.get("userErrors"):
-            logger.error("Product create errors: %s", result["userErrors"])
-            return {"error": result["userErrors"]}
+        user_errors = result.get("userErrors") or []
+        if user_errors:
+            logger.error("Product create errors: %s", user_errors)
+            return {"error": user_errors}
 
-        product = result.get("product", {})
+        product = result.get("product") or {}
+        if not product:
+            logger.error("No product returned from productCreate")
+            return {}
+
         # Extract numeric ID from GID (gid://shopify/Product/12345 -> 12345)
         gid = product.get("id", "")
         numeric_id = gid.split("/")[-1] if gid else ""
