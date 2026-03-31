@@ -1,33 +1,53 @@
 {
-  "_comment": "Railway cron services. Create 4 cron services, each with CRON_JOB env var set and CRON_SECRET matching the web service.",
+  "_comment": "Railway native cron schedule. Create these as separate cron services in Railway, each hitting the main web service URL with the X-Cron-Secret header.",
   "crons": [
     {
-      "name": "every-30-min",
-      "env": "CRON_JOB=every-30-min",
-      "schedule": "*/30 * * * *",
-      "command": "bash scripts/run_crons.sh",
-      "description": "Reconcile orders, check crafting updates, abandoned carts"
+      "name": "check-orders",
+      "endpoint": "/cron/check-orders",
+      "schedule": "*/10 * * * *",
+      "description": "Poll Etsy for new orders every 10 minutes"
+    },
+    {
+      "name": "conversations",
+      "endpoint": "/cron/conversations",
+      "schedule": "*/10 * * * *",
+      "description": "Poll Etsy conversations for new messages every 10 minutes"
     },
     {
       "name": "daily-stats",
-      "env": "CRON_JOB=daily-stats",
-      "schedule": "30 18 * * *",
-      "command": "bash scripts/run_crons.sh",
-      "description": "Collect daily stats at midnight IST (6:30 PM UTC)"
+      "endpoint": "/cron/daily-stats",
+      "schedule": "0 23 * * *",
+      "description": "Collect daily marketing stats at 11 PM UTC"
+    },
+    {
+      "name": "daily-orders",
+      "endpoint": "/cron/daily-orders",
+      "schedule": "0 22 * * *",
+      "description": "Sync orders and calculate financials at 10 PM UTC"
     },
     {
       "name": "morning-digest",
-      "env": "CRON_JOB=morning-digest",
-      "schedule": "30 2 * * *",
-      "command": "bash scripts/run_crons.sh",
-      "description": "Morning digest at 8 AM IST (2:30 AM UTC)"
+      "endpoint": "/cron/morning-digest",
+      "schedule": "0 13 * * *",
+      "description": "Morning digest at 8 AM IST (1 PM UTC)"
     },
     {
-      "name": "weekly",
-      "env": "CRON_JOB=weekly",
-      "schedule": "30 3 * * 1",
-      "command": "bash scripts/run_crons.sh",
-      "description": "Weekly rollup + finance Mondays at 9 AM IST (3:30 AM UTC)"
+      "name": "weekly-roas",
+      "endpoint": "/cron/weekly-roas",
+      "schedule": "0 14 * * 1",
+      "description": "Weekly ROAS report Mondays at 9 AM IST (2 PM UTC)"
+    },
+    {
+      "name": "weekly-finance",
+      "endpoint": "/cron/weekly-finance",
+      "schedule": "0 14 * * 1",
+      "description": "Weekly finance summary Mondays at 9 AM IST (2 PM UTC)"
+    },
+    {
+      "name": "weekly-rollup",
+      "endpoint": "/cron/weekly-rollup",
+      "schedule": "0 14 * * 1",
+      "description": "Weekly rollup to Slack Mondays at 9 AM IST (2 PM UTC)"
     }
   ]
 }

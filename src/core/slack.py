@@ -4,6 +4,7 @@ Handles all Slack notifications: customer response reviews, listing drafts,
 budget changes, shipping/fraud alerts, morning digest, and weekly rollup.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -267,6 +268,163 @@ class SlackNotifier:
             },
         ]
         return await self.send_blocks(blocks, text=message)
+
+    async def send_webhook_health_alert(
+        self,
+        re_registered: list[str],
+        failed: list[str],
+    ) -> dict[str, Any]:
+        """Alert when webhook subscriptions were missing and auto-recovery was attempted."""
+        status_lines = []
+        for topic in re_registered:
+            status_lines.append(f":white_check_mark: `{topic}` — re-registered")
+        for topic in failed:
+            status_lines.append(f":x: `{topic}` — FAILED to re-register")
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": ":rotating_light: WEBHOOK HEALTH ALERT"},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        "Shopify webhook subscriptions were missing (likely auto-deleted "
+                        "after timeout failures). Auto-recovery results:\n\n"
+                        + "\n".join(status_lines)
+                    ),
+                },
+            },
+        ]
+        return await self.send_blocks(
+            blocks, text=f"Webhook health: {len(re_registered)} restored, {len(failed)} failed"
+        )
+
+    async def send_refund_alert(
+        self,
+        order_number: str,
+        refund_amount: float,
+        reason: str,
+        is_partial: bool,
+    ) -> dict[str, Any]:
+        """Alert when a refund is processed."""
+        badge = "PARTIAL REFUND" if is_partial else "FULL REFUND"
+        emoji = ":moneybag:" if is_partial else ":money_with_wings:"
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"{emoji} {badge}"},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Order:* #{order_number}"},
+                    {"type": "mrkdwn", "text": f"*Amount:* ${refund_amount:,.2f}"},
+                    {"type": "mrkdwn", "text": f"*Reason:* {reason or 'Not specified'}"},
+                ],
+            },
+        ]
+        return await self.send_blocks(
+            blocks, text=f"{badge}: Order #{order_number}, ${refund_amount:,.2f}"
+        )
+
+    async def send_chargeback_evidence_ready(
+        self,
+        order_number: str,
+        total: float,
+        tracking_number: str,
+        carrier: str,
+        delivered_at: str,
+    ) -> dict[str, Any]:
+        """Notify that chargeback evidence has been collected for an order."""
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": ":shield: CHARGEBACK EVIDENCE READY"},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Order:* #{order_number}"},
+                    {"type": "mrkdwn", "text": f"*Total:* ${total:,.2f}"},
+                    {"type": "mrkdwn", "text": f"*Tracking:* {tracking_number} ({carrier})"},
+                    {"type": "mrkdwn", "text": f"*Delivered:* {delivered_at}"},
+                ],
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"Evidence package available at `GET /api/orders/{order_number}/evidence`",
+                },
+            },
+        ]
+        return await self.send_blocks(
+            blocks, text=f"Chargeback evidence ready for Order #{order_number}"
+        )
+
+    async def send_reorder_reminder_review(
+        self,
+        customer_name: str,
+        customer_email: str,
+        last_order_number: str,
+        last_order_total: float,
+        days_since: int,
+        email_draft: str,
+        customer_id: int,
+    ) -> dict[str, Any]:
+        """Post a reorder reminder draft for founder review."""
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": ":gift: REORDER REMINDER REVIEW"},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Customer:* {customer_name}"},
+                    {"type": "mrkdwn", "text": f"*Email:* {customer_email}"},
+                    {"type": "mrkdwn", "text": f"*Last Order:* #{last_order_number} (${last_order_total:,.2f})"},
+                    {"type": "mrkdwn", "text": f"*Days Since:* {days_since}"},
+                ],
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "block_id": "reorder_draft",
+                "text": {"type": "mrkdwn", "text": f"*AI Draft:*\n{email_draft}"},
+            },
+            {"type": "divider"},
+            {
+                "type": "actions",
+                "block_id": f"reorder_review_{customer_id}",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Approve & Send"},
+                        "style": "primary",
+                        "action_id": "approve_reorder",
+                        "value": json.dumps({
+                            "customer_id": customer_id,
+                            "customer_email": customer_email,
+                            "customer_name": customer_name,
+                        }),
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Skip"},
+                        "action_id": "skip_reorder",
+                        "value": str(customer_id),
+                    },
+                ],
+            },
+        ]
+        return await self.send_blocks(
+            blocks, text=f"Reorder reminder for {customer_name} ({days_since} days)"
+        )
 
     # ── New Shopify Templates ──
 

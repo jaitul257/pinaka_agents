@@ -251,12 +251,14 @@ def test_cron_morning_digest(mock_db_cls, mock_slack_cls, mock_shopify_cls, clie
         {"topic": "orders/create"},
         {"topic": "customers/create"},
         {"topic": "checkouts/create"},
+        {"topic": "refunds/create"},
     ]
 
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    response = client.post("/cron/morning-digest", headers=cron_headers)
+    with patch.object(settings, "webhook_base_url", "https://test.example.com"):
+        response = client.post("/cron/morning-digest", headers=cron_headers)
     assert response.status_code == 200
     mock_slack.send_blocks.assert_called_once()
     mock_shopify.get_webhooks.assert_called_once()
@@ -277,22 +279,17 @@ def test_cron_morning_digest_missing_webhooks(mock_db_cls, mock_slack_cls, mock_
     mock_shopify_cls.return_value = mock_shopify
     mock_shopify.get_webhooks.return_value = [
         {"topic": "orders/create"},
-    ]  # Missing customers/create and checkouts/create
+    ]  # Missing customers/create, checkouts/create, refunds/create
 
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    response = client.post("/cron/morning-digest", headers=cron_headers)
+    with patch.object(settings, "webhook_base_url", "https://test.example.com"):
+        response = client.post("/cron/morning-digest", headers=cron_headers)
     assert response.status_code == 200
 
-    blocks = mock_slack.send_blocks.call_args[0][0]
-    warning_texts = [
-        b["text"]["text"] for b in blocks
-        if b["type"] == "section" and "missing" in b.get("text", {}).get("text", "").lower()
-    ]
-    assert len(warning_texts) == 1
-    assert "checkouts/create" in warning_texts[0]
-    assert "customers/create" in warning_texts[0]
+    # Webhook health should have attempted re-registration for missing topics
+    assert mock_shopify.create_webhook.call_count >= 1
 
 
 # ── Cron: Weekly Rollup ──

@@ -247,6 +247,22 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
             shipping_address=address_str,
         )
 
+    # Fire Meta Conversions API purchase event (only for paid orders)
+    if order_data.get("financial_status") == "paid":
+        try:
+            from src.marketing.meta_capi import MetaConversionsAPI
+            meta = MetaConversionsAPI()
+            if meta.is_configured:
+                await meta.send_purchase_event(
+                    order_data=order_data,
+                    customer_email=customer_email,
+                    customer_phone=customer_data.get("phone", ""),
+                    customer_first_name=customer_data.get("first_name", ""),
+                    customer_last_name=customer_data.get("last_name", ""),
+                )
+        except Exception:
+            logger.exception("Meta CAPI failed for order #%s (non-blocking)", shopify_order_id)
+
     logger.info("Order #%s processed: $%.2f from %s", shopify_order_id, total, customer_name)
 
 
@@ -269,6 +285,103 @@ async def _process_customer(customer_data: dict[str, Any]) -> None:
 
     await event_bus.emit("customer.created", {"customer_data": customer_data})
     logger.info("Customer %s upserted: %s", shopify_customer_id, name or email)
+
+
+async def _process_refund(refund_data: dict[str, Any]) -> None:
+    """Process a Shopify refunds/create webhook."""
+    try:
+        await _process_refund_inner(refund_data)
+    except Exception:
+        logger.exception("Failed to process refund %s", refund_data.get("id"))
+
+
+async def _process_refund_inner(refund_data: dict[str, Any]) -> None:
+    shopify_refund_id = refund_data.get("id")
+    shopify_order_id = refund_data.get("order_id")
+
+    if not shopify_refund_id or not shopify_order_id:
+        logger.warning("Refund webhook missing id or order_id, skipping")
+        return
+
+    db = _get_db()
+
+    # Idempotency: skip if we already processed this refund
+    if db.get_refund_by_shopify_id(shopify_refund_id):
+        logger.info("Refund %s already processed, skipping", shopify_refund_id)
+        return
+
+    # Look up the order
+    order = db.get_order_by_shopify_id(shopify_order_id)
+    if not order:
+        # Race condition: refund arrived before order. Retry with backoff.
+        import asyncio
+        for attempt in range(3):
+            await asyncio.sleep(30)
+            order = db.get_order_by_shopify_id(shopify_order_id)
+            if order:
+                break
+        if not order:
+            logger.error("Order %s not found after 3 retries, cannot process refund %s", shopify_order_id, shopify_refund_id)
+            return
+
+    # Calculate total refund amount from this webhook (filter for successful refund transactions)
+    transactions = refund_data.get("transactions", [])
+    refund_transactions = [
+        t for t in transactions
+        if t.get("kind") == "refund" and t.get("status") == "success"
+    ]
+    refund_amount = sum(float(t.get("amount", 0)) for t in refund_transactions)
+    if refund_amount <= 0:
+        # Fallback: sum refund line items
+        refund_line_items = refund_data.get("refund_line_items", [])
+        refund_amount = sum(
+            float(li.get("subtotal", 0)) for li in refund_line_items
+        )
+
+    if refund_amount <= 0:
+        logger.warning("Refund %s has zero amount, skipping", shopify_refund_id)
+        return
+
+    order_total = float(order.get("total", 0))
+    current_refund_amount = float(order.get("refund_amount") or 0)
+    is_partial = (current_refund_amount + refund_amount) < order_total
+
+    reason = refund_data.get("note", "") or ""
+
+    # Create refund record (also updates order.refund_amount)
+    db.create_refund({
+        "order_id": order["id"],
+        "shopify_refund_id": shopify_refund_id,
+        "amount": refund_amount,
+        "reason": reason,
+        "is_partial": is_partial,
+    })
+
+    # Send Slack alert
+    await _get_slack().send_refund_alert(
+        order_number=str(shopify_order_id),
+        refund_amount=refund_amount,
+        reason=reason,
+        is_partial=is_partial,
+    )
+
+    # Send refund confirmation email
+    customer_email = order.get("buyer_email", "")
+    customer_name = order.get("buyer_name", "")
+    if customer_email:
+        _get_email().send_refund_confirmation(
+            to_email=customer_email,
+            customer_name=customer_name or customer_email,
+            order_number=str(shopify_order_id),
+            refund_amount=refund_amount,
+            is_partial=is_partial,
+        )
+
+    logger.info(
+        "Refund #%s processed: $%.2f for order #%s (%s)",
+        shopify_refund_id, refund_amount, shopify_order_id,
+        "partial" if is_partial else "full",
+    )
 
 
 async def _process_checkout(checkout_data: dict[str, Any]) -> None:
@@ -323,6 +436,13 @@ async def handle_checkout_webhook(request: Request, background_tasks: Background
     """Handle checkouts/create and checkouts/update webhooks."""
     _, checkout_data = await validate_shopify_request(request)
     background_tasks.add_task(_process_checkout, checkout_data)
+    return {"status": "received"}
+
+
+async def handle_refund_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle refunds/create webhooks."""
+    _, refund_data = await validate_shopify_request(request)
+    background_tasks.add_task(_process_refund, refund_data)
     return {"status": "received"}
 
 

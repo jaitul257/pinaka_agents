@@ -143,6 +143,28 @@ class EmailSender:
             to_name=customer_name,
         )
 
+    def send_refund_confirmation(
+        self,
+        to_email: str,
+        customer_name: str,
+        order_number: str,
+        refund_amount: float,
+        is_partial: bool = False,
+    ) -> bool:
+        """Send refund confirmation email to customer."""
+        return self.send(
+            to_email=to_email,
+            template_id=settings.sendgrid_refund_confirmation_template_id,
+            template_data={
+                "customer_name": customer_name,
+                "order_number": order_number,
+                "refund_amount": f"${refund_amount:,.2f}",
+                "is_partial": is_partial,
+                "founder_name": settings.founder_name,
+            },
+            to_name=customer_name,
+        )
+
     def send_order_confirmation(
         self,
         to_email: str,
@@ -171,6 +193,24 @@ class EmailSender:
                 "total": f"${total:,.2f}",
                 "shipping_address": shipping_address,
                 "made_to_order_days": settings.made_to_order_days,
+                "founder_name": settings.founder_name,
+            },
+            to_name=customer_name,
+        )
+
+    def send_reorder_reminder(
+        self,
+        to_email: str,
+        customer_name: str,
+        email_body: str,
+    ) -> bool:
+        """Send reorder reminder email to past customer."""
+        return self.send(
+            to_email=to_email,
+            template_id=settings.sendgrid_reorder_reminder_template_id,
+            template_data={
+                "customer_name": customer_name,
+                "email_body": email_body,
                 "founder_name": settings.founder_name,
             },
             to_name=customer_name,

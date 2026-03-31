@@ -88,21 +88,24 @@ class FinanceCalculator:
         """Calculate profit for a single order.
 
         order dict should have: shopify_order_id, total, cogs (cost of goods),
-        shipping_cost, ad_spend (optional).
+        shipping_cost, ad_spend (optional), refund_amount (optional).
         """
         revenue = float(order.get("total", 0))
+        refund_amount = float(order.get("refund_amount") or 0)
+        effective_revenue = revenue - refund_amount
+
         cogs = float(order.get("cogs", 0))
         shipping_cost = float(order.get("shipping_cost", 0))
         ad_spend = float(order.get("ad_spend", 0))
 
-        shopify_fees = self.calculate_shopify_fees(revenue)
+        shopify_fees = self.calculate_shopify_fees(effective_revenue)
 
-        net_profit = revenue - cogs - shopify_fees - shipping_cost - ad_spend
-        margin_pct = (net_profit / revenue * 100) if revenue > 0 else 0.0
+        net_profit = effective_revenue - cogs - shopify_fees - shipping_cost - ad_spend
+        margin_pct = (net_profit / effective_revenue * 100) if effective_revenue > 0 else 0.0
 
         return OrderProfit(
             shopify_order_id=order.get("shopify_order_id", 0),
-            revenue=round(revenue, 2),
+            revenue=round(effective_revenue, 2),
             cogs=round(cogs, 2),
             shopify_fees=round(shopify_fees, 2),
             shipping_cost=round(shipping_cost, 2),

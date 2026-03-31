@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     sendgrid_order_confirmation_template_id: str = ""
     sendgrid_shipping_notification_template_id: str = ""
     sendgrid_delivery_confirmation_template_id: str = ""
+    sendgrid_refund_confirmation_template_id: str = ""
+    sendgrid_reorder_reminder_template_id: str = ""
 
     # ── Anthropic ──
     anthropic_api_key: str = ""
@@ -56,6 +58,14 @@ class Settings(BaseSettings):
     # ── Sentry ──
     sentry_dsn: str = ""
 
+    # ── Meta (Conversions API) ──
+    meta_pixel_id: str = ""
+    meta_capi_access_token: str = ""
+    meta_graph_api_version: str = "v21.0"
+
+    # ── Webhooks ──
+    webhook_base_url: str = ""  # Railway public URL, e.g. "https://pinaka-agents-production-198b5.up.railway.app"
+
     # ── Security ──
     cron_secret: str = ""
     dashboard_password: str = ""
@@ -82,6 +92,10 @@ class Settings(BaseSettings):
     crafting_update_delay_days: int = 3  # Days after order to send crafting update
     abandoned_cart_delay_minutes: int = 60  # Minutes before cart counts as abandoned
     max_cart_recovery_emails_per_week: int = 2  # Per customer
+
+    # Reorder reminders
+    reorder_reminder_days: str = "90,180,365"  # Days after purchase to check (comma-separated)
+    reorder_cooldown_days: int = 180  # Min days between reorder emails per customer
 
     # Rate limiting
     shopify_qps: float = 2.0  # Shopify Admin API: 2 requests/second (basic plan)

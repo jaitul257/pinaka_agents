@@ -1,0 +1,46 @@
+{
+  "sku": "DTB-LAB-7-14KYG",
+  "name": "Diamond Tennis Bracelet — Lab-Grown",
+  "category": "Bracelets",
+  "materials": {
+    "metal": "14K Yellow Gold",
+    "weight_grams": 12.5,
+    "diamond_type": ["lab-grown", "VS1-VS2", "F-G color", "round brilliant"],
+    "total_carat": 3.0
+  },
+  "pricing": {
+    "lab-grown-7inch": {
+      "cost": 450,
+      "retail": 2850
+    },
+    "lab-grown-6.5inch": {
+      "cost": 420,
+      "retail": 2650
+    }
+  },
+  "story": "Every diamond in this bracelet was individually selected for its fire and brilliance. Our master jewelers hand-set each stone using a four-prong technique that maximizes light return while keeping the profile elegant and wearable. This is a piece made for the moments that matter — anniversaries, milestones, the days you want to remember forever.",
+  "care_instructions": "Clean gently with warm soapy water and a soft brush. Store in the provided jewelry box when not worn. Avoid contact with harsh chemicals. Bring it to us anytime for complimentary professional cleaning and inspection — that's our Free Lifetime Care promise.",
+  "occasions": ["anniversary", "birthday", "graduation", "promotion", "self-purchase", "engagement"],
+  "certification": {
+    "certificate_number": "LG-2026-0001",
+    "grading_lab": "IGI",
+    "carat_weight_certified": 3.02,
+    "clarity": "VS1",
+    "color": "F"
+  },
+  "tags": [
+    "tennis bracelet",
+    "lab grown diamond",
+    "14k gold bracelet",
+    "diamond bracelet",
+    "anniversary gift",
+    "milestone jewelry",
+    "luxury bracelet",
+    "IGI certified",
+    "handcrafted jewelry",
+    "gift for her",
+    "fine jewelry",
+    "free lifetime care",
+    "Pinaka Jewellery"
+  ]
+}

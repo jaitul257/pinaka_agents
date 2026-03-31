@@ -482,5 +482,27 @@ class ShippingProcessor:
         )
         return result
 
+    async def collect_evidence_on_delivery(self, shopify_order_id: int) -> None:
+        """Collect chargeback evidence when a delivery is confirmed."""
+        order = self._db.get_order_by_shopify_id(shopify_order_id)
+        if not order:
+            return
+
+        # Skip if evidence already collected
+        if order.get("evidence_collected_at"):
+            return
+
+        self._db.mark_evidence_collected(shopify_order_id)
+
+        await self._slack.send_chargeback_evidence_ready(
+            order_number=str(shopify_order_id),
+            total=float(order.get("total", 0)),
+            tracking_number=order.get("tracking_number", ""),
+            carrier=order.get("shipping_carrier", ""),
+            delivered_at=order.get("delivered_at", ""),
+        )
+
+        logger.info("Chargeback evidence collected for order #%s", shopify_order_id)
+
     async def close(self) -> None:
         await self._shipstation.close()

@@ -178,6 +178,255 @@ class Database:
         )
         return result.data[0] if result.data else None
 
+    # ── Chargeback Evidence ──
+
+    def get_chargeback_evidence(self, shopify_order_id: int) -> dict[str, Any] | None:
+        """Collect all evidence fields for a chargeback dispute response."""
+        result = (
+            self._client.table("orders")
+            .select("*, customers(*)")
+            .eq("shopify_order_id", shopify_order_id)
+            .execute()
+        )
+        if not result.data:
+            return None
+
+        order = result.data[0]
+        customer = order.get("customers") or {}
+
+        return {
+            "order_number": order.get("shopify_order_id"),
+            "order_confirmed_at": order.get("created_at"),
+            "order_total": order.get("total"),
+            "customer_email": order.get("buyer_email"),
+            "customer_name": order.get("buyer_name"),
+            "tracking_number": order.get("tracking_number"),
+            "shipping_carrier": order.get("shipping_carrier"),
+            "tracking_url": order.get("tracking_url"),
+            "shipped_at": order.get("shipped_at"),
+            "delivered_at": order.get("delivered_at"),
+            "evidence_collected_at": order.get("evidence_collected_at"),
+            "customer_lifecycle": customer.get("lifecycle_stage"),
+            "customer_order_count": customer.get("order_count"),
+        }
+
+    def get_shipped_orders_pending_delivery(self, shipped_before_days: int = 7) -> list[dict[str, Any]]:
+        """Get orders that shipped but haven't been marked delivered yet."""
+        cutoff = (datetime.utcnow() - __import__("datetime").timedelta(days=shipped_before_days)).isoformat()
+        result = (
+            self._client.table("orders")
+            .select("*")
+            .eq("status", "shipped")
+            .lte("shipped_at", cutoff)
+            .is_("delivered_at", "null")
+            .execute()
+        )
+        return result.data or []
+
+    def mark_evidence_collected(self, shopify_order_id: int) -> None:
+        """Mark that chargeback evidence has been collected for an order."""
+        self._client.table("orders").update(
+            {"evidence_collected_at": datetime.utcnow().isoformat()}
+        ).eq("shopify_order_id", shopify_order_id).execute()
+
+    # ── Refunds ──
+
+    def get_refund_by_shopify_id(self, shopify_refund_id: int) -> dict[str, Any] | None:
+        """Check if a refund has already been processed (idempotency)."""
+        result = (
+            self._client.table("refunds")
+            .select("*")
+            .eq("shopify_refund_id", shopify_refund_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    def create_refund(self, refund_data: dict[str, Any]) -> dict[str, Any]:
+        """Insert a refund event and update the parent order's refund_amount."""
+        result = self._client.table("refunds").insert(refund_data).execute()
+        refund = result.data[0] if result.data else {}
+
+        if refund:
+            # Accumulate refund_amount on the order
+            order_id = refund_data["order_id"]
+            refunds_result = (
+                self._client.table("refunds")
+                .select("amount")
+                .eq("order_id", order_id)
+                .execute()
+            )
+            total_refunded = sum(float(r["amount"]) for r in refunds_result.data)
+
+            # Get order total to determine if fully refunded
+            order_result = (
+                self._client.table("orders")
+                .select("total, shopify_order_id")
+                .eq("id", order_id)
+                .execute()
+            )
+            order = order_result.data[0] if order_result.data else {}
+            order_total = float(order.get("total", 0))
+
+            update_data: dict[str, Any] = {
+                "refund_amount": min(total_refunded, order_total),
+                "refunded_at": refund_data.get("created_at", datetime.utcnow().isoformat()),
+            }
+            # Set status to "refunded" only if fully refunded
+            if total_refunded >= order_total:
+                update_data["status"] = "refunded"
+
+            self._client.table("orders").update(update_data).eq("id", order_id).execute()
+
+        return refund
+
+    # ── Reorder Reminders ──
+
+    def get_customers_for_reorder(
+        self, days_since_purchase: int, cooldown_days: int = 180
+    ) -> list[dict[str, Any]]:
+        """Get customers eligible for reorder reminders.
+
+        Filters: accepts_marketing=True, has an order near the target day window,
+        and hasn't received a reorder email within cooldown_days.
+        """
+        from datetime import timedelta
+
+        # Target window: orders placed days_since_purchase ago (+/- 7 days)
+        target_date = datetime.utcnow() - timedelta(days=days_since_purchase)
+        window_start = (target_date - timedelta(days=7)).isoformat()
+        window_end = (target_date + timedelta(days=7)).isoformat()
+
+        # Get customers who accept marketing
+        customers_result = (
+            self._client.table("customers")
+            .select("*, orders(*)")
+            .eq("accepts_marketing", True)
+            .execute()
+        )
+
+        candidates = []
+        cooldown_cutoff = (datetime.utcnow() - timedelta(days=cooldown_days)).isoformat()
+
+        for customer in customers_result.data or []:
+            # Skip if recently emailed
+            last_reorder = customer.get("last_reorder_email_at")
+            if last_reorder and last_reorder > cooldown_cutoff:
+                continue
+
+            # Check if any order falls in the target window
+            orders = customer.get("orders", [])
+            matching_orders = [
+                o for o in orders
+                if o.get("created_at", "") >= window_start
+                and o.get("created_at", "") <= window_end
+            ]
+
+            if matching_orders:
+                # Use the most recent matching order
+                latest = max(matching_orders, key=lambda o: o.get("created_at", ""))
+                candidates.append({
+                    "customer": customer,
+                    "last_order": latest,
+                })
+
+        return candidates
+
+    def update_customer_reorder_sent(self, customer_id: int) -> None:
+        """Mark that a reorder reminder was sent to this customer."""
+        self._client.table("customers").update(
+            {"last_reorder_email_at": datetime.utcnow().isoformat()}
+        ).eq("id", customer_id).execute()
+
+    # ── Voice Examples ──
+
+    def create_voice_example(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Save an approved draft as a voice learning example."""
+        result = self._client.table("voice_examples").insert(data).execute()
+        return result.data[0] if result.data else {}
+
+    def get_voice_examples(
+        self, category: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Get recent voice examples for a category (newest first)."""
+        result = (
+            self._client.table("voice_examples")
+            .select("*")
+            .eq("category", category)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+
+    def get_voice_example_count(self, category: str) -> int:
+        """Count voice examples for a category."""
+        result = (
+            self._client.table("voice_examples")
+            .select("id", count="exact")
+            .eq("category", category)
+            .execute()
+        )
+        return result.count or 0
+
+    def prune_voice_examples(self, category: str, max_per_category: int = 100) -> int:
+        """Delete oldest examples if category exceeds max. Returns count deleted."""
+        count = self.get_voice_example_count(category)
+        if count <= max_per_category:
+            return 0
+
+        # Get IDs to keep (newest max_per_category)
+        keep_result = (
+            self._client.table("voice_examples")
+            .select("id")
+            .eq("category", category)
+            .order("created_at", desc=True)
+            .limit(max_per_category)
+            .execute()
+        )
+        keep_ids = {r["id"] for r in keep_result.data or []}
+
+        # Get all IDs for category
+        all_result = (
+            self._client.table("voice_examples")
+            .select("id")
+            .eq("category", category)
+            .execute()
+        )
+        all_ids = {r["id"] for r in all_result.data or []}
+
+        # Delete the ones not in keep set
+        delete_ids = all_ids - keep_ids
+        for did in delete_ids:
+            self._client.table("voice_examples").delete().eq("id", did).execute()
+
+        return len(delete_ids)
+
+    def get_voice_stats(self) -> dict[str, Any]:
+        """Get voice learning stats: examples per category, edit rates."""
+        result = (
+            self._client.table("voice_examples")
+            .select("category, was_edited")
+            .execute()
+        )
+        categories: dict[str, dict[str, int]] = {}
+        for row in result.data or []:
+            cat = row["category"]
+            if cat not in categories:
+                categories[cat] = {"total": 0, "edited": 0}
+            categories[cat]["total"] += 1
+            if row.get("was_edited"):
+                categories[cat]["edited"] += 1
+
+        total = sum(c["total"] for c in categories.values())
+        total_edited = sum(c["edited"] for c in categories.values())
+
+        return {
+            "total_examples": total,
+            "total_edited": total_edited,
+            "edit_rate": round(total_edited / total * 100, 1) if total > 0 else 0.0,
+            "categories": categories,
+        }
+
     # ── Listing Drafts ──
 
     def create_listing_draft(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -350,14 +599,21 @@ class Database:
     # ── Aggregations ──
 
     def get_total_revenue(self, start_date: date, end_date: date) -> float:
+        """Net revenue = SUM(total) - SUM(refund_amount), excluding cancelled orders."""
         result = (
             self._client.table("orders")
-            .select("total")
+            .select("total, refund_amount")
             .gte("created_at", start_date.isoformat())
             .lte("created_at", end_date.isoformat())
+            .neq("status", "cancelled")
             .execute()
         )
-        return sum(float(r["total"]) for r in result.data) if result.data else 0.0
+        if not result.data:
+            return 0.0
+        return sum(
+            float(r["total"]) - float(r.get("refund_amount") or 0)
+            for r in result.data
+        )
 
     def get_customer_count(self) -> int:
         result = (

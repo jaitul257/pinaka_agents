@@ -16,6 +16,7 @@ from src.api.shopify_webhooks import (
     handle_checkout_webhook,
     handle_customer_webhook,
     handle_order_webhook,
+    handle_refund_webhook,
 )
 from src.core.database import Database
 from src.core.email import EmailSender
@@ -187,6 +188,12 @@ async def shopify_checkouts_webhook(request: Request, background_tasks: Backgrou
     return await handle_checkout_webhook(request, background_tasks)
 
 
+@app.post("/webhook/shopify/refund")
+async def shopify_refund_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle refunds/create webhooks."""
+    return await handle_refund_webhook(request, background_tasks)
+
+
 # ── ShipStation Webhook ──
 
 @app.post("/webhook/shipstation")
@@ -223,6 +230,28 @@ async def shipstation_webhook(request: Request, background_tasks: BackgroundTask
 async def inbound_email(request: Request):
     """Receive customer emails via SendGrid Inbound Parse webhook."""
     return await handle_inbound_email(request)
+
+
+# ── Chargeback Evidence ──
+
+async def verify_dashboard_password(request: Request) -> None:
+    """Verify dashboard password for founder-facing API endpoints."""
+    auth = request.query_params.get("password", "")
+    if not settings.dashboard_password or auth != settings.dashboard_password:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/api/orders/{order_id}/evidence")
+async def get_order_evidence(order_id: int, request: Request):
+    """Get chargeback evidence package for an order. Protected by dashboard_password."""
+    await verify_dashboard_password(request)
+
+    db = Database()
+    evidence = db.get_chargeback_evidence(order_id)
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    return {"status": "ok", "evidence": evidence}
 
 
 # ── Product Management ──
@@ -390,11 +419,12 @@ async def cron_daily_stats():
 
 @app.post("/cron/reconcile-orders", dependencies=[Depends(verify_cron_secret)])
 async def cron_reconcile_orders():
-    """Poll Shopify for orders missed by webhooks (every 30 min)."""
+    """Poll Shopify for orders missed by webhooks (every 30 min). Also checks webhook health."""
     from src.api.shopify_webhooks import _process_order
 
     shopify = ShopifyClient()
     db = Database()
+    slack = SlackNotifier()
     reconciled = 0
 
     try:
@@ -406,10 +436,66 @@ async def cron_reconcile_orders():
                 continue
             await _process_order(order)
             reconciled += 1
+
+        # Webhook health check (every 30 min)
+        await _check_webhook_health(shopify, slack)
     finally:
         await shopify.close()
 
     return {"status": "ok", "module": "reconcile", "reconciled": reconciled}
+
+
+@app.post("/cron/check-deliveries", dependencies=[Depends(verify_cron_secret)])
+async def cron_check_deliveries():
+    """Poll for shipped orders that may have been delivered. Collects chargeback evidence."""
+    db = Database()
+    shipping = ShippingProcessor()
+    checked = 0
+    delivered = 0
+
+    try:
+        # Get orders shipped 3+ days ago that haven't been marked delivered
+        shipped_orders = db.get_shipped_orders_pending_delivery(shipped_before_days=3)
+
+        for order in shipped_orders:
+            shopify_order_id = order.get("shopify_order_id")
+            shipstation_order_id = order.get("shipstation_order_id")
+            if not shipstation_order_id:
+                continue
+
+            checked += 1
+            try:
+                tracking_info = await shipping.get_tracking(shipstation_order_id)
+                delivery_date = tracking_info.get("delivery_date")
+
+                if delivery_date:
+                    # Mark as delivered
+                    db.update_order_status(
+                        shopify_order_id, "delivered",
+                        delivered_at=delivery_date,
+                    )
+
+                    # Send delivery confirmation email
+                    buyer_email = order.get("buyer_email", "")
+                    if buyer_email:
+                        from src.core.email import EmailSender
+                        email = EmailSender()
+                        email.send_delivery_confirmation(
+                            to_email=buyer_email,
+                            customer_name=order.get("buyer_name", "") or buyer_email,
+                            order_number=str(shopify_order_id),
+                        )
+
+                    # Collect chargeback evidence
+                    await shipping.collect_evidence_on_delivery(shopify_order_id)
+                    delivered += 1
+
+            except Exception:
+                logger.exception("Delivery check failed for order #%s", shopify_order_id)
+    finally:
+        await shipping.close()
+
+    return {"status": "ok", "module": "delivery_check", "checked": checked, "delivered": delivered}
 
 
 @app.post("/cron/crafting-updates", dependencies=[Depends(verify_cron_secret)])
@@ -547,27 +633,67 @@ async def cron_abandoned_carts():
     return {"status": "ok", "module": "cart_recovery", "flagged": flagged}
 
 
-REQUIRED_WEBHOOK_TOPICS = {"orders/create", "customers/create", "checkouts/create"}
+REQUIRED_WEBHOOK_TOPICS = {
+    "orders/create": "/webhook/shopify/orders",
+    "customers/create": "/webhook/shopify/customers",
+    "checkouts/create": "/webhook/shopify/checkouts",
+    "refunds/create": "/webhook/shopify/refund",
+}
 
 
 async def _check_webhook_health(shopify: ShopifyClient, slack: SlackNotifier) -> list[str]:
-    """Verify all Shopify webhook subscriptions are active. Re-register missing ones."""
-    base_url = settings.shopify_shop_domain  # used for address matching only
+    """Verify all Shopify webhook subscriptions are active. Auto-re-register missing ones."""
+    base_url = settings.webhook_base_url
+    if not base_url:
+        logger.warning("WEBHOOK_BASE_URL not set, skipping webhook health check")
+        return []
+
     missing = []
+    re_registered = []
+    failed = []
+
     try:
         existing = await shopify.get_webhooks()
         active_topics = {wh["topic"] for wh in existing}
-        missing = sorted(REQUIRED_WEBHOOK_TOPICS - active_topics)
+        missing = sorted(set(REQUIRED_WEBHOOK_TOPICS.keys()) - active_topics)
     except Exception as e:
         logger.error("Webhook health check failed: %s", e)
         await slack.send_alert(f"Webhook health check failed: {e}", level="warning")
-        return list(REQUIRED_WEBHOOK_TOPICS)
+        return list(REQUIRED_WEBHOOK_TOPICS.keys())
 
     if not missing:
         return []
 
     logger.warning("Missing webhook subscriptions: %s", missing)
-    return missing
+
+    # Auto-re-register missing webhooks
+    for topic in missing:
+        path = REQUIRED_WEBHOOK_TOPICS[topic]
+        address = f"{base_url}{path}"
+        try:
+            await shopify.create_webhook(topic, address)
+            re_registered.append(topic)
+            logger.info("Re-registered webhook: %s -> %s", topic, address)
+        except Exception as e:
+            failed.append(topic)
+            logger.error("Failed to re-register webhook %s: %s", topic, e)
+
+    # Alert on re-registrations
+    if re_registered:
+        await slack.send_webhook_health_alert(
+            re_registered=re_registered,
+            failed=failed,
+        )
+
+    # Urgent alert if any failed to re-register
+    if failed:
+        await slack.send_alert(
+            f":rotating_light: URGENT: Failed to re-register webhooks: {', '.join(failed)}. "
+            "Manual intervention required.",
+            level="error",
+        )
+
+    return failed  # Return only topics that couldn't be fixed
 
 
 @app.post("/cron/morning-digest", dependencies=[Depends(verify_cron_secret)])
@@ -627,9 +753,8 @@ async def cron_morning_digest():
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f":warning: *Webhook subscriptions missing:* {', '.join(missing_webhooks)}\n"
-                    "Shopify may have auto-deleted them after timeout failures. "
-                    "Run `python scripts/register_webhooks.py` to re-register."
+                    f":rotating_light: *Webhook re-registration FAILED for:* {', '.join(missing_webhooks)}\n"
+                    "Auto-recovery attempted but failed. Manual intervention required."
                 ),
             },
         })
@@ -705,6 +830,48 @@ async def cron_weekly_finance():
         "profit": report.total_net_profit,
         "orders": report.total_orders,
     }
+
+
+@app.post("/cron/reorder-reminders", dependencies=[Depends(verify_cron_secret)])
+async def cron_reorder_reminders():
+    """Find reorder candidates and post AI-drafted reminders to Slack for review."""
+    from src.customer.reorder import ReorderEngine
+
+    engine = ReorderEngine()
+    slack = SlackNotifier()
+
+    candidates = engine.find_reorder_candidates()
+    if not candidates:
+        return {"status": "ok", "module": "reorder", "candidates": 0}
+
+    drafted = 0
+    for candidate in candidates:
+        customer_name = candidate.get("name", "Customer")
+        customer_email = candidate.get("email", "")
+        customer_id = candidate.get("customer_id")
+        last_items = candidate.get("last_order_items", "jewelry purchase")
+        trigger_days = candidate.get("trigger_days", 90)
+
+        try:
+            draft = await engine.draft_reminder(
+                customer_name=customer_name,
+                last_order_items=last_items,
+                trigger_days=trigger_days,
+            )
+            await slack.send_reorder_reminder_review(
+                customer_name=customer_name,
+                customer_email=customer_email,
+                last_order_number=candidate.get("last_order_number", ""),
+                last_order_total=float(candidate.get("last_order_total", 0)),
+                days_since=trigger_days,
+                email_draft=draft,
+                customer_id=customer_id,
+            )
+            drafted += 1
+        except Exception:
+            logger.exception("Failed to draft reorder reminder for %s", customer_email)
+
+    return {"status": "ok", "module": "reorder", "candidates": len(candidates), "drafted": drafted}
 
 
 # ── Slack Interactivity ──
@@ -866,6 +1033,39 @@ async def webhook_slack(request: Request):
 
     elif action_id == "dismiss_budget":
         tombstone = SlackNotifier.tombstone_blocks("Dismissed", "Budget recommendation", timestamp)
+        await slack.update_message(channel, message_ts, tombstone)
+
+    # ── Reorder Reminder Actions ──
+    elif action_id == "approve_reorder":
+        reorder_data = json.loads(value)
+        customer_email = reorder_data.get("customer_email", "")
+        customer_name = reorder_data.get("customer_name", "Customer")
+        customer_id = reorder_data.get("customer_id")
+        # The draft text is in the message blocks — extract from Slack payload
+        draft_text = ""
+        for block in payload.get("message", {}).get("blocks", []):
+            if block.get("block_id") == "reorder_draft":
+                draft_text = block.get("text", {}).get("text", "")
+                break
+
+        if customer_email and draft_text:
+            email.send_reorder_reminder(
+                to_email=customer_email,
+                customer_name=customer_name,
+                email_body=draft_text,
+            )
+            if customer_id:
+                db.update_customer_reorder_sent(int(customer_id))
+
+        tombstone = SlackNotifier.tombstone_blocks(
+            "Reorder Reminder Sent", f"{customer_name} ({customer_email})", timestamp,
+        )
+        await slack.update_message(channel, message_ts, tombstone)
+
+    elif action_id == "skip_reorder":
+        tombstone = SlackNotifier.tombstone_blocks(
+            "Reorder Skipped", f"Customer #{value}", timestamp,
+        )
         await slack.update_message(channel, message_ts, tombstone)
 
     # ── Dismiss/Edit Actions ──

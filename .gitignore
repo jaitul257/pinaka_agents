@@ -20,4 +20,5 @@ node_modules/
 data/products/
 
 # Claude Code / gstack local tooling
-.claude/skills/
+.claude/
+.gstack/

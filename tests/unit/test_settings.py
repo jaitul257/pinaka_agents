@@ -30,7 +30,7 @@ def test_shopify_admin_url():
 def test_shopify_admin_url_empty():
     """Empty domain should still produce a URL (will fail at runtime)."""
     s = Settings(_env_file=None)
-    assert s.shopify_admin_url == "https:///admin/api/2025-01"
+    assert s.shopify_admin_url == "https:///admin/api/2026-01"
 
 
 def test_rate_limits():
