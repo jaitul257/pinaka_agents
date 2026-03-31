@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     shopify_api_secret: str = ""
     shopify_access_token: str = ""  # Admin API access token
     shopify_webhook_secret: str = ""  # HMAC verification
-    shopify_api_version: str = "2025-01"
+    shopify_api_version: str = "2026-01"
 
     # ── SendGrid ──
     sendgrid_api_key: str = ""

@@ -118,7 +118,22 @@ class ShopifyClient:
         response.raise_for_status()
         return response.json().get("webhook", {})
 
-    # ── Products (create) ──
+    # ── GraphQL ──
+
+    async def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Execute a GraphQL Admin API query."""
+        response = await self._client.request(
+            "POST",
+            "/graphql.json",
+            json={"query": query, "variables": variables or {}},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("errors"):
+            logger.error("GraphQL errors: %s", data["errors"])
+        return data.get("data", {})
+
+    # ── Products (create via GraphQL) ──
 
     async def create_product(
         self,
@@ -128,23 +143,46 @@ class ShopifyClient:
         product_type: str = "",
         vendor: str = "Pinaka Jewellery",
     ) -> dict[str, Any]:
-        """Create a product in Shopify as a draft."""
-        response = await self._client.request(
-            "POST",
-            "/products.json",
-            json={
-                "product": {
-                    "title": title,
-                    "body_html": body_html,
-                    "tags": ", ".join(tags),
-                    "product_type": product_type,
-                    "vendor": vendor,
-                    "status": "draft",
+        """Create a product in Shopify as draft via GraphQL."""
+        mutation = """
+        mutation productCreate($product: ProductCreateInput!) {
+            productCreate(product: $product) {
+                product {
+                    id
+                    title
+                    handle
+                    status
                 }
-            },
-        )
-        response.raise_for_status()
-        return response.json().get("product", {})
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        """
+        variables = {
+            "product": {
+                "title": title,
+                "descriptionHtml": body_html,
+                "tags": tags,
+                "productType": product_type,
+                "vendor": vendor,
+                "status": "DRAFT",
+            }
+        }
+
+        data = await self._graphql(mutation, variables)
+        result = data.get("productCreate", {})
+
+        if result.get("userErrors"):
+            logger.error("Product create errors: %s", result["userErrors"])
+            return {"error": result["userErrors"]}
+
+        product = result.get("product", {})
+        # Extract numeric ID from GID (gid://shopify/Product/12345 -> 12345)
+        gid = product.get("id", "")
+        numeric_id = gid.split("/")[-1] if gid else ""
+        return {"id": numeric_id, "title": product.get("title", ""), "handle": product.get("handle", "")}
 
     # ── Fulfillment ──
 
