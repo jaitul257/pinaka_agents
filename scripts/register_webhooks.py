@@ -24,6 +24,7 @@ WEBHOOK_TOPICS = {
     "orders/create": "/webhook/shopify/orders",
     "customers/create": "/webhook/shopify/customers",
     "checkouts/create": "/webhook/shopify/checkouts",
+    "refunds/create": "/webhook/shopify/refund",
 }
 
 
