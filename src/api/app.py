@@ -84,6 +84,72 @@ async def _verify_slack_request(request: Request, body: bytes) -> None:
         raise HTTPException(status_code=401, detail="Invalid signature")
 
 
+# ── Shopify OAuth (for app install flow) ──
+
+@app.get("/")
+async def shopify_app_root(request: Request):
+    """Handle Shopify app install redirect — start OAuth flow."""
+    shop = request.query_params.get("shop", settings.shopify_shop_domain)
+    if not shop:
+        return {"status": "Pinaka Agents API", "docs": "/docs"}
+
+    # Redirect to Shopify OAuth authorize
+    scopes = "read_checkouts,read_customers,read_orders,read_products,read_shipping,write_customers,write_orders,write_products,write_shipping"
+    redirect_uri = f"https://pinaka-agents-production-198b5.up.railway.app/api/auth"
+    nonce = hashlib.sha256(f"{shop}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:16]
+
+    auth_url = (
+        f"https://{shop}/admin/oauth/authorize"
+        f"?client_id={settings.shopify_api_key}"
+        f"&scope={scopes}"
+        f"&redirect_uri={redirect_uri}"
+        f"&state={nonce}"
+    )
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(auth_url)
+
+
+@app.get("/api/auth")
+async def shopify_oauth_callback(request: Request):
+    """Handle Shopify OAuth callback — exchange code for access token."""
+    code = request.query_params.get("code", "")
+    shop = request.query_params.get("shop", "")
+
+    if not code or not shop:
+        raise HTTPException(status_code=400, detail="Missing code or shop parameter")
+
+    # Exchange code for permanent access token
+    import httpx
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"https://{shop}/admin/oauth/access_token",
+            json={
+                "client_id": settings.shopify_api_key,
+                "client_secret": settings.shopify_api_secret,
+                "code": code,
+            },
+        )
+
+    if response.status_code != 200:
+        logger.error("OAuth token exchange failed: %s", response.text)
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {response.text}")
+
+    data = response.json()
+    access_token = data.get("access_token", "")
+    scope = data.get("scope", "")
+
+    logger.info("OAuth complete for %s, scopes: %s", shop, scope)
+
+    # Show the token (one-time setup page)
+    return {
+        "status": "success",
+        "message": "Copy this access token and set it as SHOPIFY_ACCESS_TOKEN in Railway",
+        "access_token": access_token,
+        "scope": scope,
+        "shop": shop,
+    }
+
+
 # ── Health ──
 
 @app.get("/health")
