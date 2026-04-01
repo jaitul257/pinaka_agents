@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from src.core.database import Database
+from src.core.database import AsyncDatabase
 from src.core.rate_limiter import RateLimitedClient
 from src.core.settings import settings
 from src.core.slack import SlackNotifier
@@ -28,7 +28,7 @@ class ShippingProcessor:
     """Process orders for shipping with fraud checks and ShipStation integration."""
 
     def __init__(self):
-        self._db = Database()
+        self._db = AsyncDatabase()
         self._slack = SlackNotifier()
         self._shipstation = RateLimitedClient(
             base_url=settings.shipstation_base_url,
@@ -238,7 +238,7 @@ class ShippingProcessor:
 
     # ── Fraud Detection ──
 
-    def check_fraud(self, order: dict[str, Any]) -> FraudCheckResult:
+    async def check_fraud(self, order: dict[str, Any]) -> FraudCheckResult:
         """Run fraud detection checks on an order."""
         reasons = []
         total = float(order.get("total", 0))
@@ -251,7 +251,7 @@ class ShippingProcessor:
             )
 
         # Velocity check
-        recent_count = self._db.count_orders_from_email_24h(buyer_email)
+        recent_count = await self._db.count_orders_from_email_24h(buyer_email)
         if recent_count >= settings.velocity_max_orders_24h:
             reasons.append(
                 f"Velocity: {recent_count + 1} orders from same buyer in 24h "
@@ -296,7 +296,7 @@ class ShippingProcessor:
         total = float(order.get("total", 0))
 
         # Fraud check
-        fraud_result = self.check_fraud(order)
+        fraud_result = await self.check_fraud(order)
         if fraud_result.is_flagged:
             insurance_note = ""
             if fraud_result.insurance_gap > 0:
@@ -313,7 +313,7 @@ class ShippingProcessor:
                 insurance_note=insurance_note,
             )
 
-            self._db.update_order_status(order_id, "fraud_review")
+            await self._db.update_order_status(order_id, "fraud_review")
             return {"status": "fraud_review", "reasons": fraud_result.reasons}
 
         # Insurance validation
@@ -324,7 +324,7 @@ class ShippingProcessor:
                 f"Gap: ${insurance['gap']:,.2f}. Arrange supplemental insurance before shipping.",
                 level="warning",
             )
-            self._db.update_order_status(order_id, "insurance_hold")
+            await self._db.update_order_status(order_id, "insurance_hold")
             return {"status": "insurance_hold", "gap": insurance["gap"]}
 
         # Push to ShipStation
@@ -332,10 +332,10 @@ class ShippingProcessor:
         if ss_result.get("error"):
             logger.error("ShipStation push failed for order %s: %s", order_id, ss_result)
             # Don't block the order, just log it
-            self._db.update_order_status(order_id, "ready_to_ship")
+            await self._db.update_order_status(order_id, "ready_to_ship")
             return {"status": "ready_to_ship", "shipstation": "failed"}
 
-        self._db.update_order_status(order_id, "ready_to_ship")
+        await self._db.update_order_status(order_id, "ready_to_ship")
         return {
             "status": "ready_to_ship",
             "shipstation_order_id": ss_result.get("orderId"),
@@ -393,7 +393,7 @@ class ShippingProcessor:
             return {"error": "invalid_order_key"}
 
         # Look up order in Supabase
-        order = self._db.get_order_by_shopify_id(shopify_order_id)
+        order = await self._db.get_order_by_shopify_id(shopify_order_id)
         if not order:
             logger.warning("Order not found for ShipStation webhook: %s", shopify_order_id)
             return {"error": "order_not_found"}
@@ -419,7 +419,7 @@ class ShippingProcessor:
             update_fields = {
                 "shipped_at": ship_date or dt.utcnow().isoformat(),
             }
-            self._db.update_order_tracking(
+            await self._db.update_order_tracking(
                 shopify_order_id=shopify_order_id,
                 tracking_number=tracking_number,
                 carrier=carrier,
@@ -484,7 +484,7 @@ class ShippingProcessor:
 
     async def collect_evidence_on_delivery(self, shopify_order_id: int) -> None:
         """Collect chargeback evidence when a delivery is confirmed."""
-        order = self._db.get_order_by_shopify_id(shopify_order_id)
+        order = await self._db.get_order_by_shopify_id(shopify_order_id)
         if not order:
             return
 
@@ -492,7 +492,7 @@ class ShippingProcessor:
         if order.get("evidence_collected_at"):
             return
 
-        self._db.mark_evidence_collected(shopify_order_id)
+        await self._db.mark_evidence_collected(shopify_order_id)
 
         await self._slack.send_chargeback_evidence_ready(
             order_number=str(shopify_order_id),

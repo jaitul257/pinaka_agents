@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from src.core.database import Database
+from src.core.database import AsyncDatabase
 from src.core.settings import settings
 from src.core.slack import SlackNotifier
 
@@ -37,7 +37,7 @@ class AdsTracker:
     """Track ad performance and recommend budget adjustments."""
 
     def __init__(self):
-        self._db = Database()
+        self._db = AsyncDatabase()
         self._slack = SlackNotifier()
 
     def calculate_roas(
@@ -88,7 +88,7 @@ class AdsTracker:
         end = datetime.now(tz).date()
         start = end - timedelta(days=settings.roas_window_days)
 
-        daily_stats = self._db.get_stats_range(start, end)
+        daily_stats = await self._db.get_stats_range(start, end)
         result = self.calculate_roas(daily_stats, settings.roas_window_days)
 
         await self._send_roas_slack(result)

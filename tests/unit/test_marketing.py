@@ -7,7 +7,7 @@ from src.marketing.ads import AdsTracker
 
 def _make_tracker():
     """Create an AdsTracker with mocked dependencies."""
-    with patch("src.marketing.ads.Database"), \
+    with patch("src.marketing.ads.AsyncDatabase"), \
          patch("src.marketing.ads.SlackNotifier"):
         return AdsTracker()
 

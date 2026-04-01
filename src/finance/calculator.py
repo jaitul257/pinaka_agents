@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
-from src.core.database import Database
+from src.core.database import AsyncDatabase
 from src.core.settings import settings
 from src.core.slack import SlackNotifier
 
@@ -73,7 +73,7 @@ class FinanceCalculator:
     """Calculate profit metrics and generate financial reports."""
 
     def __init__(self):
-        self._db = Database()
+        self._db = AsyncDatabase()
         self._slack = SlackNotifier()
 
     def calculate_shopify_fees(self, order_total: float) -> float:
@@ -161,7 +161,7 @@ class FinanceCalculator:
         end = date.today()
         start = end - timedelta(days=7)
 
-        daily_stats = self._db.get_stats_range(start, end)
+        daily_stats = await self._db.get_stats_range(start, end)
 
         report = WeeklyFinanceReport(start_date=start, end_date=end)
         for stat in daily_stats:

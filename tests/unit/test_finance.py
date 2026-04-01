@@ -12,7 +12,7 @@ from src.finance.calculator import (
 
 def _make_calculator():
     """Create a FinanceCalculator with mocked dependencies."""
-    with patch("src.finance.calculator.Database"), \
+    with patch("src.finance.calculator.AsyncDatabase"), \
          patch("src.finance.calculator.SlackNotifier"):
         return FinanceCalculator()
 

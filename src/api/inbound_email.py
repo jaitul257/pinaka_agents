@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from src.core.database import Database
+from src.core.database import AsyncDatabase
 from src.core.settings import settings
 from src.core.slack import SlackNotifier
 from src.customer.classifier import MessageClassifier
@@ -29,7 +29,7 @@ _embeddings = None
 def _get_db():
     global _db
     if _db is None:
-        _db = Database()
+        _db = AsyncDatabase()
     return _db
 
 
@@ -77,7 +77,7 @@ async def handle_inbound_email(request: Request) -> dict[str, Any]:
     logger.info("Inbound email from %s: %s", sender_email, subject[:50])
 
     # Look up customer
-    customer = _get_db().get_customer_by_email(sender_email)
+    customer = await _get_db().get_customer_by_email(sender_email)
     customer_id = customer["id"] if customer else None
     customer_name = (customer.get("name") or sender_email) if customer else sender_email
 
@@ -116,7 +116,7 @@ async def handle_inbound_email(request: Request) -> dict[str, Any]:
     )
 
     # Persist to Supabase
-    message_record = _get_db().create_message({
+    message_record = await _get_db().create_message({
         "customer_id": customer_id,
         "customer_email": sender_email,
         "buyer_name": customer_name,

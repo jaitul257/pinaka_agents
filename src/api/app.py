@@ -18,7 +18,7 @@ from src.api.shopify_webhooks import (
     handle_order_webhook,
     handle_refund_webhook,
 )
-from src.core.database import Database
+from src.core.database import AsyncDatabase
 from src.core.email import EmailSender
 from src.core.settings import settings
 from src.core.shopify_client import ShopifyClient
@@ -246,8 +246,8 @@ async def get_order_evidence(order_id: int, request: Request):
     """Get chargeback evidence package for an order. Protected by dashboard_password."""
     await verify_dashboard_password(request)
 
-    db = Database()
-    evidence = db.get_chargeback_evidence(order_id)
+    db = AsyncDatabase()
+    evidence = await db.get_chargeback_evidence(order_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -297,8 +297,8 @@ async def generate_listing(request: Request):
     result = generator.generate(product, variant)
 
     # Persist draft to Supabase for Slack approval flow
-    db = Database()
-    draft = db.create_listing_draft({
+    db = AsyncDatabase()
+    draft = await db.create_listing_draft({
         "sku": product.sku,
         "title": result["title"],
         "description": result["description"],
@@ -327,12 +327,12 @@ async def cron_sync_products():
     from src.product.embeddings import ProductEmbeddings
     from src.product.schema import Product
 
-    db = Database()
+    db = AsyncDatabase()
     embeddings = ProductEmbeddings()
     before = embeddings.product_count()
     embedded = 0
 
-    products = db.get_all_products()
+    products = await db.get_all_products()
     for p in products:
         try:
             product_obj = Product(
@@ -389,29 +389,30 @@ async def cron_sync_shopify_products():
 @app.post("/cron/daily-stats", dependencies=[Depends(verify_cron_secret)])
 async def cron_daily_stats():
     """Collect daily stats from Shopify orders and customers."""
-    db = Database()
+    db = AsyncDatabase()
     yesterday = date.today() - timedelta(days=1)
 
-    revenue = db.get_total_revenue(yesterday, yesterday)
+    revenue = await db.get_total_revenue(yesterday, yesterday)
 
-    orders = db.get_orders_by_status("paid")
+    orders = await db.get_orders_by_status("paid")
     yesterday_orders = [
         o for o in orders
         if o.get("created_at", "").startswith(yesterday.isoformat())
     ]
 
-    new_customers = db.get_customers_by_lifecycle("first_purchase")
+    new_customers = await db.get_customers_by_lifecycle("first_purchase")
     yesterday_new = [
         c for c in new_customers
         if c.get("created_at", "").startswith(yesterday.isoformat())
     ]
 
-    db.upsert_daily_stats({
+    repeat_customers = await db.get_repeat_customer_count()
+    await db.upsert_daily_stats({
         "date": yesterday.isoformat(),
         "revenue": revenue,
         "order_count": len(yesterday_orders),
         "new_customers": len(yesterday_new),
-        "repeat_customers": db.get_repeat_customer_count(),
+        "repeat_customers": repeat_customers,
     })
 
     return {"status": "ok", "module": "stats", "orders_counted": len(yesterday_orders)}
@@ -423,7 +424,7 @@ async def cron_reconcile_orders():
     from src.api.shopify_webhooks import _process_order
 
     shopify = ShopifyClient()
-    db = Database()
+    db = AsyncDatabase()
     slack = SlackNotifier()
     reconciled = 0
 
@@ -432,7 +433,7 @@ async def cron_reconcile_orders():
         orders = await shopify.get_orders(created_at_min=since, limit=50)
 
         for order in orders:
-            if db.get_order_by_shopify_id(order["id"]):
+            if await db.get_order_by_shopify_id(order["id"]):
                 continue
             await _process_order(order)
             reconciled += 1
@@ -448,14 +449,14 @@ async def cron_reconcile_orders():
 @app.post("/cron/check-deliveries", dependencies=[Depends(verify_cron_secret)])
 async def cron_check_deliveries():
     """Poll for shipped orders that may have been delivered. Collects chargeback evidence."""
-    db = Database()
+    db = AsyncDatabase()
     shipping = ShippingProcessor()
     checked = 0
     delivered = 0
 
     try:
         # Get orders shipped 3+ days ago that haven't been marked delivered
-        shipped_orders = db.get_shipped_orders_pending_delivery(shipped_before_days=3)
+        shipped_orders = await db.get_shipped_orders_pending_delivery(shipped_before_days=3)
 
         for order in shipped_orders:
             shopify_order_id = order.get("shopify_order_id")
@@ -470,7 +471,7 @@ async def cron_check_deliveries():
 
                 if delivery_date:
                     # Mark as delivered
-                    db.update_order_status(
+                    await db.update_order_status(
                         shopify_order_id, "delivered",
                         delivered_at=delivery_date,
                     )
@@ -501,12 +502,12 @@ async def cron_check_deliveries():
 @app.post("/cron/crafting-updates", dependencies=[Depends(verify_cron_secret)])
 async def cron_crafting_updates():
     """Check for orders needing crafting update emails (Day 2-3 post-order)."""
-    db = Database()
+    db = AsyncDatabase()
     slack = SlackNotifier()
     classifier = MessageClassifier()
     sent = 0
 
-    orders = db.get_orders_needing_crafting_update(settings.crafting_update_delay_days)
+    orders = await db.get_orders_needing_crafting_update(settings.crafting_update_delay_days)
 
     for order in orders:
         customer = order.get("customers") or {}
@@ -559,12 +560,12 @@ async def cron_crafting_updates():
 @app.post("/cron/abandoned-carts", dependencies=[Depends(verify_cron_secret)])
 async def cron_abandoned_carts():
     """Check for abandoned carts needing recovery emails."""
-    db = Database()
+    db = AsyncDatabase()
     slack = SlackNotifier()
     classifier = MessageClassifier()
     flagged = 0
 
-    carts = db.get_abandoned_carts_pending_recovery()
+    carts = await db.get_abandoned_carts_pending_recovery()
 
     for cart in carts:
         customer_email = cart.get("customer_email", "")
@@ -576,7 +577,7 @@ async def cron_abandoned_carts():
         customer_context = ""
         customer_name = customer_email or "Anonymous"
         if customer_email:
-            customer = db.get_customer_by_email(customer_email)
+            customer = await db.get_customer_by_email(customer_email)
             if customer:
                 customer_name = customer.get("name") or customer_email
                 customer_context = (
@@ -624,7 +625,7 @@ async def cron_abandoned_carts():
         )
 
         # Mark as pending approval
-        db.upsert_cart_event({
+        await db.upsert_cart_event({
             "shopify_checkout_token": cart["shopify_checkout_token"],
             "recovery_email_status": "pending",
         })
@@ -699,18 +700,18 @@ async def _check_webhook_health(shopify: ShopifyClient, slack: SlackNotifier) ->
 @app.post("/cron/morning-digest", dependencies=[Depends(verify_cron_secret)])
 async def cron_morning_digest():
     """Daily morning digest sent to Slack at 8 AM."""
-    db = Database()
+    db = AsyncDatabase()
     slack = SlackNotifier()
 
     yesterday = date.today() - timedelta(days=1)
-    stats = db.get_stats_range(yesterday, yesterday)
-    pending = db.get_pending_messages()
+    stats = await db.get_stats_range(yesterday, yesterday)
+    pending = await db.get_pending_messages()
 
     revenue = float(stats[0].get("revenue", 0)) if stats else 0.0
     orders = int(stats[0].get("order_count", 0)) if stats else 0
     new_customers = int(stats[0].get("new_customers", 0)) if stats else 0
 
-    abandoned = db.get_abandoned_carts_pending_recovery()
+    abandoned = await db.get_abandoned_carts_pending_recovery()
 
     # Webhook health check
     shopify = ShopifyClient()
@@ -766,19 +767,19 @@ async def cron_morning_digest():
 @app.post("/cron/weekly-rollup", dependencies=[Depends(verify_cron_secret)])
 async def cron_weekly_rollup():
     """Weekly rollup sent to Slack on Mondays at 9 AM."""
-    db = Database()
+    db = AsyncDatabase()
     slack = SlackNotifier()
 
     end = date.today()
     start = end - timedelta(days=7)
-    stats = db.get_stats_range(start, end)
+    stats = await db.get_stats_range(start, end)
 
     total_revenue = sum(float(s.get("revenue", 0)) for s in stats)
     total_orders = sum(int(s.get("order_count", 0)) for s in stats)
     total_new_customers = sum(int(s.get("new_customers", 0)) for s in stats)
 
-    customer_count = db.get_customer_count()
-    repeat_count = db.get_repeat_customer_count()
+    customer_count = await db.get_customer_count()
+    repeat_count = await db.get_repeat_customer_count()
 
     blocks = [
         {
@@ -866,7 +867,7 @@ async def cron_sync_ad_spend():
     """
     from zoneinfo import ZoneInfo
 
-    from src.core.database import Database
+    from src.core.database import AsyncDatabase
     from src.marketing.google_ads import GoogleAdsClient, GoogleAdsError
     from src.marketing.meta_ads import MetaAdsClient, MetaAdsError
 
@@ -916,9 +917,9 @@ async def cron_sync_ad_spend():
 
     # ── Upsert daily_stats ──
     if meta_spend is not None or google_spend is not None:
-        db = Database()
+        db = AsyncDatabase()
         # Fetch existing row to merge (don't overwrite non-spend fields)
-        existing = db.get_stats_range(yesterday, yesterday)
+        existing = await db.get_stats_range(yesterday, yesterday)
         existing_row = existing[0] if existing else {}
 
         current_meta = float(existing_row.get("ad_spend_meta", 0))
@@ -927,7 +928,7 @@ async def cron_sync_ad_spend():
         new_meta = meta_spend if meta_spend is not None else current_meta
         new_google = google_spend if google_spend is not None else current_google
 
-        db.upsert_daily_stats({
+        await db.upsert_daily_stats({
             "date": yesterday.isoformat(),
             "ad_spend_meta": new_meta,
             "ad_spend_google": new_google,
@@ -968,7 +969,7 @@ async def cron_sync_meta_catalog():
     catalog format, and pushes via Catalog Batch API.
     Scheduled: daily 5 AM ET (before ad spend sync at 6 AM).
     """
-    from src.core.database import Database
+    from src.core.database import AsyncDatabase
     from src.marketing.meta_catalog import MetaCatalogSync
 
     errors = []
@@ -981,9 +982,9 @@ async def cron_sync_meta_catalog():
             "reason": "Meta Catalog not configured (missing token or catalog_id)",
         }
 
-    db = Database()
+    db = AsyncDatabase()
     try:
-        products = db.get_all_active_products()
+        products = await db.get_all_active_products()
     except Exception as e:
         logger.exception("Failed to fetch products for catalog sync")
         return {
@@ -1031,7 +1032,7 @@ async def cron_sync_google_merchant():
 
     Scheduled: daily 5:15 AM ET (staggered 15 min after Meta catalog).
     """
-    from src.core.database import Database
+    from src.core.database import AsyncDatabase
     from src.marketing.google_merchant import GoogleMerchantSync
 
     errors = []
@@ -1044,9 +1045,9 @@ async def cron_sync_google_merchant():
             "reason": "Google Merchant not configured",
         }
 
-    db = Database()
+    db = AsyncDatabase()
     try:
-        products = db.get_all_active_products()
+        products = await db.get_all_active_products()
     except Exception as e:
         logger.exception("Failed to fetch products for Merchant sync")
         return {
@@ -1089,7 +1090,7 @@ async def cron_reorder_reminders():
     engine = ReorderEngine()
     slack = SlackNotifier()
 
-    candidates = engine.find_reorder_candidates()
+    candidates = await engine.find_reorder_candidates()
     if not candidates:
         return {"status": "ok", "module": "reorder", "candidates": 0}
 
@@ -1146,12 +1147,12 @@ async def webhook_slack(request: Request):
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
     slack = SlackNotifier()
-    db = Database()
+    db = AsyncDatabase()
     email = EmailSender()
 
     # ── Customer Response Actions ──
     if action_id == "approve_response":
-        msg = db.get_pending_messages()
+        msg = await db.get_pending_messages()
         target = next((m for m in msg if str(m.get("id")) == value), None)
         if target and target.get("ai_draft"):
             email.send_service_reply(
@@ -1160,19 +1161,19 @@ async def webhook_slack(request: Request):
                 subject=target.get("subject", "Re: Your inquiry"),
                 email_body=target["ai_draft"],
             )
-            db.update_message_status(target["id"], "sent", human_approved=True)
+            await db.update_message_status(target["id"], "sent", human_approved=True)
 
         tombstone = SlackNotifier.tombstone_blocks("Approved & Sent", f"Message #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
     elif action_id == "reject_response":
-        db.update_message_status(int(value), "rejected")
+        await db.update_message_status(int(value), "rejected")
         tombstone = SlackNotifier.tombstone_blocks("Rejected", f"Message #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
     # ── Abandoned Cart Recovery Actions ──
     elif action_id == "approve_cart_recovery":
-        cart = db.get_cart_by_id(int(value))
+        cart = await db.get_cart_by_id(int(value))
         if cart:
             items_json = cart.get("items_json", "[]")
             items = json.loads(items_json) if isinstance(items_json, str) else items_json
@@ -1184,7 +1185,7 @@ async def webhook_slack(request: Request):
                 cart_items=item_names,
                 cart_value=float(cart.get("cart_value", 0)),
             )
-            db.upsert_cart_event({
+            await db.upsert_cart_event({
                 "shopify_checkout_token": cart["shopify_checkout_token"],
                 "recovery_email_status": "sent",
             })
@@ -1192,9 +1193,9 @@ async def webhook_slack(request: Request):
         await slack.update_message(channel, message_ts, tombstone)
 
     elif action_id == "skip_cart_recovery":
-        cart = db.get_cart_by_id(int(value))
+        cart = await db.get_cart_by_id(int(value))
         if cart:
-            db.upsert_cart_event({
+            await db.upsert_cart_event({
                 "shopify_checkout_token": cart["shopify_checkout_token"],
                 "recovery_email_status": "cancelled",
             })
@@ -1203,10 +1204,10 @@ async def webhook_slack(request: Request):
 
     # ── Crafting Update Actions ──
     elif action_id == "approve_crafting_update":
-        order = db.get_order_by_shopify_id(int(value))
+        order = await db.get_order_by_shopify_id(int(value))
         if order:
             customer_id = order.get("customer_id")
-            customer = db.get_customer_by_shopify_id(customer_id) if customer_id else None
+            customer = (await db.get_customer_by_shopify_id(customer_id)) if customer_id else None
             customer_email = order.get("buyer_email", "")
             customer_name = order.get("buyer_name", "")
 
@@ -1217,7 +1218,7 @@ async def webhook_slack(request: Request):
                     order_number=str(value),
                     email_body="",  # Template handles the content
                 )
-        db.update_order_status(int(value), "crafting_update_sent")
+        await db.update_order_status(int(value), "crafting_update_sent")
         tombstone = SlackNotifier.tombstone_blocks("Crafting Update Sent", f"Order #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
@@ -1227,23 +1228,23 @@ async def webhook_slack(request: Request):
 
     # ── Shipping/Fraud Actions ──
     elif action_id == "approve_shipment":
-        db.update_order_status(int(value), "approved_for_shipping")
+        await db.update_order_status(int(value), "approved_for_shipping")
         tombstone = SlackNotifier.tombstone_blocks("Shipment Approved", f"Order #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
     elif action_id == "hold_order":
-        db.update_order_status(int(value), "held_for_review")
+        await db.update_order_status(int(value), "held_for_review")
         tombstone = SlackNotifier.tombstone_blocks("Order Held", f"Order #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
     elif action_id == "cancel_order":
-        db.update_order_status(int(value), "cancelled")
+        await db.update_order_status(int(value), "cancelled")
         tombstone = SlackNotifier.tombstone_blocks("Order Cancelled", f"Order #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
     # ── Listing Actions ──
     elif action_id == "approve_listing":
-        draft = db.get_listing_draft(int(value))
+        draft = await db.get_listing_draft(int(value))
         if draft:
             shopify = ShopifyClient()
             try:
@@ -1253,7 +1254,7 @@ async def webhook_slack(request: Request):
                     tags=draft.get("tags", []),
                 )
                 shopify_product_id = product.get("id")
-                db.update_listing_draft_status(
+                await db.update_listing_draft_status(
                     draft["id"], "published", shopify_product_id=shopify_product_id,
                 )
                 detail = f"Listing #{value} published to Shopify as draft (ID: {shopify_product_id})"
@@ -1268,7 +1269,7 @@ async def webhook_slack(request: Request):
         await slack.update_message(channel, message_ts, tombstone)
 
     elif action_id == "reject_listing":
-        db.update_listing_draft_status(int(value), "rejected")
+        await db.update_listing_draft_status(int(value), "rejected")
         tombstone = SlackNotifier.tombstone_blocks("Listing Rejected", f"Draft #{value}", timestamp)
         await slack.update_message(channel, message_ts, tombstone)
 
@@ -1304,7 +1305,7 @@ async def webhook_slack(request: Request):
                 email_body=draft_text,
             )
             if customer_id:
-                db.update_customer_reorder_sent(int(customer_id))
+                await db.update_customer_reorder_sent(int(customer_id))
 
         tombstone = SlackNotifier.tombstone_blocks(
             "Reorder Reminder Sent", f"{customer_name} ({customer_email})", timestamp,

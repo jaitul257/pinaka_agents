@@ -70,10 +70,10 @@ def test_cron_missing_header(client):
 
 # ── Cron: Daily Stats ──
 
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_daily_stats(mock_db_cls, client, cron_headers):
     """Daily stats cron should aggregate yesterday's orders."""
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_total_revenue.return_value = 4050.0
     mock_db.get_orders_by_status.return_value = []
@@ -91,7 +91,7 @@ def test_cron_daily_stats(mock_db_cls, client, cron_headers):
 # ── Cron: Reconcile Orders ──
 
 @patch("src.api.app.ShopifyClient")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_reconcile_orders(mock_db_cls, mock_shopify_cls, client, cron_headers):
     """Reconcile cron should process orders missed by webhooks."""
     mock_shopify = AsyncMock()
@@ -102,7 +102,7 @@ def test_cron_reconcile_orders(mock_db_cls, mock_shopify_cls, client, cron_heade
     ]
     mock_shopify.close = AsyncMock()
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_order_by_shopify_id.return_value = None  # Not yet processed
 
@@ -115,7 +115,7 @@ def test_cron_reconcile_orders(mock_db_cls, mock_shopify_cls, client, cron_heade
 
 
 @patch("src.api.app.ShopifyClient")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, client, cron_headers):
     """Reconcile should skip orders already in the database."""
     mock_shopify = AsyncMock()
@@ -125,7 +125,7 @@ def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, client, cr
     ]
     mock_shopify.close = AsyncMock()
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_order_by_shopify_id.return_value = {"shopify_order_id": 5002}
 
@@ -140,10 +140,10 @@ def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, client, cr
 
 @patch("src.api.app.MessageClassifier")
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, mock_class_cls, client, cron_headers):
     """Crafting update cron should send Slack reviews for eligible orders."""
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_orders_needing_crafting_update.return_value = [
         {
@@ -171,10 +171,10 @@ def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, mock_class_cls, clie
 
 @patch("src.api.app.MessageClassifier")
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_abandoned_carts(mock_db_cls, mock_slack_cls, mock_class_cls, client, cron_headers):
     """Abandoned cart cron should flag carts for Slack review."""
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_abandoned_carts_pending_recovery.return_value = [
         {
@@ -208,10 +208,10 @@ def test_cron_abandoned_carts(mock_db_cls, mock_slack_cls, mock_class_cls, clien
 
 @patch("src.api.app.MessageClassifier")
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_abandoned_carts_skip_low_value(mock_db_cls, mock_slack_cls, mock_class_cls, client, cron_headers):
     """Abandoned carts under $1 should be skipped."""
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_abandoned_carts_pending_recovery.return_value = [
         {
@@ -233,10 +233,10 @@ def test_cron_abandoned_carts_skip_low_value(mock_db_cls, mock_slack_cls, mock_c
 
 @patch("src.api.app.ShopifyClient")
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_morning_digest(mock_db_cls, mock_slack_cls, mock_shopify_cls, client, cron_headers):
     """Morning digest should send revenue, orders, and customer counts."""
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_stats_range.return_value = [{"revenue": 2850.0, "order_count": 1, "new_customers": 1}]
     mock_db.get_pending_messages.return_value = [
@@ -266,10 +266,10 @@ def test_cron_morning_digest(mock_db_cls, mock_slack_cls, mock_shopify_cls, clie
 
 @patch("src.api.app.ShopifyClient")
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_morning_digest_missing_webhooks(mock_db_cls, mock_slack_cls, mock_shopify_cls, client, cron_headers):
     """Morning digest should alert when webhook subscriptions are missing."""
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_stats_range.return_value = [{"revenue": 0, "order_count": 0, "new_customers": 0}]
     mock_db.get_pending_messages.return_value = []
@@ -295,10 +295,10 @@ def test_cron_morning_digest_missing_webhooks(mock_db_cls, mock_slack_cls, mock_
 # ── Cron: Weekly Rollup ──
 
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_cron_weekly_rollup(mock_db_cls, mock_slack_cls, client, cron_headers):
     """Weekly rollup should aggregate 7 days of stats."""
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_stats_range.return_value = [
         {"revenue": 2850.0, "order_count": 1, "new_customers": 1, "repeat_customers": 0},
@@ -348,14 +348,14 @@ def test_shopify_order_webhook_missing_hmac(client):
 # ── Webhook: Slack Approve Response ──
 
 @patch("src.api.app.EmailSender")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 @patch("src.api.app.SlackNotifier")
 def test_slack_webhook_approve_response(mock_slack_cls, mock_db_cls, mock_email_cls, client):
     """Approve action should send via SendGrid and tombstone the message."""
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_pending_messages.return_value = [
         {"id": 1, "customer_email": "buyer@example.com", "buyer_name": "Jane",
@@ -382,14 +382,14 @@ def test_slack_webhook_approve_response(mock_slack_cls, mock_db_cls, mock_email_
 # ── Webhook: Slack Approve Cart Recovery ──
 
 @patch("src.api.app.EmailSender")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 @patch("src.api.app.SlackNotifier")
 def test_slack_webhook_approve_cart_recovery(mock_slack_cls, mock_db_cls, mock_email_cls, client):
     """Approve cart recovery should send email and update cart status."""
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_cart_by_id.return_value = {
         "id": 42,
@@ -418,14 +418,14 @@ def test_slack_webhook_approve_cart_recovery(mock_slack_cls, mock_db_cls, mock_e
 
 # ── Webhook: Slack Skip Cart Recovery ──
 
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 @patch("src.api.app.SlackNotifier")
 def test_slack_webhook_skip_cart_recovery(mock_slack_cls, mock_db_cls, client):
     """Skip cart recovery should cancel the recovery status."""
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_cart_by_id.return_value = {
         "id": 42, "shopify_checkout_token": "tok_abc",
@@ -447,14 +447,14 @@ def test_slack_webhook_skip_cart_recovery(mock_slack_cls, mock_db_cls, client):
 # ── Webhook: Slack Approve Crafting Update ──
 
 @patch("src.api.app.EmailSender")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 @patch("src.api.app.SlackNotifier")
 def test_slack_webhook_approve_crafting_update(mock_slack_cls, mock_db_cls, mock_email_cls, client):
     """Approve crafting update should send email and update order status."""
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_order_by_shopify_id.return_value = {
         "shopify_order_id": 5001, "buyer_email": "jane@example.com",
@@ -480,13 +480,13 @@ def test_slack_webhook_approve_crafting_update(mock_slack_cls, mock_db_cls, mock
 # ── Webhook: Slack Approve Shipment ──
 
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_slack_webhook_approve_shipment(mock_db_cls, mock_slack_cls, client):
     """Approve shipment should update order status and tombstone."""
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
 
     payload = json.dumps({
@@ -504,13 +504,13 @@ def test_slack_webhook_approve_shipment(mock_db_cls, mock_slack_cls, client):
 # ── Webhook: Slack Hold Order ──
 
 @patch("src.api.app.SlackNotifier")
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 def test_slack_webhook_hold_order(mock_db_cls, mock_slack_cls, client):
     """Hold order should update status to held_for_review."""
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
 
     payload = json.dumps({
@@ -536,14 +536,14 @@ def test_slack_webhook_no_actions(client):
 
 # ── Webhook: Slack Reject Response ──
 
-@patch("src.api.app.Database")
+@patch("src.api.app.AsyncDatabase")
 @patch("src.api.app.SlackNotifier")
 def test_slack_webhook_reject_response(mock_slack_cls, mock_db_cls, client):
     """Reject should update message status to rejected."""
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
 
-    mock_db = MagicMock()
+    mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
 
     payload = json.dumps({

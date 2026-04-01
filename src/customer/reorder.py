@@ -9,7 +9,7 @@ from typing import Any
 
 import anthropic
 
-from src.core.database import Database
+from src.core.database import AsyncDatabase
 from src.core.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class ReorderEngine:
 
     def __init__(self):
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        self._db = Database()
+        self._db = AsyncDatabase()
 
     def _parse_reminder_days(self) -> list[int]:
         """Parse the comma-separated reminder days setting."""
@@ -43,7 +43,7 @@ class ReorderEngine:
             logger.warning("Invalid reorder_reminder_days: %s, using defaults", settings.reorder_reminder_days)
             return [90, 180, 365]
 
-    def find_reorder_candidates(self) -> list[dict[str, Any]]:
+    async def find_reorder_candidates(self) -> list[dict[str, Any]]:
         """Find customers eligible for reorder reminders across all day windows.
 
         Returns flat dicts with: customer_id, name, email, last_order_number,
@@ -53,7 +53,7 @@ class ReorderEngine:
         all_candidates = []
 
         for days in reminder_days:
-            raw = self._db.get_customers_for_reorder(
+            raw = await self._db.get_customers_for_reorder(
                 days_since_purchase=days,
                 cooldown_days=settings.reorder_cooldown_days,
             )
@@ -94,7 +94,7 @@ class ReorderEngine:
         logger.info("Found %d reorder candidates across %d day windows", len(unique), len(reminder_days))
         return unique
 
-    def _get_product_context(self, last_order_items: str) -> str:
+    async def _get_product_context(self, last_order_items: str) -> str:
         """Get related product suggestions via ChromaDB, with Supabase fallback."""
         try:
             from src.product.embeddings import ProductEmbeddings
@@ -110,7 +110,7 @@ class ReorderEngine:
             logger.warning("ChromaDB query failed for reorder context, falling back to Supabase")
 
         # Fallback: grab a few products from Supabase
-        products = self._db.get_all_products()
+        products = await self._db.get_all_products()
         if not products:
             return "No product catalog available."
 
@@ -131,7 +131,7 @@ class ReorderEngine:
     ) -> str:
         """Use Claude to draft a personalized reorder reminder email."""
         if not product_context:
-            product_context = self._get_product_context(last_order_items)
+            product_context = await self._get_product_context(last_order_items)
 
         user_prompt = f"""Customer: {customer_name}
 Their last purchase ({trigger_days} days ago): {last_order_items}
