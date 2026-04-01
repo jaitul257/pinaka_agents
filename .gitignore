@@ -19,6 +19,10 @@ node_modules/
 *.docx
 data/products/
 
+# Google service account keys (never commit)
+*-service-account*.json
+pinaka-jewellery-*.json
+
 # Claude Code / gstack local tooling
 .claude/
 .gstack/

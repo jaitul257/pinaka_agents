@@ -3,14 +3,15 @@
 Tracks Google Shopping + Meta ad spend via daily_stats records,
 calculates rolling ROAS, and recommends daily budget adjustments.
 
-Note: Direct API integrations with Google Ads and Meta Ads are Phase 2-3.
-Currently relies on manually entered ad spend in daily_stats.
+Phase 5 adds automated ad spend pull from Meta + Google APIs.
+ROAS uses blended revenue (total store revenue / total ad spend).
 """
 
 import logging
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.core.database import Database
 from src.core.settings import settings
@@ -25,7 +26,7 @@ class ROASResult:
 
     window_days: int
     total_ad_spend: float
-    total_ad_revenue: float
+    total_revenue: float
     roas: float
     recommendation: str
     recommended_budget: float
@@ -49,7 +50,7 @@ class AdsTracker:
             float(s.get("ad_spend_google", 0)) + float(s.get("ad_spend_meta", 0))
             for s in daily_stats
         )
-        total_revenue = sum(float(s.get("ad_revenue", 0)) for s in daily_stats)
+        total_revenue = sum(float(s.get("revenue", 0)) for s in daily_stats)
 
         roas = total_revenue / total_spend if total_spend > 0 else 0.0
 
@@ -59,7 +60,7 @@ class AdsTracker:
         return ROASResult(
             window_days=window,
             total_ad_spend=round(total_spend, 2),
-            total_ad_revenue=round(total_revenue, 2),
+            total_revenue=round(total_revenue, 2),
             roas=round(roas, 2),
             recommendation=recommendation,
             recommended_budget=round(new_budget, 2),
@@ -83,7 +84,8 @@ class AdsTracker:
 
     async def run_weekly_roas_report(self) -> ROASResult:
         """Pull stats from DB, calculate ROAS, send Slack summary."""
-        end = date.today()
+        tz = ZoneInfo(settings.business_timezone)
+        end = datetime.now(tz).date()
         start = end - timedelta(days=settings.roas_window_days)
 
         daily_stats = self._db.get_stats_range(start, end)
@@ -95,7 +97,7 @@ class AdsTracker:
             result.roas,
             result.window_days,
             result.total_ad_spend,
-            result.total_ad_revenue,
+            result.total_revenue,
         )
         return result
 
@@ -126,7 +128,7 @@ class AdsTracker:
                     {"type": "mrkdwn", "text": f"*ROAS:* {result.roas}x"},
                     {"type": "mrkdwn", "text": f"*Window:* {result.window_days} days"},
                     {"type": "mrkdwn", "text": f"*Ad Spend:* ${result.total_ad_spend:,.2f}"},
-                    {"type": "mrkdwn", "text": f"*Ad Revenue:* ${result.total_ad_revenue:,.2f}"},
+                    {"type": "mrkdwn", "text": f"*Revenue:* ${result.total_revenue:,.2f}"},
                 ],
             },
             {"type": "divider"},

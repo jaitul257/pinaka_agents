@@ -832,6 +832,255 @@ async def cron_weekly_finance():
     }
 
 
+@app.post("/cron/weekly-roas", dependencies=[Depends(verify_cron_secret)])
+async def cron_weekly_roas():
+    """Weekly ROAS report with budget recommendation."""
+    from src.marketing.ads import AdsTracker
+
+    tracker = AdsTracker()
+    errors = []
+    try:
+        result = await tracker.run_weekly_roas_report()
+    except Exception as e:
+        logger.exception("Weekly ROAS report failed")
+        errors.append(str(e))
+        return {"status": "partial_failure", "module": "ads", "errors": errors}
+
+    return {
+        "status": "ok",
+        "module": "ads",
+        "roas": result.roas,
+        "recommendation": result.recommendation,
+        "total_spend": result.total_ad_spend,
+        "total_revenue": result.total_revenue,
+    }
+
+
+@app.post("/cron/sync-ad-spend", dependencies=[Depends(verify_cron_secret)])
+async def cron_sync_ad_spend():
+    """Pull yesterday's ad spend from Meta (and Google when configured).
+
+    Updates daily_stats with ad_spend_meta. Also syncs legacy ad_spend column
+    (ad_spend = ad_spend_google + ad_spend_meta) so finance reads stay correct.
+    Scheduled: daily 6 AM ET, before morning digest.
+    """
+    from zoneinfo import ZoneInfo
+
+    from src.core.database import Database
+    from src.marketing.google_ads import GoogleAdsClient, GoogleAdsError
+    from src.marketing.meta_ads import MetaAdsClient, MetaAdsError
+
+    tz = ZoneInfo(settings.business_timezone)
+    yesterday = (datetime.now(tz) - timedelta(days=1)).date()
+    errors = []
+    meta_spend = None
+
+    # ── Meta ad spend ──
+    meta = MetaAdsClient()
+    if meta.is_configured:
+        try:
+            result = await meta.get_daily_spend(yesterday)
+            meta_spend = result.spend
+        except MetaAdsError as e:
+            logger.error("Meta ad spend sync failed for %s: %s", yesterday, e)
+            errors.append(f"meta: {e}")
+            try:
+                slack = SlackNotifier()
+                await slack.send_alert(
+                    f":warning: Meta ad spend sync failed for {yesterday}: {e}",
+                )
+            except Exception:
+                logger.exception("Slack alert for Meta spend failure also failed")
+    else:
+        logger.info("Meta Ads not configured, skipping Meta spend sync")
+
+    # ── Google ad spend ──
+    google_spend = None
+    google = GoogleAdsClient()
+    if google.is_configured:
+        try:
+            result = await google.get_daily_spend(yesterday)
+            google_spend = result.spend
+        except GoogleAdsError as e:
+            logger.error("Google ad spend sync failed for %s: %s", yesterday, e)
+            errors.append(f"google: {e}")
+            try:
+                slack = SlackNotifier()
+                await slack.send_alert(
+                    f":warning: Google ad spend sync failed for {yesterday}: {e}",
+                )
+            except Exception:
+                logger.exception("Slack alert for Google spend failure also failed")
+    else:
+        logger.info("Google Ads not configured, skipping Google spend sync")
+
+    # ── Upsert daily_stats ──
+    if meta_spend is not None or google_spend is not None:
+        db = Database()
+        # Fetch existing row to merge (don't overwrite non-spend fields)
+        existing = db.get_stats_range(yesterday, yesterday)
+        existing_row = existing[0] if existing else {}
+
+        current_meta = float(existing_row.get("ad_spend_meta", 0))
+        current_google = float(existing_row.get("ad_spend_google", 0))
+
+        new_meta = meta_spend if meta_spend is not None else current_meta
+        new_google = google_spend if google_spend is not None else current_google
+
+        db.upsert_daily_stats({
+            "date": yesterday.isoformat(),
+            "ad_spend_meta": new_meta,
+            "ad_spend_google": new_google,
+            "ad_spend": new_meta + new_google,  # Sync legacy column (Plan Fix 3)
+            "ad_spend_synced_at": datetime.now(tz).isoformat(),
+            "ad_spend_source": "api",
+        })
+
+        logger.info(
+            "Ad spend synced for %s: meta=$%.2f, google=$%.2f, total=$%.2f",
+            yesterday, new_meta, new_google, new_meta + new_google,
+        )
+
+    if errors:
+        return {
+            "status": "partial_failure",
+            "module": "ad_spend",
+            "date": yesterday.isoformat(),
+            "errors": errors,
+            "meta_spend": meta_spend,
+            "google_spend": google_spend,
+        }
+
+    return {
+        "status": "ok",
+        "module": "ad_spend",
+        "date": yesterday.isoformat(),
+        "meta_spend": meta_spend,
+        "google_spend": google_spend,
+    }
+
+
+@app.post("/cron/sync-meta-catalog", dependencies=[Depends(verify_cron_secret)])
+async def cron_sync_meta_catalog():
+    """Sync active products to Meta Commerce Manager catalog for Dynamic Product Ads.
+
+    Fetches all Shopify-published products from Supabase, maps them to Meta
+    catalog format, and pushes via Catalog Batch API.
+    Scheduled: daily 5 AM ET (before ad spend sync at 6 AM).
+    """
+    from src.core.database import Database
+    from src.marketing.meta_catalog import MetaCatalogSync
+
+    errors = []
+    meta_sync = MetaCatalogSync()
+
+    if not meta_sync.is_configured:
+        return {
+            "status": "skipped",
+            "module": "meta_catalog",
+            "reason": "Meta Catalog not configured (missing token or catalog_id)",
+        }
+
+    db = Database()
+    try:
+        products = db.get_all_active_products()
+    except Exception as e:
+        logger.exception("Failed to fetch products for catalog sync")
+        return {
+            "status": "partial_failure",
+            "module": "meta_catalog",
+            "errors": [f"DB fetch failed: {e}"],
+        }
+
+    try:
+        result = await meta_sync.sync_products(products)
+    except Exception as e:
+        logger.exception("Meta catalog sync failed")
+        errors.append(str(e))
+        try:
+            slack = SlackNotifier()
+            await slack.send_alert(
+                f":warning: Meta catalog sync failed: {e}",
+            )
+        except Exception:
+            logger.exception("Slack alert for catalog sync failure also failed")
+        return {
+            "status": "partial_failure",
+            "module": "meta_catalog",
+            "errors": errors,
+        }
+
+    logger.info(
+        "Meta catalog sync: %d products, %d synced, %d failed",
+        len(products), result.items_synced, result.items_failed,
+    )
+
+    return {
+        "status": result.status,
+        "module": "meta_catalog",
+        "total_products": len(products),
+        "items_synced": result.items_synced,
+        "items_failed": result.items_failed,
+        "errors": result.errors,
+    }
+
+
+@app.post("/cron/sync-google-merchant", dependencies=[Depends(verify_cron_secret)])
+async def cron_sync_google_merchant():
+    """Sync active products to Google Merchant Center for Shopping ads.
+
+    Scheduled: daily 5:15 AM ET (staggered 15 min after Meta catalog).
+    """
+    from src.core.database import Database
+    from src.marketing.google_merchant import GoogleMerchantSync
+
+    errors = []
+    merchant = GoogleMerchantSync()
+
+    if not merchant.is_configured:
+        return {
+            "status": "skipped",
+            "module": "google_merchant",
+            "reason": "Google Merchant not configured",
+        }
+
+    db = Database()
+    try:
+        products = db.get_all_active_products()
+    except Exception as e:
+        logger.exception("Failed to fetch products for Merchant sync")
+        return {
+            "status": "partial_failure",
+            "module": "google_merchant",
+            "errors": [f"DB fetch failed: {e}"],
+        }
+
+    try:
+        result = await merchant.sync_products(products)
+    except Exception as e:
+        logger.exception("Google Merchant sync failed")
+        errors.append(str(e))
+        try:
+            slack = SlackNotifier()
+            await slack.send_alert(f":warning: Google Merchant sync failed: {e}")
+        except Exception:
+            logger.exception("Slack alert for Merchant sync failure also failed")
+        return {
+            "status": "partial_failure",
+            "module": "google_merchant",
+            "errors": errors,
+        }
+
+    return {
+        "status": result.status,
+        "module": "google_merchant",
+        "total_products": len(products),
+        "items_synced": result.items_synced,
+        "items_failed": result.items_failed,
+        "errors": result.errors,
+    }
+
+
 @app.post("/cron/reorder-reminders", dependencies=[Depends(verify_cron_secret)])
 async def cron_reorder_reminders():
     """Find reorder candidates and post AI-drafted reminders to Slack for review."""

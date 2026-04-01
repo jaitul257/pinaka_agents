@@ -2,8 +2,13 @@
 
 Wraps the Supabase Python client with typed methods. Customer is the primary
 entity. Orders, messages, cart_events, and daily_stats link to customers.
+
+AsyncDatabase wraps all sync methods via asyncio.to_thread() for non-blocking
+use in FastAPI async handlers.
 """
 
+import asyncio
+import functools
 import logging
 from datetime import date, datetime
 from typing import Any
@@ -482,6 +487,17 @@ class Database:
         )
         return result.data or []
 
+    def get_all_active_products(self) -> list[dict[str, Any]]:
+        """Products with a Shopify ID (published/synced). Used for catalog feeds."""
+        result = (
+            self._client.table("products")
+            .select("*")
+            .not_.is_("shopify_product_id", "null")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return result.data or []
+
     def delete_product(self, sku: str) -> None:
         self._client.table("products").delete().eq("sku", sku).execute()
 
@@ -631,3 +647,29 @@ class Database:
             .execute()
         )
         return result.count or 0
+
+
+class AsyncDatabase:
+    """Async wrapper around Database. Delegates all calls via asyncio.to_thread().
+
+    Each instance creates its own Database (no shared singleton) to avoid
+    thread-safety issues when multiple async handlers run concurrently.
+
+    Usage:
+        db = AsyncDatabase()
+        order = await db.get_order_by_shopify_id(12345)
+    """
+
+    def __init__(self):
+        self._sync = Database()
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._sync, name)
+        if not callable(attr):
+            return attr
+
+        @functools.wraps(attr)
+        async def async_wrapper(*args, **kwargs):
+            return await asyncio.to_thread(attr, *args, **kwargs)
+
+        return async_wrapper

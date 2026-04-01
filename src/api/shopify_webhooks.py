@@ -15,7 +15,8 @@ from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, Request
 
-from src.core.database import Database
+from src.core.attribution import extract_attribution
+from src.core.database import AsyncDatabase, Database
 from src.core.email import EmailSender
 from src.core.events import event_bus
 from src.core.settings import settings
@@ -26,16 +27,26 @@ logger = logging.getLogger(__name__)
 
 # Lazy singletons — avoid connecting at import time
 _db = None
+_async_db = None
 _slack = None
 _email = None
 _shipping = None
 
 
 def _get_db():
+    """Sync Database for non-async callers (e.g. ShippingProcessor internals)."""
     global _db
     if _db is None:
         _db = Database()
     return _db
+
+
+def _get_async_db():
+    """AsyncDatabase for webhook handlers — non-blocking DB calls."""
+    global _async_db
+    if _async_db is None:
+        _async_db = AsyncDatabase()
+    return _async_db
 
 
 def _get_slack():
@@ -106,9 +117,10 @@ async def _process_order(order_data: dict[str, Any]) -> None:
 
 async def _process_order_inner(order_data: dict[str, Any]) -> None:
     shopify_order_id = order_data.get("id")
+    db = _get_async_db()
 
     # Idempotency check
-    existing = _get_db().get_order_by_shopify_id(shopify_order_id)
+    existing = await db.get_order_by_shopify_id(shopify_order_id)
     if existing:
         logger.info("Order %s already processed, skipping", shopify_order_id)
         return
@@ -122,7 +134,7 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
     # Upsert customer
     customer_record = None
     if shopify_customer_id:
-        customer_record = _get_db().upsert_customer({
+        customer_record = await db.upsert_customer({
             "shopify_customer_id": shopify_customer_id,
             "email": customer_email,
             "name": customer_name or customer_email,
@@ -142,14 +154,15 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
             stage = "repeat"
         else:
             stage = "first_purchase"
-        _get_db().update_customer_lifecycle(customer_record["id"], stage)
+        await db.update_customer_lifecycle(customer_record["id"], stage)
 
-    # Persist order
+    # Persist order with attribution params
     total = float(order_data.get("total_price", "0"))
     subtotal = float(order_data.get("subtotal_price", "0"))
     tax = float(order_data.get("total_tax", "0"))
+    attribution = extract_attribution(order_data)
 
-    order_record = _get_db().upsert_order({
+    order_record = await db.upsert_order({
         "shopify_order_id": shopify_order_id,
         "customer_id": customer_record["id"] if customer_record else None,
         "buyer_email": customer_email,
@@ -161,12 +174,13 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
         "status": "paid",
         "checkout_token": order_data.get("checkout_token", ""),
         "created_at": order_data.get("created_at", datetime.utcnow().isoformat()),
+        **{k: v for k, v in attribution.items() if v is not None},
     })
 
     # Cancel any pending abandoned cart recovery for this checkout
     checkout_token = order_data.get("checkout_token", "")
     if checkout_token:
-        _get_db().cancel_cart_recovery(checkout_token)
+        await db.cancel_cart_recovery(checkout_token)
 
     # Emit event for other handlers (fraud check, Slack alert, etc.)
     await event_bus.emit("order.created", {
@@ -217,7 +231,7 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
             if ss_result.get("orderId"):
                 logger.info("Order #%s pushed to ShipStation (SS ID: %s)", shopify_order_id, ss_result["orderId"])
                 # Store ShipStation order ID for tracking webhook correlation
-                _get_db().update_order_status(
+                await db.update_order_status(
                     shopify_order_id, order_record.get("status", "paid"),
                     shipstation_order_id=ss_result["orderId"],
                 )
@@ -263,6 +277,21 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
         except Exception:
             logger.exception("Meta CAPI failed for order #%s (non-blocking)", shopify_order_id)
 
+        # Fire Google Ads offline conversion (only when gclid is present)
+        if attribution.get("gclid"):
+            try:
+                from src.marketing.google_conversions import GoogleOfflineConversions
+                google_conv = GoogleOfflineConversions()
+                if google_conv.is_configured:
+                    await google_conv.send_purchase_conversion(
+                        gclid=attribution["gclid"],
+                        conversion_date_time=order_data.get("created_at", ""),
+                        conversion_value=total,
+                        order_id=str(shopify_order_id),
+                    )
+            except Exception:
+                logger.exception("Google conversion failed for order #%s (non-blocking)", shopify_order_id)
+
     logger.info("Order #%s processed: $%.2f from %s", shopify_order_id, total, customer_name)
 
 
@@ -275,7 +304,7 @@ async def _process_customer(customer_data: dict[str, Any]) -> None:
     email = customer_data.get("email", "")
     name = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
 
-    _get_db().upsert_customer({
+    await _get_async_db().upsert_customer({
         "shopify_customer_id": shopify_customer_id,
         "email": email,
         "name": name or email,
@@ -303,21 +332,21 @@ async def _process_refund_inner(refund_data: dict[str, Any]) -> None:
         logger.warning("Refund webhook missing id or order_id, skipping")
         return
 
-    db = _get_db()
+    db = _get_async_db()
 
     # Idempotency: skip if we already processed this refund
-    if db.get_refund_by_shopify_id(shopify_refund_id):
+    if await db.get_refund_by_shopify_id(shopify_refund_id):
         logger.info("Refund %s already processed, skipping", shopify_refund_id)
         return
 
     # Look up the order
-    order = db.get_order_by_shopify_id(shopify_order_id)
+    order = await db.get_order_by_shopify_id(shopify_order_id)
     if not order:
         # Race condition: refund arrived before order. Retry with backoff.
         import asyncio
         for attempt in range(3):
             await asyncio.sleep(30)
-            order = db.get_order_by_shopify_id(shopify_order_id)
+            order = await db.get_order_by_shopify_id(shopify_order_id)
             if order:
                 break
         if not order:
@@ -349,7 +378,7 @@ async def _process_refund_inner(refund_data: dict[str, Any]) -> None:
     reason = refund_data.get("note", "") or ""
 
     # Create refund record (also updates order.refund_amount)
-    db.create_refund({
+    await db.create_refund({
         "order_id": order["id"],
         "shopify_refund_id": shopify_refund_id,
         "amount": refund_amount,
@@ -398,13 +427,14 @@ async def _process_checkout(checkout_data: dict[str, Any]) -> None:
     ]
 
     # Look up customer
+    db = _get_async_db()
     customer_id = None
     if customer_email:
-        customer = _get_db().get_customer_by_email(customer_email)
+        customer = await db.get_customer_by_email(customer_email)
         if customer:
             customer_id = customer["id"]
 
-    _get_db().upsert_cart_event({
+    await db.upsert_cart_event({
         "shopify_checkout_token": checkout_token,
         "customer_id": customer_id,
         "customer_email": customer_email,

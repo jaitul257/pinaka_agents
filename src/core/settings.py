@@ -74,6 +74,25 @@ class Settings(BaseSettings):
     founder_name: str = "Pinaka Jewellery"
     log_level: str = "INFO"
     made_to_order_days: int = 15  # "Ships in X business days"
+    business_timezone: str = "US/Eastern"  # Canonical TZ for daily_stats date boundaries
+
+    # ── Meta Marketing ──
+    meta_ad_account_id: str = ""  # Format: act_XXXXXXXXX (from Meta Ads Manager)
+    meta_catalog_id: str = ""  # Product Catalog ID from Commerce Manager
+    meta_business_id: str = ""  # Business ID from Business Settings
+
+    # ── Google Ads ──
+    google_ads_developer_token: str = ""
+    google_ads_client_id: str = ""
+    google_ads_client_secret: str = ""
+    google_ads_refresh_token: str = ""
+    google_ads_customer_id: str = ""  # 10-digit, no dashes
+    google_ads_conversion_action_id: str = ""  # From Conversions setup
+
+    # ── Google Merchant Center ──
+    google_merchant_id: str = ""
+    google_service_account_path: str = ""  # Local path to JSON key
+    google_service_account_json: str = ""  # JSON content (for Railway)
 
     # ── Module thresholds ──
     # Shipping

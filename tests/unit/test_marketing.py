@@ -16,8 +16,8 @@ def test_roas_high_performance():
     """ROAS above increase threshold should recommend budget increase."""
     tracker = _make_tracker()
     stats = [
-        {"ad_spend_google": 5.0, "ad_spend_meta": 5.0, "ad_revenue": 50.0},
-        {"ad_spend_google": 10.0, "ad_spend_meta": 5.0, "ad_revenue": 80.0},
+        {"ad_spend_google": 5.0, "ad_spend_meta": 5.0, "revenue": 50.0},
+        {"ad_spend_google": 10.0, "ad_spend_meta": 5.0, "revenue": 80.0},
     ]
     result = tracker.calculate_roas(stats, window_days=7)
     assert result.roas == 5.2  # 130/25
@@ -29,7 +29,7 @@ def test_roas_moderate_performance():
     """ROAS between maintain and increase thresholds should maintain budget."""
     tracker = _make_tracker()
     stats = [
-        {"ad_spend_google": 10.0, "ad_spend_meta": 10.0, "ad_revenue": 60.0},
+        {"ad_spend_google": 10.0, "ad_spend_meta": 10.0, "revenue": 60.0},
     ]
     result = tracker.calculate_roas(stats, window_days=7)
     assert result.roas == 3.0
@@ -41,7 +41,7 @@ def test_roas_low_performance():
     """ROAS below maintain threshold should decrease budget."""
     tracker = _make_tracker()
     stats = [
-        {"ad_spend_google": 15.0, "ad_spend_meta": 10.0, "ad_revenue": 30.0},
+        {"ad_spend_google": 15.0, "ad_spend_meta": 10.0, "revenue": 30.0},
     ]
     result = tracker.calculate_roas(stats, window_days=7)
     assert result.roas == 1.2
@@ -54,7 +54,7 @@ def test_roas_zero_spend():
     """Zero ad spend should recommend pause."""
     tracker = _make_tracker()
     stats = [
-        {"ad_spend_google": 0, "ad_spend_meta": 0, "ad_revenue": 0},
+        {"ad_spend_google": 0, "ad_spend_meta": 0, "revenue": 0},
     ]
     result = tracker.calculate_roas(stats, window_days=7)
     assert result.roas == 0.0
