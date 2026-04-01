@@ -48,6 +48,24 @@
       "endpoint": "/cron/weekly-rollup",
       "schedule": "0 14 * * 1",
       "description": "Weekly rollup to Slack Mondays at 9 AM IST (2 PM UTC)"
+    },
+    {
+      "name": "sync-meta-catalog",
+      "endpoint": "/cron/sync-meta-catalog",
+      "schedule": "0 9 * * *",
+      "description": "Sync product catalog to Meta Commerce Manager at 5 AM ET (9 AM UTC)"
+    },
+    {
+      "name": "sync-ad-spend",
+      "endpoint": "/cron/sync-ad-spend",
+      "schedule": "0 10 * * *",
+      "description": "Pull yesterday's ad spend from Meta + Google at 6 AM ET (10 AM UTC)"
+    },
+    {
+      "name": "sync-google-merchant",
+      "endpoint": "/cron/sync-google-merchant",
+      "schedule": "15 9 * * *",
+      "description": "Sync product catalog to Google Merchant Center at 5:15 AM ET (9:15 AM UTC)"
     }
   ]
 }
