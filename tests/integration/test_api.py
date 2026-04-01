@@ -555,3 +555,167 @@ def test_slack_webhook_reject_response(mock_slack_cls, mock_db_cls, client):
     response = client.post("/webhook/slack", data={"payload": payload})
     assert response.status_code == 200
     mock_db.update_message_status.assert_called_once_with(1, "rejected")
+
+
+# ── Cron: Weekly ROAS ──
+
+def test_cron_weekly_roas(client, cron_headers):
+    """ROAS cron should return roas and recommendation fields."""
+    with patch("src.marketing.ads.AsyncDatabase") as mock_db_cls, \
+         patch("src.marketing.ads.SlackNotifier") as mock_slack_cls:
+        mock_db = AsyncMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.get_stats_range.return_value = [
+            {"ad_spend_google": 10.0, "ad_spend_meta": 15.0, "revenue": 100.0},
+        ]
+        mock_slack_cls.return_value = AsyncMock()
+
+        response = client.post("/cron/weekly-roas", headers=cron_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["module"] == "ads"
+        assert "roas" in data
+        assert "recommendation" in data
+        assert data["roas"] == 4.0  # 100/(10+15)
+
+
+def test_cron_weekly_roas_empty_stats(client, cron_headers):
+    """Empty stats should return roas=0 and pause recommendation."""
+    with patch("src.marketing.ads.AsyncDatabase") as mock_db_cls, \
+         patch("src.marketing.ads.SlackNotifier") as mock_slack_cls:
+        mock_db_cls.return_value = AsyncMock(get_stats_range=AsyncMock(return_value=[]))
+        mock_slack_cls.return_value = AsyncMock()
+
+        response = client.post("/cron/weekly-roas", headers=cron_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["roas"] == 0.0
+        assert data["recommendation"] == "pause"
+
+
+# ── Cron: Sync Ad Spend ──
+
+def test_cron_sync_ad_spend_meta_only(client, cron_headers):
+    """When only Meta is configured, should sync Meta spend and skip Google."""
+    from src.marketing.meta_ads import MetaAdSpendResult
+
+    mock_meta = MagicMock()
+    mock_meta.is_configured = True
+    mock_meta.get_daily_spend = AsyncMock(return_value=MetaAdSpendResult(
+        date=date(2026, 3, 31), spend=42.50, impressions=1000, clicks=50, purchase_roas=3.5,
+    ))
+
+    mock_google = MagicMock()
+    mock_google.is_configured = False
+
+    with patch("src.api.app.AsyncDatabase") as mock_db_cls, \
+         patch("src.marketing.meta_ads.MetaAdsClient", return_value=mock_meta), \
+         patch("src.marketing.google_ads.GoogleAdsClient", return_value=mock_google):
+
+        mock_db = AsyncMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.get_stats_range.return_value = []
+
+        response = client.post("/cron/sync-ad-spend", headers=cron_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["meta_spend"] == 42.50
+        assert data["google_spend"] is None
+
+
+# ── Cron: Sync Meta Catalog ──
+
+def test_cron_sync_meta_catalog_not_configured(client, cron_headers):
+    """Unconfigured Meta catalog should return skipped status."""
+    with patch("src.marketing.meta_catalog.settings") as mock_settings:
+        mock_settings.meta_capi_access_token = ""
+        mock_settings.meta_catalog_id = ""
+        mock_settings.meta_graph_api_version = "v21.0"
+        mock_settings.shopify_shop_domain = "test.myshopify.com"
+
+        response = client.post("/cron/sync-meta-catalog", headers=cron_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "skipped"
+        assert data["module"] == "meta_catalog"
+
+
+@patch("src.core.database.AsyncDatabase")
+def test_cron_sync_meta_catalog_success(mock_db_cls, client, cron_headers):
+    """Configured catalog sync should report items synced."""
+    from src.marketing.meta_catalog import CatalogSyncResult
+
+    mock_db = AsyncMock()
+    mock_db_cls.return_value = mock_db
+    mock_db.get_all_active_products.return_value = [
+        {"sku": "SKU-1", "name": "Ring", "category": "Rings", "pricing": {"default": {"retail": 250}},
+         "images": ["https://cdn.example.com/ring.jpg"], "story": "A ring.", "tags": [], "shopify_product_id": 1},
+    ]
+
+    mock_result = CatalogSyncResult(items_synced=1, items_failed=0, errors=[])
+
+    with patch("src.marketing.meta_catalog.settings") as mock_settings, \
+         patch("src.marketing.meta_catalog.MetaCatalogSync.sync_products",
+               new_callable=AsyncMock, return_value=mock_result):
+        mock_settings.meta_capi_access_token = "test-token"
+        mock_settings.meta_catalog_id = "cat_123"
+        mock_settings.meta_graph_api_version = "v21.0"
+        mock_settings.shopify_shop_domain = "test.myshopify.com"
+
+        response = client.post("/cron/sync-meta-catalog", headers=cron_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["module"] == "meta_catalog"
+        assert data["total_products"] == 1
+        assert data["items_synced"] == 1
+
+
+# ── Cron: Sync Google Merchant ──
+
+def test_cron_sync_google_merchant_not_configured(client, cron_headers):
+    """Unconfigured Google Merchant should return skipped status."""
+    with patch("src.marketing.google_merchant.settings") as mock_settings:
+        mock_settings.google_merchant_id = ""
+        mock_settings.google_service_account_path = ""
+        mock_settings.google_service_account_json = ""
+        mock_settings.shopify_shop_domain = "test.myshopify.com"
+
+        response = client.post("/cron/sync-google-merchant", headers=cron_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "skipped"
+        assert data["module"] == "google_merchant"
+
+
+@patch("src.api.app.AsyncDatabase")
+def test_cron_sync_google_merchant_success(mock_db_cls, client, cron_headers):
+    """Configured Merchant sync should report items synced."""
+    from src.marketing.google_merchant import MerchantSyncResult
+
+    mock_db = AsyncMock()
+    mock_db_cls.return_value = mock_db
+    mock_db.get_all_active_products.return_value = [
+        {"sku": "SKU-1", "name": "Ring", "category": "Rings",
+         "pricing": {"default": {"retail": 250}},
+         "images": ["https://cdn.example.com/ring.jpg"],
+         "story": "A ring.", "tags": [], "shopify_product_id": 1},
+    ]
+
+    mock_result = MerchantSyncResult(items_synced=1, items_failed=0, errors=[])
+
+    with patch("src.marketing.google_merchant.settings") as mock_settings, \
+         patch("src.marketing.google_merchant.GoogleMerchantSync.sync_products",
+               new_callable=AsyncMock, return_value=mock_result):
+        mock_settings.google_merchant_id = "12345"
+        mock_settings.google_service_account_path = ""
+        mock_settings.google_service_account_json = '{"type": "service_account"}'
+        mock_settings.shopify_shop_domain = "test.myshopify.com"
+
+        response = client.post("/cron/sync-google-merchant", headers=cron_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["module"] == "google_merchant"
+        assert data["items_synced"] == 1
