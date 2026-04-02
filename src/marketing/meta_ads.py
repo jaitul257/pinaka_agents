@@ -35,7 +35,7 @@ class MetaAdsClient:
     """
 
     def __init__(self):
-        self._access_token = settings.meta_capi_access_token
+        self._access_token = settings.meta_ads_access_token or settings.meta_capi_access_token
         self._ad_account_id = settings.meta_ad_account_id
         self._api_version = settings.meta_graph_api_version
         self._scope_verified = False

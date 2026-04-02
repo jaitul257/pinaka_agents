@@ -78,6 +78,7 @@ class Settings(BaseSettings):
 
     # ── Meta Marketing ──
     meta_ad_account_id: str = ""  # Format: act_XXXXXXXXX (from Meta Ads Manager)
+    meta_ads_access_token: str = ""  # Long-lived token with ads_read scope (separate from CAPI token)
     meta_catalog_id: str = ""  # Product Catalog ID from Commerce Manager
     meta_business_id: str = ""  # Business ID from Business Settings
 
