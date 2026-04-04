@@ -113,7 +113,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
         /* Buttons */
         .btn {{ padding: 10px 24px; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-weight: 500; font-size: 14px; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text-primary); transition: all 150ms; }}
         .btn:hover {{ border-color: var(--accent); color: var(--accent); }}
-        .btn-primary {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
+        .btn-primary {{ background: var(--accent); border-color: var(--accent); color: var(--text-primary); }}
         .btn-primary:hover {{ background: var(--accent-hover); border-color: var(--accent-hover); }}
         .btn-sm {{ padding: 6px 14px; font-size: 13px; }}
         .btn-danger {{ color: var(--error); border-color: var(--error); }}
@@ -168,7 +168,7 @@ async def login_page(msg: str = ""):
         p {{ text-align:center; font-size:14px; color:#9E9893; margin:4px 0 24px; }}
         input {{ width:100%; padding:10px 14px; border:1px solid #E8E2D9; border-radius:8px; font-size:14px; font-family:'DM Sans',sans-serif; margin-bottom:16px; }}
         input:focus {{ outline:none; border-color:#D4A017; }}
-        button {{ width:100%; padding:10px; background:#D4A017; color:#fff; border:none; border-radius:8px; font-family:'DM Sans',sans-serif; font-weight:500; font-size:14px; cursor:pointer; }}
+        button {{ width:100%; padding:10px; background:#D4A017; color:#2C2825; border:none; border-radius:8px; font-family:'DM Sans',sans-serif; font-weight:500; font-size:14px; cursor:pointer; }}
         button:hover {{ background:#B8890F; }}
         .alert {{ padding:10px; border-radius:8px; background:rgba(196,57,45,0.08); color:#C4392D; font-size:13px; margin-bottom:16px; }}
         .divider {{ height:1px; background:linear-gradient(90deg,transparent,#C5A55A,transparent); margin:0 0 24px; }}
@@ -476,7 +476,7 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
                     <input type="checkbox" name="embed" value="1" checked> Embed for customer service search
                 </label>
                 <label style="display:flex; align-items:center; gap:8px; font-size:14px; cursor:pointer;">
-                    <input type="checkbox" name="push_shopify" value="1" checked> Create as draft in Shopify
+                    <input type="checkbox" name="push_shopify" value="1" checked> Create in Shopify (active)
                 </label>
             </div>
         </div>
@@ -738,27 +738,44 @@ async def edit_product_submit(
         except Exception:
             logger.exception("Embedding failed for %s", sku)
 
-    if push_shopify:
-        try:
-            from src.core.shopify_client import ShopifyClient
-            shopify = ShopifyClient()
-            tags_list = list(product_data.get("tags", []))
-            tags_list.append(sku)
-            result = await shopify.create_product(
-                title=name,
-                body_html=f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
-                tags=tags_list,
-                product_type=category,
-            )
-            await shopify.close()
-            shopify_id = result.get("id", "")
-            if shopify_id:
-                _get_db().upsert_product({"sku": sku, "shopify_product_id": shopify_id})
-            logger.info("Product %s pushed to Shopify as draft (ID: %s)", sku, shopify_id)
-        except Exception:
-            logger.exception("Shopify push failed for %s", sku)
+    # Sync edit to Shopify if product exists there
+    shopify_msg = ""
+    if push_shopify and settings.shopify_shop_domain and settings.shopify_access_token:
+        # Find Shopify product ID by SKU
+        existing = _get_db().get_product_by_sku(sku)
+        shopify_id = (existing or {}).get("shopify_product_id")
 
-    return RedirectResponse(f"/dashboard?msg=Product+{sku}+updated", status_code=303)
+        if shopify_id:
+            # Update existing Shopify product
+            try:
+                tags_list = list(product_data.get("tags", []))
+                tags_list.append(sku)
+                update_payload = {
+                    "product": {
+                        "id": shopify_id,
+                        "title": name,
+                        "body_html": f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
+                        "product_type": category,
+                        "tags": ", ".join(tags_list),
+                    }
+                }
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.put(
+                        _shopify_api(f"products/{shopify_id}.json"),
+                        headers=_shopify_headers(),
+                        json=update_payload,
+                    )
+                    if resp.status_code == 200:
+                        shopify_msg = "+and+updated+in+Shopify"
+                    else:
+                        shopify_msg = f"+but+Shopify+update+failed:+{resp.status_code}"
+            except Exception as e:
+                shopify_msg = f"+but+Shopify+sync+failed:+{e}"
+                logger.exception("Shopify update failed for %s", sku)
+        else:
+            shopify_msg = "+(not+linked+to+Shopify)"
+
+    return RedirectResponse(f"/dashboard?msg=Product+{sku}+updated{shopify_msg}", status_code=303)
 
 
 # ── Delete Product ──
@@ -768,9 +785,30 @@ async def delete_product(sku: str, dash_token: str | None = Cookie(None)):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
+    # Check if product is linked to Shopify
+    product = _get_db().get_product_by_sku(sku)
+    shopify_id = (product or {}).get("shopify_product_id")
+
+    # Delete from local DB
     _get_db().delete_product(sku)
 
-    return RedirectResponse(f"/dashboard?msg=Product+{sku}+deleted", status_code=303)
+    # Delete from Shopify too
+    shopify_msg = ""
+    if shopify_id and settings.shopify_shop_domain and settings.shopify_access_token:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.delete(
+                    _shopify_api(f"products/{shopify_id}.json"),
+                    headers=_shopify_headers(),
+                )
+                if resp.status_code in (200, 204):
+                    shopify_msg = "+and+removed+from+Shopify"
+                else:
+                    shopify_msg = f"+but+Shopify+delete+failed:+{resp.status_code}"
+        except Exception as e:
+            shopify_msg = f"+but+Shopify+delete+failed:+{e}"
+
+    return RedirectResponse(f"/dashboard?msg=Product+{sku}+deleted{shopify_msg}", status_code=303)
 
 
 # ── Shopify Images ──
