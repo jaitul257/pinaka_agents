@@ -306,10 +306,13 @@ async def products_page(dash_token: str | None = Cookie(None), msg: str = ""):
                     {price}
                 </div>
                 {f'<div class="product-tags" style="margin-top:6px;">{tags_html}</div>' if tags_html else ''}
-                <div style="margin-top:8px;font-family:\'Geist Mono\',monospace;font-size:11px;color:var(--text-muted);">
-                    Shopify ID: {pid}
-                    &nbsp;·&nbsp; <a href="https://{settings.shopify_shop_domain}/admin/products/{pid}" target="_blank" style="color:var(--accent);text-decoration:none;">Edit in Shopify</a>
-                    &nbsp;·&nbsp; <a href="/dashboard/images" style="color:var(--accent);text-decoration:none;">Manage Images</a>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-family:\'Geist Mono\',monospace;font-size:11px;color:var(--text-muted);">
+                    <span>ID: {pid}</span>
+                    <a href="https://{settings.shopify_shop_domain}/admin/products/{pid}" target="_blank" style="color:var(--accent);text-decoration:none;">Edit in Shopify</a>
+                    <a href="/dashboard/images" style="color:var(--accent);text-decoration:none;">Images</a>
+                    <form method="POST" action="/dashboard/delete-shopify/{pid}" style="display:inline;" onsubmit="return confirm('Delete {title} from Shopify? This cannot be undone.');">
+                        <button type="submit" style="background:var(--error-bg);color:var(--error);border:none;padding:2px 10px;border-radius:4px;font-size:11px;font-family:\'Geist Mono\',monospace;cursor:pointer;">Delete</button>
+                    </form>
                 </div>
             </div>
         </div>"""
@@ -409,11 +412,11 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
                 <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
                     <div>
                         <label>Retail Price ($) *</label>
-                        <input type="number" name="retail" value="{first_variant.get("retail", 2850)}" step="50" min="0" required>
+                        <input type="number" name="retail" value="{first_variant.get("retail", 2850)}" step="1" min="0" required>
                     </div>
                     <div>
                         <label>Cost ($, private) *</label>
-                        <input type="number" name="cost" value="{first_variant.get("cost", 450)}" step="10" min="0" required>
+                        <input type="number" name="cost" value="{first_variant.get("cost", 450)}" step="1" min="0" required>
                     </div>
                 </div>
             </div>
@@ -622,7 +625,7 @@ async def add_product_submit(
                 if resp.status_code in (200, 201):
                     shopify_id = resp.json().get("product", {}).get("id", "")
                     if shopify_id:
-                        _get_db().upsert_product({"sku": sku, "shopify_product_id": shopify_id})
+                        _get_db().upsert_product({"sku": sku, "name": name, "shopify_product_id": shopify_id})
                     shopify_msg = f"+and+created+in+Shopify+(ID:+{shopify_id})"
                     logger.info("Product %s pushed to Shopify (ID: %s)", sku, shopify_id)
                 else:
@@ -779,6 +782,28 @@ async def edit_product_submit(
 
 
 # ── Delete Product ──
+
+@router.post("/delete-shopify/{product_id}")
+async def delete_shopify_product(product_id: int, dash_token: str | None = Cookie(None)):
+    """Delete a product directly from Shopify by product ID."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.delete(
+                _shopify_api(f"products/{product_id}.json"),
+                headers=_shopify_headers(),
+            )
+            if resp.status_code in (200, 204):
+                msg = f"Product+{product_id}+deleted+from+Shopify"
+            else:
+                msg = f"Shopify+delete+failed:+{resp.status_code}"
+    except Exception as e:
+        msg = f"Delete+failed:+{e}"
+
+    return RedirectResponse(f"/dashboard?msg={msg}", status_code=303)
+
 
 @router.post("/delete/{sku}")
 async def delete_product(sku: str, dash_token: str | None = Cookie(None)):
