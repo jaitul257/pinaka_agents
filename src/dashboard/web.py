@@ -626,6 +626,8 @@ async def add_product_submit(
                     shopify_id = resp.json().get("product", {}).get("id", "")
                     if shopify_id:
                         _get_db().upsert_product({"sku": sku, "name": name, "shopify_product_id": shopify_id})
+                        # Set Google Shopping metafields so Merchant Center accepts it
+                        await _upsert_google_metafields(shopify_id, sku, category)
                     shopify_msg = f"+and+created+in+Shopify+(ID:+{shopify_id})"
                     logger.info("Product %s pushed to Shopify (ID: %s)", sku, shopify_id)
                 else:
@@ -769,6 +771,8 @@ async def edit_product_submit(
                         json=update_payload,
                     )
                     if resp.status_code == 200:
+                        # Keep Google Shopping metafields in sync
+                        await _upsert_google_metafields(shopify_id, sku, category)
                         shopify_msg = "+and+updated+in+Shopify"
                     else:
                         shopify_msg = f"+but+Shopify+update+failed:+{resp.status_code}"
@@ -847,6 +851,73 @@ def _shopify_headers():
 
 def _shopify_api(path: str) -> str:
     return f"https://{settings.shopify_shop_domain}/admin/api/{settings.shopify_api_version}/{path}"
+
+
+# Google product taxonomy IDs — Apparel & Accessories > Jewelry > *
+_GOOGLE_CATEGORY_IDS = {
+    "Bracelets": "189",
+    "Earrings": "194",
+    "Necklaces": "191",
+    "Rings": "200",
+    "Pendants": "5122",
+    "Watches": "201",
+}
+
+
+async def _upsert_google_metafields(product_id: int, sku: str, category: str) -> None:
+    """Set Google Shopping metafields on a Shopify product so Google Merchant Center
+    accepts it without a real GTIN. Handmade jewelry uses: custom_product=TRUE,
+    mpn=<sku>, brand=<vendor>, condition=new, and a specific google_product_category.
+    Safe to call on create or edit — existing metafields are updated in place.
+    """
+    google_cat = _GOOGLE_CATEGORY_IDS.get(category, "188")  # 188 = generic Jewelry
+    desired = [
+        ("mm-google-shopping", "mpn", sku),
+        ("mm-google-shopping", "condition", "new"),
+        ("mm-google-shopping", "custom_product", "TRUE"),
+        ("mm-google-shopping", "google_product_category", google_cat),
+    ]
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Fetch existing metafields so we can PUT instead of POST on duplicates
+        existing_by_key: dict[tuple[str, str], int] = {}
+        try:
+            resp = await client.get(
+                _shopify_api(f"products/{product_id}/metafields.json"),
+                headers=_shopify_headers(),
+            )
+            if resp.status_code == 200:
+                for mf in resp.json().get("metafields", []):
+                    existing_by_key[(mf["namespace"], mf["key"])] = mf["id"]
+        except Exception:
+            logger.exception("Failed to list metafields for product %s", product_id)
+
+        for namespace, key, value in desired:
+            payload = {
+                "metafield": {
+                    "namespace": namespace,
+                    "key": key,
+                    "value": value,
+                    "type": "single_line_text_field",
+                }
+            }
+            mf_id = existing_by_key.get((namespace, key))
+            try:
+                if mf_id:
+                    payload["metafield"]["id"] = mf_id
+                    await client.put(
+                        _shopify_api(f"metafields/{mf_id}.json"),
+                        headers=_shopify_headers(),
+                        json=payload,
+                    )
+                else:
+                    await client.post(
+                        _shopify_api(f"products/{product_id}/metafields.json"),
+                        headers=_shopify_headers(),
+                        json=payload,
+                    )
+            except Exception:
+                logger.exception("Failed to set metafield %s.%s for product %s", namespace, key, product_id)
 
 
 IMAGE_ROLES = ["Hero Shot", "On Wrist", "Detail / Clasp", "Lifestyle", "Flat Lay", "Packaging", "Other"]
