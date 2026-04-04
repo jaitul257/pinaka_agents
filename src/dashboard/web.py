@@ -709,6 +709,31 @@ def _shopify_api(path: str) -> str:
     return f"https://{settings.shopify_shop_domain}/admin/api/{settings.shopify_api_version}/{path}"
 
 
+IMAGE_ROLES = ["Hero Shot", "On Wrist", "Detail / Clasp", "Lifestyle", "Flat Lay", "Packaging", "Other"]
+
+
+def _role_from_alt(alt: str) -> str:
+    """Extract image role from alt text convention: 'Product Name | Role'."""
+    if not alt or "|" not in alt:
+        return ""
+    return alt.split("|")[-1].strip()
+
+
+def _role_badge(role: str) -> str:
+    colors = {
+        "Hero Shot": ("var(--accent-subtle)", "var(--accent)"),
+        "On Wrist": ("var(--success-bg)", "var(--success)"),
+        "Detail / Clasp": ("rgba(59,126,197,0.08)", "var(--info)"),
+        "Lifestyle": ("rgba(193,126,26,0.08)", "var(--warning)"),
+        "Flat Lay": ("var(--surface-raised)", "var(--text-secondary)"),
+        "Packaging": ("var(--surface-raised)", "var(--text-secondary)"),
+    }
+    bg, fg = colors.get(role, ("var(--surface-raised)", "var(--text-muted)"))
+    if not role:
+        return ""
+    return f'<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:{bg};color:{fg};text-transform:uppercase;letter-spacing:0.5px;">{role}</span>'
+
+
 @router.get("/images", response_class=HTMLResponse)
 async def images_page(dash_token: str | None = Cookie(None), msg: str = ""):
     if not _check_auth(dash_token):
@@ -718,11 +743,11 @@ async def images_page(dash_token: str | None = Cookie(None), msg: str = ""):
         body = '<div class="container"><div class="card"><p>Shopify credentials not configured.</p></div></div>'
         return HTMLResponse(_base_html("Shopify Images", body, active="images"))
 
-    # Fetch products from Shopify
+    # Fetch products with variants
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
-                _shopify_api("products.json?limit=50&fields=id,title,images"),
+                _shopify_api("products.json?limit=50&fields=id,title,images,variants"),
                 headers=_shopify_headers(),
             )
             resp.raise_for_status()
@@ -731,61 +756,133 @@ async def images_page(dash_token: str | None = Cookie(None), msg: str = ""):
         body = f'<div class="container"><div class="card"><p>Failed to load products: {e}</p></div></div>'
         return HTMLResponse(_base_html("Shopify Images", body, active="images"))
 
-    # Build page
+    # Message banner
     msg_html = ""
     if msg:
         is_err = "error" in msg.lower() or "fail" in msg.lower()
-        cls = "error-bg" if is_err else "success-bg"
-        color = "var(--error)" if is_err else "var(--success)"
-        msg_html = f'<div style="background:var(--{cls});color:{color};padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px;">{msg}</div>'
+        bg = "var(--error-bg)" if is_err else "var(--success-bg)"
+        fg = "var(--error)" if is_err else "var(--success)"
+        msg_html = f'<div style="background:{bg};color:{fg};padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px;">{msg}</div>'
 
+    # Summary metrics
+    total_products = len(products)
+    total_images = sum(len(p.get("images", [])) for p in products)
+    no_images = sum(1 for p in products if not p.get("images"))
+
+    summary = f"""
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px;">
+        <div class="card" style="margin:0;padding:16px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Products</div>
+            <div style="font-family:'Geist Mono',monospace;font-size:24px;color:var(--text-primary);">{total_products}</div>
+        </div>
+        <div class="card" style="margin:0;padding:16px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Total Images</div>
+            <div style="font-family:'Geist Mono',monospace;font-size:24px;color:var(--text-primary);">{total_images}</div>
+        </div>
+        <div class="card" style="margin:0;padding:16px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Missing Images</div>
+            <div style="font-family:'Geist Mono',monospace;font-size:24px;color:{"var(--error)" if no_images else "var(--success)"};">{no_images}</div>
+        </div>
+    </div>"""
+
+    # Product cards
     products_html = ""
     for p in products:
         pid = p["id"]
         title = p["title"]
-        images = p.get("images", [])
+        images = sorted(p.get("images", []), key=lambda i: i.get("position", 0))
+        variants = p.get("variants", [])
         img_count = len(images)
 
-        # Image grid
+        # Variant info
+        variant_names = [v["title"] for v in variants if v["title"] != "Default Title"]
+        variant_info = f' <span style="font-size:12px;color:var(--text-muted);">({", ".join(variant_names)})</span>' if variant_names else ""
+
+        # Status indicator
+        if img_count == 0:
+            status = '<span style="color:var(--error);font-size:12px;font-weight:600;">No images</span>'
+        elif img_count < 3:
+            status = f'<span style="color:var(--warning);font-size:12px;">{img_count} image{"s" if img_count != 1 else ""} (add more)</span>'
+        else:
+            status = f'<span style="color:var(--success);font-size:12px;">{img_count} images</span>'
+
+        # Image grid with position numbers, roles, and variant links
         images_grid = ""
         if images:
             img_cards = ""
             for img in images:
+                pos = img.get("position", 0)
+                alt = img.get("alt", "") or ""
+                role = _role_from_alt(alt)
+                badge = _role_badge(role)
+                pos_label = "PRIMARY" if pos == 1 else f"#{pos}"
+                pos_color = "var(--accent)" if pos == 1 else "var(--text-muted)"
+
+                # Variant link indicator
+                linked_variants = img.get("variant_ids", [])
+                variant_tag = ""
+                if linked_variants:
+                    vnames = [v["title"] for v in variants if v["id"] in linked_variants]
+                    if vnames:
+                        variant_tag = f'<div style="font-size:10px;color:var(--info);margin-top:2px;">Variant: {", ".join(vnames)}</div>'
+
                 img_cards += f"""
-                <div style="text-align:center;">
-                    <img src="{img['src']}" alt="{img.get('alt', '')}" style="width:160px;height:160px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
-                    <div style="margin-top:6px;">
+                <div style="text-align:center;width:160px;">
+                    <div style="position:relative;">
+                        <img src="{img['src']}" alt="{alt}" style="width:160px;height:160px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
+                        <span style="position:absolute;top:6px;left:6px;background:var(--surface);padding:1px 6px;border-radius:4px;font-family:'Geist Mono',monospace;font-size:9px;font-weight:600;color:{pos_color};border:1px solid var(--border);">{pos_label}</span>
+                    </div>
+                    <div style="margin-top:6px;">{badge}</div>
+                    {variant_tag}
+                    <div style="margin-top:4px;display:flex;gap:4px;justify-content:center;">
+                        <form method="POST" action="/dashboard/images/set-primary/{pid}/{img['id']}" style="display:inline;">
+                            <button type="submit" {"disabled" if pos == 1 else ""} style="background:{"var(--surface-raised)" if pos == 1 else "var(--accent-subtle)"};color:{"var(--text-muted)" if pos == 1 else "var(--accent)"};border:none;padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer;">Primary</button>
+                        </form>
                         <form method="POST" action="/dashboard/images/delete/{pid}/{img['id']}" style="display:inline;">
-                            <button type="submit" style="background:var(--error-bg);color:var(--error);border:none;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer;">Delete</button>
+                            <button type="submit" style="background:var(--error-bg);color:var(--error);border:none;padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer;">Delete</button>
                         </form>
                     </div>
                 </div>"""
             images_grid = f'<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">{img_cards}</div>'
         else:
-            images_grid = '<p style="color:var(--text-muted);font-size:14px;">No images yet.</p>'
+            images_grid = '<p style="color:var(--text-muted);font-size:14px;padding:16px 0;">No images yet. Upload product photos below.</p>'
+
+        # Role selector options
+        role_options = "".join(f'<option value="{r}">{r}</option>' for r in IMAGE_ROLES)
 
         products_html += f"""
         <div class="card">
             <div class="card-header">
-                <h2 style="font-size:20px;">{title}</h2>
-                <span style="font-family:'Geist Mono',monospace;font-size:12px;color:var(--text-muted);">{img_count} image{"s" if img_count != 1 else ""}</span>
+                <div>
+                    <h2 style="font-size:20px;margin-bottom:2px;">{title}{variant_info}</h2>
+                    <div style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--text-muted);">ID: {pid}</div>
+                </div>
+                {status}
             </div>
             {images_grid}
             <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-light);">
-                <form method="POST" action="/dashboard/images/upload/{pid}" enctype="multipart/form-data" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
-                    <div>
-                        <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Upload Images</label>
-                        <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple
-                               style="font-size:13px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+                <form method="POST" action="/dashboard/images/upload/{pid}" enctype="multipart/form-data">
+                    <div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+                        <div>
+                            <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Upload Images</label>
+                            <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple required
+                                   style="font-size:13px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+                        </div>
+                        <div>
+                            <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Image Role</label>
+                            <select name="role" style="font-size:13px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);min-width:140px;">
+                                {role_options}
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Alt Text (optional)</label>
+                            <input type="text" name="alt_text" placeholder="Auto-generated if empty"
+                                   style="font-size:13px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;width:240px;">
+                        </div>
+                        <button type="submit" style="background:var(--accent);color:var(--text-primary);border:none;padding:10px 24px;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;">
+                            Upload
+                        </button>
                     </div>
-                    <div>
-                        <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Alt Text</label>
-                        <input type="text" name="alt_text" value="{title} - Diamond Tennis Bracelet" placeholder="Alt text"
-                               style="font-size:13px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;width:280px;">
-                    </div>
-                    <button type="submit" class="btn-primary" style="background:var(--accent);color:var(--text-primary);border:none;padding:10px 24px;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;">
-                        Upload
-                    </button>
                 </form>
             </div>
         </div>"""
@@ -794,8 +891,9 @@ async def images_page(dash_token: str | None = Cookie(None), msg: str = ""):
     <div class="container">
         <h1>Shopify Images</h1>
         <div class="gold-divider"></div>
-        <p style="margin-bottom:24px;">Upload, view, and delete product images on your Shopify store.</p>
+        <p style="margin-bottom:24px;">Manage product images. Each product shows its linked images with position, role, and variant info.</p>
         {msg_html}
+        {summary}
         {products_html if products_html else '<div class="card"><p>No products in Shopify yet.</p></div>'}
     </div>"""
 
@@ -806,11 +904,25 @@ async def images_page(dash_token: str | None = Cookie(None), msg: str = ""):
 async def upload_images(
     product_id: int,
     files: list[UploadFile] = File(...),
+    role: str = Form("Other"),
     alt_text: str = Form(""),
     dash_token: str | None = Cookie(None),
 ):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
+
+    # Get product title for auto alt text
+    product_title = "Product"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                _shopify_api(f"products/{product_id}.json?fields=title"),
+                headers=_shopify_headers(),
+            )
+            if resp.status_code == 200:
+                product_title = resp.json().get("product", {}).get("title", "Product")
+    except Exception:
+        pass
 
     uploaded = 0
     errors = []
@@ -820,11 +932,13 @@ async def upload_images(
             try:
                 content = await f.read()
                 b64 = base64.b64encode(content).decode("utf-8")
+                # Alt text convention: "Product Name | Role"
+                final_alt = alt_text if alt_text else f"{product_title} | {role}"
                 payload = {
                     "image": {
                         "attachment": b64,
                         "filename": f.filename,
-                        "alt": alt_text,
+                        "alt": final_alt,
                     }
                 }
                 resp = await client.post(
@@ -842,7 +956,34 @@ async def upload_images(
     if errors:
         msg = f"Uploaded+{uploaded}+images.+Errors:+{',+'.join(errors[:2])}"
     else:
-        msg = f"Uploaded+{uploaded}+images+successfully"
+        msg = f"Uploaded+{uploaded}+{role}+images+to+{product_title}"
+
+    return RedirectResponse(f"/dashboard/images?msg={msg}", status_code=303)
+
+
+@router.post("/images/set-primary/{product_id}/{image_id}")
+async def set_primary_image(
+    product_id: int,
+    image_id: int,
+    dash_token: str | None = Cookie(None),
+):
+    """Move an image to position 1 (primary/hero image shown in collection grid)."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.put(
+                _shopify_api(f"products/{product_id}/images/{image_id}.json"),
+                headers=_shopify_headers(),
+                json={"image": {"id": image_id, "position": 1}},
+            )
+            if resp.status_code == 200:
+                msg = "Image+set+as+primary"
+            else:
+                msg = f"Error:+{resp.status_code}"
+    except Exception as e:
+        msg = f"Error:+{e}"
 
     return RedirectResponse(f"/dashboard/images?msg={msg}", status_code=303)
 
