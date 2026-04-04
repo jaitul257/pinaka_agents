@@ -35,6 +35,19 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 
 ## Phase 6: Planned Features
 
+### 6.0 Shopify Storefront Design & Build
+- [x] Design system updated for Shopify (DESIGN.md — see "Shopify Storefront Sections")
+- [ ] Apply design system to Shopify theme (hero, collection grid, PDP, footer)
+- [ ] Product photography: studio shots on cream linen with directional light
+- [ ] Implement Atelier Ledger section (live order timeline from Supabase)
+- [ ] Craft Timeline section (5-step making process)
+- [ ] Founder Note section
+- [ ] Mobile: sticky bottom CTA on PDP, slide-in cart drawer
+- [ ] Connect custom domain pinakajewellery.com to Shopify
+- **Ref:** Design preview HTML at `/tmp/design-consultation-preview-1775112210.html`. Run `/design-consultation` for full context.
+- **Ref:** DESIGN.md has full specs: hero layout, collection grid, PDP buy flow, navigation, photography direction, anti-patterns.
+- **Why:** Current store is default Dawn theme with zero brand identity. Design system ready, needs implementation.
+
 ### 6.1 Automated Ad Creative Generation
 - [ ] AI-generated ad copy per product (headline, description, CTA)
 - [ ] Product image selection from catalog for ad creatives

@@ -192,6 +192,34 @@ Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude
 - `/unfreeze` — Remove edit restrictions
 - `/gstack-upgrade` — Upgrade gstack to latest version
 
+## Before You Start (read every session)
+
+1. **Read MEMORY.md** (project root) — contains pointers to persistent memory files with user profile, project state, business details, testing conventions, and external references. Memory files live in `~/.claude/projects/-Users-jaitulbharodiya-Documents-GitHub-pinaka_agents/memory/`.
+2. **Read RETRO.md** — captures what shipped, what worked, what hurt, and lessons learned from every push to main. Learn from past mistakes before repeating them.
+3. **Read TODO.md** — know what's done, what's next, and what's blocked.
+
+## After Every Push to Main
+
+1. **Update RETRO.md** — add a new entry: what shipped, what went well, what was painful, lessons learned. Keep it short (3-5 bullets).
+2. **Update TODO.md** — check off completed items, add new tasks discovered during the work.
+3. **Update MEMORY.md** if any new persistent knowledge was learned (user preferences, project decisions, external references).
+
+## Auto Learning / Reinforced Learning
+
+This project follows a reinforced learning loop. Every session should be smarter than the last:
+
+- **Before work:** Read RETRO.md for lessons, MEMORY.md for context, TODO.md for priorities.
+- **During work:** When something unexpected happens (a tool fails, an approach doesn't work, user corrects you), note it mentally for the retro.
+- **After work:** Write what you learned to RETRO.md so the next session benefits. Update memory if the lesson is durable (not just this task).
+- **Pattern recognition:** If the same lesson appears in RETRO.md more than twice, it should become a rule in CLAUDE.md (this file) or a memory file.
+- **Never repeat a mistake documented in RETRO.md.** That's the whole point.
+
+Examples of things to capture:
+- "User prefers simplicity over completeness" → feedback memory
+- "OpenAI API key not configured for gstack design tool" → project memory
+- "Square images prevent oversized cards in Shopify grids" → retro lesson
+- "Always check Railway vars before asking user for secrets" → CLAUDE.md rule (already here)
+
 ## Design System
 Always read DESIGN.md before making any visual or UI decisions.
 All font choices, colors, spacing, and aesthetic direction are defined there.
