@@ -66,7 +66,7 @@ def map_product_to_merchant_item(product: dict[str, Any]) -> dict[str, Any] | No
         logger.warning("Product %s has no retail price, skipping merchant sync", sku)
         return None
 
-    shop_domain = settings.shopify_shop_domain
+    shop_domain = settings.storefront_domain
     handle = _slugify(name)
     link = f"https://{shop_domain}/products/{handle}" if shop_domain else ""
 

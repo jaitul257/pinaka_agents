@@ -80,8 +80,8 @@ def map_product_to_catalog_item(product: dict[str, Any]) -> dict[str, Any] | Non
         logger.warning("Product %s has no retail price, skipping catalog sync", sku)
         return None
 
-    # Build product URL from shop domain + slugified name
-    shop_domain = settings.shopify_shop_domain
+    # Build product URL from storefront domain (custom domain preferred) + slugified name
+    shop_domain = settings.storefront_domain
     handle = _slugify(name)
     link = f"https://{shop_domain}/products/{handle}" if shop_domain else ""
 

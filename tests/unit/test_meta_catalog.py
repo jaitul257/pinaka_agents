@@ -57,7 +57,7 @@ def _make_product(**overrides) -> dict:
 def test_map_product_full():
     """Product with all fields should map to correct Meta catalog format."""
     with patch("src.marketing.meta_catalog.settings") as mock_settings:
-        mock_settings.shopify_shop_domain = "pinaka-jewellery.myshopify.com"
+        mock_settings.storefront_domain = "pinakajewellery.com"
         item = map_product_to_catalog_item(_make_product())
 
     assert item is not None
@@ -73,7 +73,7 @@ def test_map_product_full():
     assert data["google_product_category"] == "Apparel & Accessories > Jewelry"
     assert data["custom_label_0"] == "Bracelets"
     assert data["image_link"] == "https://cdn.shopify.com/s/files/1/dtb-lg-main.jpg"
-    assert "pinaka-jewellery.myshopify.com/products/" in data["link"]
+    assert "pinakajewellery.com/products/" in data["link"]
     assert "diamond-tennis-bracelet" in data["link"]
     assert "14K Yellow Gold" in data["description"]
     assert "3.0 total carat" in data["description"]

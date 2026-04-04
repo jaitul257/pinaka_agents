@@ -46,7 +46,7 @@ def _make_product(**overrides) -> dict:
 def test_map_product_full():
     """Product with all fields should map to correct Merchant format."""
     with patch("src.marketing.google_merchant.settings") as mock_settings:
-        mock_settings.shopify_shop_domain = "pinaka-jewellery.myshopify.com"
+        mock_settings.storefront_domain = "pinakajewellery.com"
         item = map_product_to_merchant_item(_make_product())
 
     assert item is not None
@@ -60,7 +60,7 @@ def test_map_product_full():
     assert item["productType"] == "Bracelets"
     assert item["channel"] == "online"
     assert item["targetCountry"] == "US"
-    assert "pinaka-jewellery.myshopify.com/products/" in item["link"]
+    assert "pinakajewellery.com/products/" in item["link"]
     assert item["imageLink"] == "https://cdn.shopify.com/s/files/1/dtb-lg-main.jpg"
 
 

@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     # ── Shopify ──
-    shopify_shop_domain: str = ""  # e.g. "pinaka-jewellery.myshopify.com"
+    shopify_shop_domain: str = ""  # e.g. "pinaka-jewellery.myshopify.com" — used for Admin API
+    shopify_storefront_url: str = ""  # e.g. "pinakajewellery.com" — customer-facing custom domain
     shopify_api_key: str = ""
     shopify_api_secret: str = ""
     shopify_access_token: str = ""  # Admin API access token
@@ -127,6 +128,11 @@ class Settings(BaseSettings):
     def shopify_admin_url(self) -> str:
         """Base URL for Shopify Admin API."""
         return f"https://{self.shopify_shop_domain}/admin/api/{self.shopify_api_version}"
+
+    @property
+    def storefront_domain(self) -> str:
+        """Customer-facing domain (custom domain preferred, falls back to myshopify)."""
+        return self.shopify_storefront_url or self.shopify_shop_domain
 
 
 settings = Settings()
