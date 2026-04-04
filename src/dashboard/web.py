@@ -212,79 +212,133 @@ async def products_page(dash_token: str | None = Cookie(None), msg: str = ""):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
-    products = _get_db().get_all_products()
+    # Pull products from Shopify (source of truth)
+    shopify_products = []
+    shopify_error = ""
+    if settings.shopify_shop_domain and settings.shopify_access_token:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    _shopify_api("products.json?limit=100&fields=id,title,status,variants,images,product_type,tags,created_at"),
+                    headers=_shopify_headers(),
+                )
+                resp.raise_for_status()
+                shopify_products = resp.json().get("products", [])
+        except Exception as e:
+            shopify_error = str(e)
+
+    # Also load local catalog (for embedded search data)
+    local_products = _get_db().get_all_products()
 
     # Metrics
-    total = len(products)
-    categories = len(set(p.get("category", "") for p in products))
+    shopify_total = len(shopify_products)
+    local_total = len(local_products)
+    active = sum(1 for p in shopify_products if p.get("status") == "active")
+    with_images = sum(1 for p in shopify_products if p.get("images"))
+
     try:
         from src.product.embeddings import ProductEmbeddings
         embedded = ProductEmbeddings().product_count()
     except Exception:
-        embedded = "—"
+        embedded = 0
 
     alert = ""
     if msg:
         alert = f'<div class="alert alert-success">{msg}</div>'
+    if shopify_error:
+        alert += f'<div class="alert alert-error">Shopify sync error: {shopify_error}</div>'
 
-    # Product list HTML
+    # Shopify product cards
     product_cards = ""
-    for p in products:
-        pricing = p.get("pricing", {})
-        first_variant = next(iter(pricing.values()), {})
-        retail = first_variant.get("retail", 0)
-        cost = first_variant.get("cost", 0)
-        margin = ((retail - cost) / retail * 100) if retail > 0 else 0
-        materials = p.get("materials", {})
-        tags_html = "".join(f'<span class="tag">{t}</span>' for t in p.get("tags", [])[:6])
-        cert = p.get("certification", {})
-        cert_text = f'{cert.get("grading_lab", "")} #{cert.get("certificate_number", "")}' if cert else "None"
-        sku = p.get("sku", "")
+    for p in shopify_products:
+        pid = p["id"]
+        title = p["title"]
+        status = p.get("status", "unknown")
+        product_type = p.get("product_type", "")
+        tags = p.get("tags", "")
+        images = p.get("images", [])
+        variants = p.get("variants", [])
+        img_count = len(images)
+
+        # First image thumbnail
+        thumb = ""
+        if images:
+            thumb = f'<img src="{images[0]["src"]}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">'
+        else:
+            thumb = '<div style="width:80px;height:80px;border-radius:8px;background:var(--surface-raised);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-muted);">No image</div>'
+
+        # Price from first variant
+        price = ""
+        if variants:
+            price_val = variants[0].get("price", "0")
+            price = f'<div style="font-family:\'Geist Mono\',monospace;font-size:18px;font-weight:500;color:var(--text-primary);">${float(price_val):,.2f}</div>'
+
+        # Status badge
+        status_color = "var(--success)" if status == "active" else "var(--text-muted)"
+        status_bg = "var(--success-bg)" if status == "active" else "var(--surface-raised)"
+        status_badge = f'<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:{status_bg};color:{status_color};text-transform:uppercase;">{status}</span>'
+
+        # Variant count
+        variant_count = len(variants)
+        variant_text = f'{variant_count} variant{"s" if variant_count != 1 else ""}' if variant_count > 1 else ""
+
+        # Tags
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+        tags_html = "".join(f'<span class="tag">{t}</span>' for t in tag_list[:5])
+
+        # Images indicator
+        img_indicator = f'<span style="font-size:12px;color:{"var(--success)" if img_count > 0 else "var(--error)"};">{img_count} image{"s" if img_count != 1 else ""}</span>'
 
         product_cards += f"""
-        <div class="product">
-            <div>
-                <div class="product-name">{p.get("name", "Unnamed")}</div>
-                <div class="product-detail">
-                    SKU: {sku} &nbsp;·&nbsp; {p.get("category", "")} &nbsp;·&nbsp;
-                    {materials.get("metal", "")} &nbsp;·&nbsp; {materials.get("total_carat", "")}ct &nbsp;·&nbsp;
-                    Cert: {cert_text}
+        <div class="product" style="display:flex;gap:16px;align-items:start;">
+            <div>{thumb}</div>
+            <div style="flex:1;">
+                <div style="display:flex;justify-content:space-between;align-items:start;">
+                    <div>
+                        <div class="product-name">{title}</div>
+                        <div class="product-detail">
+                            {status_badge}
+                            {f'&nbsp;·&nbsp; {product_type}' if product_type else ''}
+                            {f'&nbsp;·&nbsp; {variant_text}' if variant_text else ''}
+                            &nbsp;·&nbsp; {img_indicator}
+                        </div>
+                    </div>
+                    {price}
                 </div>
-                <div class="product-detail" style="margin-top:6px; font-style:italic;">
-                    {p.get("story", "")[:150]}...
-                </div>
-                <div class="product-tags">{tags_html}</div>
-            </div>
-            <div style="text-align:right;">
-                <div class="product-price">${retail:,.0f}</div>
-                <div class="product-margin">{margin:.0f}% margin</div>
-                <div style="margin-top:12px;">
-                    <a href="/dashboard/edit/{sku}" class="btn btn-sm">Edit</a>
-                    <form class="delete-form" method="post" action="/dashboard/delete/{sku}"
-                          onsubmit="return confirm('Delete {p.get("name", "")}?')">
-                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                    </form>
+                {f'<div class="product-tags" style="margin-top:6px;">{tags_html}</div>' if tags_html else ''}
+                <div style="margin-top:8px;font-family:\'Geist Mono\',monospace;font-size:11px;color:var(--text-muted);">
+                    Shopify ID: {pid}
+                    &nbsp;·&nbsp; <a href="https://{settings.shopify_shop_domain}/admin/products/{pid}" target="_blank" style="color:var(--accent);text-decoration:none;">Edit in Shopify</a>
+                    &nbsp;·&nbsp; <a href="/dashboard/images" style="color:var(--accent);text-decoration:none;">Manage Images</a>
                 </div>
             </div>
         </div>"""
 
-    if not products:
-        product_cards = '<div class="card"><p style="text-align:center; padding:24px;">No products yet. Add your first product to get started.</p></div>'
+    if not shopify_products:
+        if shopify_error:
+            product_cards = f'<div class="card"><p style="text-align:center;padding:24px;">Could not load from Shopify. Check API credentials.</p></div>'
+        else:
+            product_cards = '<div class="card"><p style="text-align:center;padding:24px;">No products in Shopify yet. <a href="https://' + settings.shopify_shop_domain + '/admin/products/new" target="_blank" style="color:var(--accent);">Add your first product in Shopify Admin</a></p></div>'
 
     body = f"""
         {alert}
         <h1>Products</h1>
         <div class="gold-divider"></div>
         <div class="metrics">
-            <div class="metric"><div class="metric-label">Products</div><div class="metric-value">{total}</div></div>
+            <div class="metric"><div class="metric-label">Shopify Products</div><div class="metric-value">{shopify_total}</div></div>
+            <div class="metric"><div class="metric-label">Active</div><div class="metric-value" style="color:var(--success);">{active}</div></div>
+            <div class="metric"><div class="metric-label">With Images</div><div class="metric-value">{with_images}</div></div>
             <div class="metric"><div class="metric-label">Embedded for Search</div><div class="metric-value">{embedded}</div></div>
-            <div class="metric"><div class="metric-label">Categories</div><div class="metric-value">{categories}</div></div>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <h3>Your Products</h3>
-            <a href="/dashboard/add" class="btn btn-primary">+ Add Product</a>
+            <h3>Your Products (from Shopify)</h3>
+            <div style="display:flex;gap:8px;">
+                <a href="https://{settings.shopify_shop_domain}/admin/products/new" target="_blank" class="btn btn-primary">+ Add in Shopify</a>
+                <a href="/dashboard/add" class="btn btn-sm" style="font-size:12px;">+ Add to Local Catalog</a>
+            </div>
         </div>
         {product_cards}
+        {f'<div style="margin-top:24px;padding:16px;background:var(--surface-raised);border-radius:8px;font-size:13px;color:var(--text-muted);">Local catalog: {local_total} products (for AI search/embeddings). <a href="/dashboard/add" style="color:var(--accent);">Add product details</a> for AI-powered customer service.</div>' if local_total > 0 or shopify_total > 0 else ''}
     """
     return HTMLResponse(_base_html("Products", body, active="products"))
 
