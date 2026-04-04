@@ -1,12 +1,10 @@
 """Product embedding pipeline using ChromaDB's built-in embeddings.
 
 Uses ChromaDB's default all-MiniLM-L6-v2 model (ONNX, no API key needed).
-Pipeline is idempotent — can be regenerated from source JSON if data is lost.
+Pipeline is idempotent — can be regenerated from Supabase if data is lost.
 """
 
-import json
 import logging
-from pathlib import Path
 
 from src.product.schema import Product
 
@@ -61,20 +59,6 @@ class ProductEmbeddings:
             }],
         )
         logger.info("Embedded product: %s", product.sku)
-
-    def embed_all_from_directory(self, data_dir: str = "./data/products") -> int:
-        """Load all product JSON files and embed them. Returns count."""
-        count = 0
-        for path in Path(data_dir).glob("*.json"):
-            try:
-                with open(path) as f:
-                    product = Product(**json.load(f))
-                self.embed_product(product)
-                count += 1
-            except Exception:
-                logger.exception("Failed to embed product from %s", path)
-        logger.info("Embedded %d products from %s", count, data_dir)
-        return count
 
     def query(self, question: str, n_results: int = 3) -> list[dict]:
         """RAG query — find most relevant products for a question."""

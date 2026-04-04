@@ -90,9 +90,10 @@ def test_cron_daily_stats(mock_db_cls, client, cron_headers):
 
 # ── Cron: Reconcile Orders ──
 
+@patch("src.api.app.SlackNotifier")
 @patch("src.api.app.ShopifyClient")
 @patch("src.api.app.AsyncDatabase")
-def test_cron_reconcile_orders(mock_db_cls, mock_shopify_cls, client, cron_headers):
+def test_cron_reconcile_orders(mock_db_cls, mock_shopify_cls, mock_slack_cls, client, cron_headers):
     """Reconcile cron should process orders missed by webhooks."""
     mock_shopify = AsyncMock()
     mock_shopify_cls.return_value = mock_shopify
@@ -106,6 +107,9 @@ def test_cron_reconcile_orders(mock_db_cls, mock_shopify_cls, client, cron_heade
     mock_db_cls.return_value = mock_db
     mock_db.get_order_by_shopify_id.return_value = None  # Not yet processed
 
+    mock_slack = AsyncMock()
+    mock_slack_cls.return_value = mock_slack
+
     with patch("src.api.shopify_webhooks._process_order", new_callable=AsyncMock) as mock_process:
         response = client.post("/cron/reconcile-orders", headers=cron_headers)
         assert response.status_code == 200
@@ -114,9 +118,10 @@ def test_cron_reconcile_orders(mock_db_cls, mock_shopify_cls, client, cron_heade
         mock_process.assert_called_once()
 
 
+@patch("src.api.app.SlackNotifier")
 @patch("src.api.app.ShopifyClient")
 @patch("src.api.app.AsyncDatabase")
-def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, client, cron_headers):
+def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, mock_slack_cls, client, cron_headers):
     """Reconcile should skip orders already in the database."""
     mock_shopify = AsyncMock()
     mock_shopify_cls.return_value = mock_shopify
@@ -128,6 +133,9 @@ def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, client, cr
     mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_order_by_shopify_id.return_value = {"shopify_order_id": 5002}
+
+    mock_slack = AsyncMock()
+    mock_slack_cls.return_value = mock_slack
 
     with patch("src.api.shopify_webhooks._process_order", new_callable=AsyncMock) as mock_process:
         response = client.post("/cron/reconcile-orders", headers=cron_headers)

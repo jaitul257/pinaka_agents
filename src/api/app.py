@@ -44,6 +44,40 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
     logger.info("Pinaka Agents starting up")
+
+    # Rebuild ChromaDB embeddings from Supabase so RAG works immediately
+    try:
+        from src.product.embeddings import ProductEmbeddings
+
+        db = AsyncDatabase()
+        products = await db.get_all_products()
+        if products:
+            embeddings = ProductEmbeddings()
+            count = 0
+            for p in products:
+                try:
+                    product_obj = Product(
+                        sku=p["sku"],
+                        name=p["name"],
+                        category=p.get("category", ""),
+                        materials=p.get("materials", {}),
+                        pricing=p.get("pricing", {}),
+                        story=p.get("story", ""),
+                        care_instructions=p.get("care_instructions", ""),
+                        occasions=p.get("occasions", []),
+                        certification=p.get("certification"),
+                        tags=p.get("tags", []),
+                    )
+                    embeddings.embed_product(product_obj)
+                    count += 1
+                except Exception:
+                    logger.exception("Failed to embed product %s on startup", p.get("sku"))
+            logger.info("Startup: embedded %d products in ChromaDB", count)
+        else:
+            logger.info("Startup: no products in Supabase to embed")
+    except Exception:
+        logger.exception("Startup: ChromaDB rebuild failed (non-fatal)")
+
     yield
     logger.info("Pinaka Agents shutting down")
 
@@ -258,19 +292,26 @@ async def get_order_evidence(order_id: int, request: Request):
 
 @app.post("/api/products/upload", dependencies=[Depends(verify_cron_secret)])
 async def upload_product(request: Request):
-    """Upload a product JSON, save to data/products/, and embed for RAG search."""
-    import json as json_mod
-    from pathlib import Path
+    """Upload a product JSON, save to Supabase, and embed for RAG search."""
     from src.product.embeddings import ProductEmbeddings
 
     data = await request.json()
     product = Product(**data)
 
-    # Save to data/products/
-    products_dir = Path("./data/products")
-    products_dir.mkdir(parents=True, exist_ok=True)
-    filepath = products_dir / f"{product.sku}.json"
-    filepath.write_text(json_mod.dumps(data, indent=2))
+    # Save to Supabase
+    db = AsyncDatabase()
+    await db.upsert_product({
+        "sku": product.sku,
+        "name": product.name,
+        "category": product.category,
+        "materials": product.materials.model_dump() if hasattr(product.materials, 'model_dump') else product.materials,
+        "pricing": {k: v.model_dump() if hasattr(v, 'model_dump') else v for k, v in product.pricing.items()},
+        "story": product.story,
+        "care_instructions": product.care_instructions,
+        "occasions": product.occasions,
+        "certification": product.certification.model_dump() if product.certification else None,
+        "tags": product.tags,
+    })
 
     # Embed immediately
     embeddings = ProductEmbeddings()
@@ -279,7 +320,6 @@ async def upload_product(request: Request):
     return {
         "status": "ok",
         "sku": product.sku,
-        "saved_to": str(filepath),
         "total_products": embeddings.product_count(),
     }
 
