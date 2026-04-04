@@ -301,7 +301,7 @@ st.sidebar.markdown('<div class="gold-divider"></div>', unsafe_allow_html=True)
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Overview", "Orders", "Customers", "Products", "Finance", "Marketing", "Customer Service"],
+    ["Overview", "Orders", "Customers", "Products", "Shopify Images", "Finance", "Marketing", "Customer Service"],
     label_visibility="collapsed",
 )
 
@@ -717,6 +717,126 @@ elif page == "Products":
                         st.warning(f"Listing generation failed: {e}")
 
                 st.cache_data.clear()
+
+
+elif page == "Shopify Images":
+    st.markdown("# Shopify Images")
+    st.markdown('<div class="gold-divider"></div>', unsafe_allow_html=True)
+    st.markdown("Upload product images to your Shopify store directly from here.")
+
+    import base64
+    import os
+    import httpx
+
+    SHOPIFY_DOMAIN = os.getenv("SHOPIFY_SHOP_DOMAIN", "")
+    SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
+    SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-01")
+
+    if not SHOPIFY_DOMAIN or not SHOPIFY_TOKEN:
+        st.error("Shopify credentials not configured. Set SHOPIFY_SHOP_DOMAIN and SHOPIFY_ACCESS_TOKEN.")
+    else:
+        shopify_base = f"https://{SHOPIFY_DOMAIN}/admin/api/{SHOPIFY_API_VERSION}"
+        headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}
+
+        # Load products from Shopify
+        @st.cache_data(ttl=60)
+        def load_shopify_products():
+            try:
+                resp = httpx.get(f"{shopify_base}/products.json?limit=50", headers=headers, timeout=15)
+                resp.raise_for_status()
+                return resp.json().get("products", [])
+            except Exception as e:
+                st.error(f"Failed to load products: {e}")
+                return []
+
+        products = load_shopify_products()
+
+        if not products:
+            st.info("No products found in your Shopify store. Add products first in Shopify Admin.")
+        else:
+            # Product selector
+            product_options = {p["title"]: p for p in products}
+            selected_name = st.selectbox("Select Product", list(product_options.keys()))
+            selected_product = product_options[selected_name]
+            product_id = selected_product["id"]
+
+            # Show current images
+            st.markdown(f"### Current Images for {selected_name}")
+            current_images = selected_product.get("images", [])
+            if current_images:
+                cols = st.columns(min(len(current_images), 4))
+                for i, img in enumerate(current_images):
+                    with cols[i % 4]:
+                        st.image(img["src"], width=200)
+                        st.caption(f"ID: {img['id']} | {img.get('alt', 'No alt text')}")
+                        if st.button(f"Delete", key=f"del_{img['id']}"):
+                            try:
+                                del_resp = httpx.delete(
+                                    f"{shopify_base}/products/{product_id}/images/{img['id']}.json",
+                                    headers=headers,
+                                    timeout=15,
+                                )
+                                if del_resp.status_code in (200, 204):
+                                    st.success("Deleted!")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error(f"Delete failed: {del_resp.text}")
+                            except Exception as e:
+                                st.error(f"Delete failed: {e}")
+            else:
+                st.info("No images yet. Upload some below.")
+
+            st.markdown("---")
+            st.markdown("### Upload Images")
+
+            uploaded_files = st.file_uploader(
+                "Choose images (PNG, JPG, WebP)",
+                type=["png", "jpg", "jpeg", "webp"],
+                accept_multiple_files=True,
+                help="Images will be uploaded directly to this product on Shopify.",
+            )
+
+            alt_text = st.text_input("Alt text for all images", value=f"{selected_name} - Diamond Tennis Bracelet")
+
+            if uploaded_files and st.button("Upload to Shopify", type="primary"):
+                progress = st.progress(0, text="Uploading...")
+                success_count = 0
+
+                for i, uploaded_file in enumerate(uploaded_files):
+                    progress.progress((i + 1) / len(uploaded_files), text=f"Uploading {uploaded_file.name}...")
+                    try:
+                        img_bytes = uploaded_file.read()
+                        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+                        filename = uploaded_file.name
+                        payload = {
+                            "image": {
+                                "attachment": img_b64,
+                                "filename": filename,
+                                "alt": alt_text,
+                            }
+                        }
+                        resp = httpx.post(
+                            f"{shopify_base}/products/{product_id}/images.json",
+                            headers=headers,
+                            json=payload,
+                            timeout=30,
+                        )
+                        if resp.status_code == 200:
+                            img_data = resp.json().get("image", {})
+                            st.success(f"Uploaded {filename} (ID: {img_data.get('id')})")
+                            success_count += 1
+                        else:
+                            st.error(f"Failed {filename}: {resp.text[:200]}")
+                    except Exception as e:
+                        st.error(f"Error uploading {filename}: {e}")
+
+                progress.empty()
+                if success_count > 0:
+                    st.balloons()
+                    st.success(f"Uploaded {success_count}/{len(uploaded_files)} images to {selected_name}")
+                    st.cache_data.clear()
+                    st.rerun()
 
 
 elif page == "Finance":
