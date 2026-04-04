@@ -589,28 +589,51 @@ async def add_product_submit(
         except Exception:
             logger.exception("Embedding failed for %s", sku)
 
-    # Push to Shopify as draft
-    if push_shopify:
+    # Push to Shopify as active product
+    shopify_msg = ""
+    if push_shopify and settings.shopify_shop_domain and settings.shopify_access_token:
         try:
-            from src.core.shopify_client import ShopifyClient
-            shopify = ShopifyClient()
             tags_list = list(product_data.get("tags", []))
             tags_list.append(sku)
-            result = await shopify.create_product(
-                title=name,
-                body_html=f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
-                tags=tags_list,
-                product_type=category,
-            )
-            await shopify.close()
-            shopify_id = result.get("id", "")
-            if shopify_id:
-                _get_db().upsert_product({"sku": sku, "shopify_product_id": shopify_id})
-            logger.info("Product %s pushed to Shopify as draft (ID: %s)", sku, shopify_id)
-        except Exception:
+            shopify_payload = {
+                "product": {
+                    "title": name,
+                    "body_html": f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
+                    "vendor": "Pinaka Jewellery",
+                    "product_type": category,
+                    "tags": ", ".join(tags_list),
+                    "status": "active",
+                    "variants": [
+                        {
+                            "title": variant_name,
+                            "price": str(retail),
+                            "sku": sku,
+                            "inventory_management": None,
+                        }
+                    ],
+                }
+            }
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    _shopify_api("products.json"),
+                    headers=_shopify_headers(),
+                    json=shopify_payload,
+                )
+                if resp.status_code in (200, 201):
+                    shopify_id = resp.json().get("product", {}).get("id", "")
+                    if shopify_id:
+                        _get_db().upsert_product({"sku": sku, "shopify_product_id": shopify_id})
+                    shopify_msg = f"+and+created+in+Shopify+(ID:+{shopify_id})"
+                    logger.info("Product %s pushed to Shopify (ID: %s)", sku, shopify_id)
+                else:
+                    error_detail = resp.json().get("errors", resp.text[:200])
+                    shopify_msg = f"+but+Shopify+push+failed:+{error_detail}"
+                    logger.error("Shopify push failed for %s: %s", sku, resp.text[:300])
+        except Exception as e:
+            shopify_msg = f"+but+Shopify+push+failed:+{e}"
             logger.exception("Shopify push failed for %s", sku)
 
-    return RedirectResponse(f"/dashboard?msg=Product+{sku}+saved+successfully", status_code=303)
+    return RedirectResponse(f"/dashboard?msg=Product+{sku}+saved{shopify_msg}", status_code=303)
 
 
 # ── Edit Product ──
