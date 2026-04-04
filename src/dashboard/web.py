@@ -3,11 +3,13 @@
 Product catalog management, password-gated. Styled per DESIGN.md.
 """
 
+import base64
 import hmac
 import json
 import logging
 
-from fastapi import APIRouter, Cookie, Form, Request
+import httpx
+from fastapi import APIRouter, Cookie, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.core.database import Database
@@ -136,6 +138,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
         <a href="/dashboard" class="nav-brand">Pinaka</a>
         <a href="/dashboard" class="nav-link {"active" if active == "products" else ""}">Products</a>
         <a href="/dashboard/add" class="nav-link {"active" if active == "add" else ""}">+ Add Product</a>
+        <a href="/dashboard/images" class="nav-link {"active" if active == "images" else ""}">Shopify Images</a>
         <div class="nav-right">
             <a href="/dashboard/logout" class="nav-link">Logout</a>
         </div>
@@ -691,3 +694,179 @@ async def delete_product(sku: str, dash_token: str | None = Cookie(None)):
     _get_db().delete_product(sku)
 
     return RedirectResponse(f"/dashboard?msg=Product+{sku}+deleted", status_code=303)
+
+
+# ── Shopify Images ──
+
+def _shopify_headers():
+    return {
+        "X-Shopify-Access-Token": settings.shopify_access_token,
+        "Content-Type": "application/json",
+    }
+
+
+def _shopify_api(path: str) -> str:
+    return f"https://{settings.shopify_shop_domain}/admin/api/{settings.shopify_api_version}/{path}"
+
+
+@router.get("/images", response_class=HTMLResponse)
+async def images_page(dash_token: str | None = Cookie(None), msg: str = ""):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    if not settings.shopify_shop_domain or not settings.shopify_access_token:
+        body = '<div class="container"><div class="card"><p>Shopify credentials not configured.</p></div></div>'
+        return HTMLResponse(_base_html("Shopify Images", body, active="images"))
+
+    # Fetch products from Shopify
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                _shopify_api("products.json?limit=50&fields=id,title,images"),
+                headers=_shopify_headers(),
+            )
+            resp.raise_for_status()
+            products = resp.json().get("products", [])
+    except Exception as e:
+        body = f'<div class="container"><div class="card"><p>Failed to load products: {e}</p></div></div>'
+        return HTMLResponse(_base_html("Shopify Images", body, active="images"))
+
+    # Build page
+    msg_html = ""
+    if msg:
+        is_err = "error" in msg.lower() or "fail" in msg.lower()
+        cls = "error-bg" if is_err else "success-bg"
+        color = "var(--error)" if is_err else "var(--success)"
+        msg_html = f'<div style="background:var(--{cls});color:{color};padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px;">{msg}</div>'
+
+    products_html = ""
+    for p in products:
+        pid = p["id"]
+        title = p["title"]
+        images = p.get("images", [])
+        img_count = len(images)
+
+        # Image grid
+        images_grid = ""
+        if images:
+            img_cards = ""
+            for img in images:
+                img_cards += f"""
+                <div style="text-align:center;">
+                    <img src="{img['src']}" alt="{img.get('alt', '')}" style="width:160px;height:160px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
+                    <div style="margin-top:6px;">
+                        <form method="POST" action="/dashboard/images/delete/{pid}/{img['id']}" style="display:inline;">
+                            <button type="submit" style="background:var(--error-bg);color:var(--error);border:none;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer;">Delete</button>
+                        </form>
+                    </div>
+                </div>"""
+            images_grid = f'<div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">{img_cards}</div>'
+        else:
+            images_grid = '<p style="color:var(--text-muted);font-size:14px;">No images yet.</p>'
+
+        products_html += f"""
+        <div class="card">
+            <div class="card-header">
+                <h2 style="font-size:20px;">{title}</h2>
+                <span style="font-family:'Geist Mono',monospace;font-size:12px;color:var(--text-muted);">{img_count} image{"s" if img_count != 1 else ""}</span>
+            </div>
+            {images_grid}
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-light);">
+                <form method="POST" action="/dashboard/images/upload/{pid}" enctype="multipart/form-data" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;">
+                    <div>
+                        <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Upload Images</label>
+                        <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple
+                               style="font-size:13px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+                    </div>
+                    <div>
+                        <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Alt Text</label>
+                        <input type="text" name="alt_text" value="{title} - Diamond Tennis Bracelet" placeholder="Alt text"
+                               style="font-size:13px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;width:280px;">
+                    </div>
+                    <button type="submit" class="btn-primary" style="background:var(--accent);color:var(--text-primary);border:none;padding:10px 24px;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;">
+                        Upload
+                    </button>
+                </form>
+            </div>
+        </div>"""
+
+    body = f"""
+    <div class="container">
+        <h1>Shopify Images</h1>
+        <div class="gold-divider"></div>
+        <p style="margin-bottom:24px;">Upload, view, and delete product images on your Shopify store.</p>
+        {msg_html}
+        {products_html if products_html else '<div class="card"><p>No products in Shopify yet.</p></div>'}
+    </div>"""
+
+    return HTMLResponse(_base_html("Shopify Images", body, active="images"))
+
+
+@router.post("/images/upload/{product_id}")
+async def upload_images(
+    product_id: int,
+    files: list[UploadFile] = File(...),
+    alt_text: str = Form(""),
+    dash_token: str | None = Cookie(None),
+):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    uploaded = 0
+    errors = []
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for f in files:
+            try:
+                content = await f.read()
+                b64 = base64.b64encode(content).decode("utf-8")
+                payload = {
+                    "image": {
+                        "attachment": b64,
+                        "filename": f.filename,
+                        "alt": alt_text,
+                    }
+                }
+                resp = await client.post(
+                    _shopify_api(f"products/{product_id}/images.json"),
+                    headers=_shopify_headers(),
+                    json=payload,
+                )
+                if resp.status_code == 200:
+                    uploaded += 1
+                else:
+                    errors.append(f"{f.filename}: {resp.text[:100]}")
+            except Exception as e:
+                errors.append(f"{f.filename}: {e}")
+
+    if errors:
+        msg = f"Uploaded+{uploaded}+images.+Errors:+{',+'.join(errors[:2])}"
+    else:
+        msg = f"Uploaded+{uploaded}+images+successfully"
+
+    return RedirectResponse(f"/dashboard/images?msg={msg}", status_code=303)
+
+
+@router.post("/images/delete/{product_id}/{image_id}")
+async def delete_image(
+    product_id: int,
+    image_id: int,
+    dash_token: str | None = Cookie(None),
+):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.delete(
+                _shopify_api(f"products/{product_id}/images/{image_id}.json"),
+                headers=_shopify_headers(),
+            )
+            if resp.status_code in (200, 204):
+                msg = "Image+deleted"
+            else:
+                msg = f"Error+deleting+image:+{resp.status_code}"
+    except Exception as e:
+        msg = f"Error:+{e}"
+
+    return RedirectResponse(f"/dashboard/images?msg={msg}", status_code=303)
