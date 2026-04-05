@@ -230,8 +230,14 @@ async def test_set_creative_status_to_active(configured_client):
 
 
 async def test_set_creative_status_invalid_value_raises(configured_client):
-    with pytest.raises(MetaCreativeError, match="Invalid Meta creative status"):
+    with pytest.raises(MetaCreativeError, match="Invalid Meta creative update status"):
         await configured_client.set_creative_status("creative_123", "NUKE")
+
+
+async def test_set_creative_status_paused_raises(configured_client):
+    """Meta does not allow flipping ACTIVE → PAUSED on update. Enforce client-side."""
+    with pytest.raises(MetaCreativeError, match="PAUSED is create-only"):
+        await configured_client.set_creative_status("creative_123", "PAUSED")
 
 
 async def test_set_creative_status_meta_error(configured_client):

@@ -1668,26 +1668,23 @@ async def ad_creatives_set_live(
 async def ad_creatives_pause(
     creative_id: int, dash_token: str | None = Cookie(None)
 ):
-    """Flip an ACTIVE Meta creative back to PAUSED (undo go-live)."""
+    """Mark a creative as paused in our DB. Does NOT call Meta.
+
+    Meta's Ad Creative update endpoint does not support flipping ACTIVE → PAUSED
+    (see meta_creative.set_creative_status docstring). Pausing at the creative
+    level is a no-op on Meta's side; to stop an active creative, the founder
+    must pause the Ad that uses it in Meta Ads Manager (or click "Remove from Meta"
+    which DELETEs the creative).
+
+    This button exists purely as internal bookkeeping — "I decided I don't like
+    this one anymore, hide it from the dashboard list."
+    """
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
-    from src.marketing.meta_creative import MetaCreativeClient, MetaCreativeError
-
     db = _get_db()
-    creative = db.get_ad_creative(creative_id)
-    if not creative or not creative.get("meta_creative_id"):
-        return RedirectResponse(
-            "/dashboard/ad-creatives?msg=Error:+Creative+not+found",
-            status_code=303,
-        )
-
-    client = MetaCreativeClient()
-    try:
-        await client.set_creative_status(creative["meta_creative_id"], "PAUSED")
-        db.pause_ad_creative(creative_id)
-        msg = f"Creative+{creative['meta_creative_id'][:12]}+paused+on+Meta"
-    except MetaCreativeError as e:
-        logger.exception("Failed to pause creative %s", creative_id)
-        msg = f"Error:+{str(e)[:80]}"
-    return RedirectResponse(f"/dashboard/ad-creatives?msg={msg}", status_code=303)
+    db.pause_ad_creative(creative_id)
+    return RedirectResponse(
+        "/dashboard/ad-creatives?msg=Marked+paused+(internal+only).+To+pause+live+ads,+use+Meta+Ads+Manager",
+        status_code=303,
+    )

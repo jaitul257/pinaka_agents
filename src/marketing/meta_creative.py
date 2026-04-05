@@ -190,12 +190,23 @@ class MetaCreativeClient:
     async def set_creative_status(
         self, creative_id: str, status: str
     ) -> MetaCreativeResult:
-        """Flip a creative to ACTIVE or back to PAUSED via POST /{creative_id}.
+        """Flip a creative status via POST /{creative_id}.
 
-        Used by the dashboard "Go Live" and "Pause on Meta" buttons.
+        Meta's Ad Creative UPDATE endpoint only accepts `{ACTIVE, IN_PROCESS,
+        WITH_ISSUES, DELETED}` as valid `status` values — NOT `PAUSED`. On creation
+        you can set `status=PAUSED`, but once a creative has been flipped to ACTIVE
+        there is no "un-flip" at the creative level. Pausing is done at the Ad level
+        (in Ads Manager), or the creative can be DELETED to remove it from reuse.
+
+        Dashboard usage:
+          - Go Live → status="ACTIVE"
+          - Remove from Meta → status="DELETED"  (destructive, replaces "pause" semantics)
         """
-        if status not in ("ACTIVE", "PAUSED", "DELETED"):
-            raise MetaCreativeError(f"Invalid Meta creative status: {status}")
+        if status not in ("ACTIVE", "DELETED"):
+            raise MetaCreativeError(
+                f"Invalid Meta creative update status: {status}. "
+                "Meta only accepts ACTIVE or DELETED on update (PAUSED is create-only)."
+            )
 
         self._require_configured()
 

@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # ── Meta (Conversions API) ──
     meta_pixel_id: str = ""
     meta_capi_access_token: str = ""
-    meta_graph_api_version: str = "v21.0"
+    meta_graph_api_version: str = "v25.0"  # Meta deprecates ~quarterly; bump when (#2635) errors appear
 
     # ── Webhooks ──
     webhook_base_url: str = ""  # Railway public URL, e.g. "https://pinaka-agents-production-198b5.up.railway.app"
