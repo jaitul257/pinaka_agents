@@ -46,12 +46,15 @@ Last updated: 2026-04-04 (late evening)
 - **The eng subagent's "2am Friday" scenario was the most valuable finding.** It's not a real bug but it's a design philosophy — every "approve and go live" action should have an undo window. Soft-pause + Go-Live button is that undo window.
 
 **Pending human steps (must complete before first real Meta push):**
-1. Create Facebook Page for Pinaka Jewellery in Meta Business Suite
-2. Link Page to Pinaka Jewellery Business Portfolio (1035697978984161)
-3. Set `META_FACEBOOK_PAGE_ID` env var on Railway
-4. Run migration 007 via Supabase Dashboard SQL Editor (CLI not linked locally)
+1. ~~Create Facebook Page for Pinaka Jewellery in Meta Business Suite~~ DONE 2026-04-05 (Page ID 982012465004487)
+2. ~~Link Page to Pinaka Jewellery Business Portfolio (1035697978984161)~~ DONE 2026-04-05
+3. ~~Set `META_FACEBOOK_PAGE_ID` env var on Railway~~ DONE 2026-04-05
+4. **Switch Pinaka Marketing app (930736393145618) from Development Mode to Live Mode** — discovered via live smoke test after page setup. Meta blocks ad creative creation from Development-mode apps. Requires Privacy Policy URL, Data Deletion URL, and app icon. 5-10 min fix at https://developers.facebook.com/apps/930736393145618/app-review/status/
+5. Run migration 007 via Supabase Dashboard SQL Editor (CLI not linked locally)
 
-Until step 3 is done, `/dashboard/ad-creatives` shows a red warning banner and Approve buttons are disabled. Drafts can still be generated and reviewed locally.
+**New lesson from smoke test:**
+- **"Live Mode" is a hidden gate for ANY Meta Marketing API write operation.** The eng subagent correctly flagged FB Page as a blocker, but nobody flagged app-mode. It only surfaces when you actually try to POST to `/adcreatives`. Future Meta integrations should verify app-mode as part of the readiness check — add a preflight ping to `/me?fields=is_test_user` or try a safe write to surface app-mode issues before the first real call.
+- **Code handled the failure correctly.** `MetaCreativeClient` raised `MetaCreativeError` with Meta's full error body, `ad_creatives_approve` rolled back the atomic transition via `revert_ad_creative_to_pending`, draft returned to `pending_review`. No money burned, no data lost, no manual cleanup needed. This is exactly what the eng subagent's "ship to learn, not to lose money at 2am" recommendation was designed to prevent.
 
 ---
 

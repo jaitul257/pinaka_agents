@@ -62,9 +62,10 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 - [x] Atomic approve transition (race-safe via UPDATE-WHERE-status=pending_review)
 - [x] Background task generation with idempotency key (sha1 sku+minute) to survive Claude 10-25s calls
 - [x] 59 new tests passing (185 total — was 126)
-- **PENDING HUMAN:** Create Facebook Page for Pinaka Jewellery + link to Business Portfolio
-- **PENDING HUMAN:** Set `META_FACEBOOK_PAGE_ID` on Railway
+- [x] Create Facebook Page for Pinaka Jewellery + link to Business Portfolio (2026-04-05, Page ID 982012465004487)
+- [x] Set `META_FACEBOOK_PAGE_ID` on Railway (2026-04-05)
 - **PENDING HUMAN:** Run migration 007 via Supabase Dashboard SQL Editor (CLI not linked)
+- **PENDING HUMAN:** Switch Pinaka Marketing app (930736393145618) from Development Mode to Live Mode at https://developers.facebook.com/apps/930736393145618/app-review/status/ — requires Privacy Policy URL, Data Deletion URL, app icon (Meta errored: "Ads creative post was created by an app that is in development mode")
 - **Deferred to 6.1.1:** closed-loop Meta insights feedback into next prompt generation
 - **Why:** Creative is the top of the funnel. Even if outside voices said it's premature at $75/day, founder directed "ship to learn" — infrastructure ready before budget scales.
 
