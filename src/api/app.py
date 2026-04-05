@@ -324,6 +324,56 @@ async def upload_product(request: Request):
     }
 
 
+# ── Ad Creative Generation (Phase 6.1) ──
+#
+# Internal route for programmatic generation (future cron / CLI / other services).
+# The dashboard uses its own router route at /dashboard/ad-creatives/generate.
+# Gated via verify_cron_secret to prevent anonymous Claude/Meta burn.
+
+@app.post("/api/ad-creatives/generate", dependencies=[Depends(verify_cron_secret)])
+async def api_generate_ad_creatives(request: Request):
+    """Generate N ad creative variants for a SKU. Returns the generation batch_id.
+
+    Request body: {"sku": "DTB-LG-7-14KYG", "n_variants": 3}
+
+    Unlike the dashboard route, this endpoint blocks until Claude responds (no
+    BackgroundTasks). Used for cron/CLI where waiting is fine.
+    """
+    import uuid as _uuid
+
+    from src.marketing.ad_generator import AdCreativeGenerator, AdGeneratorError
+
+    data = await request.json()
+    sku = data.get("sku", "")
+    n_variants = int(data.get("n_variants", 3))
+
+    if not sku:
+        return {"status": "error", "error": "sku is required"}
+
+    db = AsyncDatabase()
+    product = await db.get_product_by_sku(sku)
+    if not product:
+        return {"status": "error", "error": f"Product {sku} not found"}
+
+    try:
+        gen = AdCreativeGenerator()
+        variants, batch_id, dna_hash = gen.generate(product, n_variants=n_variants)
+    except AdGeneratorError as e:
+        return {"status": "error", "error": str(e)}
+
+    rows = [
+        v.to_db_row(sku=sku, generation_batch_id=batch_id, brand_dna_hash=dna_hash)
+        for v in variants
+    ]
+    await db.create_ad_creative_batch(rows)
+    return {
+        "status": "ok",
+        "batch_id": batch_id,
+        "variant_count": len(variants),
+        "sku": sku,
+    }
+
+
 # ── Listing Generation ──
 
 @app.post("/api/listings/generate", dependencies=[Depends(verify_cron_secret)])

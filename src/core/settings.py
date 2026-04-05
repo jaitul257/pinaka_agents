@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     meta_ads_access_token: str = ""  # Long-lived token with ads_read scope (separate from CAPI token)
     meta_catalog_id: str = ""  # Product Catalog ID from Commerce Manager
     meta_business_id: str = ""  # Business ID from Business Settings
+    meta_facebook_page_id: str = ""  # Required for /act_{id}/adcreatives API (Phase 6.1 ad creative push)
+    meta_app_id: str = ""  # Pinaka Marketing app ID (for future appsecret_proof if enabled)
+    meta_app_secret: str = ""  # App secret (stored but not required unless "Require App Secret" is toggled on)
 
     # ── Google Ads ──
     google_ads_developer_token: str = ""
@@ -133,6 +136,19 @@ class Settings(BaseSettings):
     def storefront_domain(self) -> str:
         """Customer-facing domain (custom domain preferred, falls back to myshopify)."""
         return self.shopify_storefront_url or self.shopify_shop_domain
+
+    @property
+    def is_meta_creative_ready(self) -> bool:
+        """True when Phase 6.1 ad creative push to Meta is fully configured.
+
+        When False, the dashboard disables Approve buttons and shows a warning banner
+        explaining which env var is missing (typically META_FACEBOOK_PAGE_ID).
+        """
+        return bool(
+            self.meta_ads_access_token
+            and self.meta_ad_account_id
+            and self.meta_facebook_page_id
+        )
 
 
 settings = Settings()

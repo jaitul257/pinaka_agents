@@ -11,6 +11,50 @@ Last updated: 2026-04-04 (late evening)
 
 ## Push Log
 
+### 2026-04-05 — Phase 6.1: Automated Ad Creative Generation
+
+**What shipped:**
+- `BrandDNA` module (`src/marketing/brand_dna.py`) — formalizes tone/palette/banned-phrases from DESIGN.md + voice_examples table, with mtime-aware cache invalidation
+- `AdCreativeGenerator` (`src/marketing/ad_generator.py`) — Claude Sonnet 4 generates 3 tagged variants per product with prompt-injection defense (delimiters + URL allowlist + length truncation), banned-word validation with one retry, single-image fallback
+- `MetaCreativeClient` (`src/marketing/meta_creative.py`) — creates Meta Ad Creative objects with `status=PAUSED` default (soft-pause window), plus `set_creative_status()` for Go-Live / Pause flips
+- Dashboard page at `/dashboard/ad-creatives` — list + review + approve/reject/go-live/pause buttons, reuses existing DESIGN.md tokens + `_base_html()` + cookie auth
+- Background-task generation with idempotency key to survive Claude's 10-25s calls without blocking the request handler
+- Atomic approve transition (UPDATE-WHERE-status=pending_review) — race-safe against double-clicks
+- Migration `007_ad_creatives.sql` + `generation_batches` helper table
+- 59 new tests (126 → 185 total, all passing): 7 brand_dna + 25 ad_generator + 15 meta_creative + 12 dashboard integration
+
+**What went well:**
+- Running `/autoplan` caught architectural issues BEFORE any code: eng subagent flagged 4 critical + 5 high issues (timeout on inline Claude call, sync-vs-async dashboard mismatch, double-push race, prompt injection via product.story). All incorporated into plan before implementation.
+- Outside voices (Codex + Claude CEO subagent) independently agreed 6/6 dimensions that the premise was weak. The founder override ("ship to learn") was documented transparently in the plan — so if 6.1 turns out to be dead code in 6 months, the RETRO will have the receipts.
+- 94% reuse of existing patterns (listings/generator.py for Claude, listing_drafts schema for ad_creatives, dashboard `_base_html` for UI). Zero new infrastructure concepts.
+- Dashboard integration tests used MagicMock patched at `src.dashboard.web._get_db` — clean, fast, no real DB/Claude/Meta calls.
+- Test-first approach exposed edge cases: single-image fallback, URL allowlist catching evil.com in prompt-injection output, atomic transition returning None on race.
+
+**What was painful:**
+- Broken venv shebang (`/Users/jaitulbharodiya/Documents/pinaka_agents/.venv/bin/python3.12` — wrong path because repo was moved). Workaround: `.venv/bin/python3 -m pytest` directly. Worth fixing the venv but not urgent.
+- Eng subagent output came back as JSONL via background agent — had to extract final text via Python parser, not a simple `tail`.
+- Bun not on PATH (`~/.bun/bin/bun`). Gstack browse skill failed on first invocation. Worked around with explicit `export PATH`.
+- First /autoplan CEO review returned a STRONG "kill this plan" verdict. Had to trust the founder's override and document the tradeoff explicitly instead of steamrolling either direction.
+
+**Lessons learned:**
+- **When both outside voices independently converge on "you're solving the wrong problem," treat it as a rare high-confidence signal.** The right response isn't always "change course" — sometimes the user has context the models don't — but you MUST surface the disagreement transparently, not bury it. The plan file now has the full Round 1/Round 2 decision history so we can look back in 6 months and learn.
+- **"Background task + idempotency key" is the right pattern for any inline AI call in a request handler.** 10-25s Claude calls hit Railway proxy timeouts. The eng subagent caught this; the architecture diagram would have hidden it.
+- **Atomic UPDATE-WHERE-status=X is the simplest race condition fix.** No locks, no Redis, no queue — just let the database refuse the second transition. Returns None to caller who shows "already processed".
+- **`status=PAUSED` on first Meta push is the single best safeguard against approval fatigue.** Founder clicks approve at 2am half-asleep, types a typo, approves... but the creative sits in Meta Ads Manager paused. No money burned until a second conscious click.
+- **Prompt injection defense needs FOUR layers:** (1) delimiters around user fields, (2) length truncation before prompt, (3) URL allowlist on OUTPUT, (4) banned-word check on OUTPUT. Any single layer can be bypassed; all four together make it hard.
+- **BrandDNA mtime-aware caching** is worth the 3 lines of code — prevents stale cache from surviving a DESIGN.md edit during a session.
+- **The eng subagent's "2am Friday" scenario was the most valuable finding.** It's not a real bug but it's a design philosophy — every "approve and go live" action should have an undo window. Soft-pause + Go-Live button is that undo window.
+
+**Pending human steps (must complete before first real Meta push):**
+1. Create Facebook Page for Pinaka Jewellery in Meta Business Suite
+2. Link Page to Pinaka Jewellery Business Portfolio (1035697978984161)
+3. Set `META_FACEBOOK_PAGE_ID` env var on Railway
+4. Run migration 007 via Supabase Dashboard SQL Editor (CLI not linked locally)
+
+Until step 3 is done, `/dashboard/ad-creatives` shows a red warning banner and Approve buttons are disabled. Drafts can still be generated and reviewed locally.
+
+---
+
 ### 2026-04-04 (late evening) — Meta Ads Never-Expiring System User Token
 
 **What shipped:**

@@ -501,6 +501,164 @@ class Database:
     def delete_product(self, sku: str) -> None:
         self._client.table("products").delete().eq("sku", sku).execute()
 
+    # ── Ad Creatives (Phase 6.1) ──
+
+    def create_generation_batch(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Insert a generation_batches row. Upserts on idempotency_key to prevent duplicates."""
+        result = (
+            self._client.table("generation_batches")
+            .upsert(data, on_conflict="idempotency_key")
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def get_generation_batch(self, batch_id: str) -> dict[str, Any] | None:
+        result = (
+            self._client.table("generation_batches")
+            .select("*")
+            .eq("id", batch_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    def update_generation_batch_status(
+        self, batch_id: str, status: str, **extra_fields
+    ) -> dict[str, Any]:
+        result = (
+            self._client.table("generation_batches")
+            .update({"status": status, **extra_fields})
+            .eq("id", batch_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def create_ad_creative_batch(self, variants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Atomic-ish batch insert for ad_creatives rows. Either all succeed or none (supabase-py
+        insert(list) is a single SQL statement so partial insert is not possible on the server
+        side — any constraint violation rolls back the entire call).
+        """
+        if not variants:
+            return []
+        result = self._client.table("ad_creatives").insert(variants).execute()
+        return result.data or []
+
+    def get_ad_creative(self, creative_id: int) -> dict[str, Any] | None:
+        result = (
+            self._client.table("ad_creatives")
+            .select("*")
+            .eq("id", creative_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    def get_ad_creatives_by_status(self, status: str, limit: int = 60) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("ad_creatives")
+            .select("*")
+            .eq("status", status)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+
+    def get_ad_creatives_by_batch(self, batch_id: str) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("ad_creatives")
+            .select("*")
+            .eq("generation_batch_id", batch_id)
+            .order("variant_label", desc=False)
+            .execute()
+        )
+        return result.data or []
+
+    def get_recent_ad_creatives(self, limit: int = 60) -> list[dict[str, Any]]:
+        """All ad_creatives, newest first. Used by the dashboard list page."""
+        result = (
+            self._client.table("ad_creatives")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+
+    def approve_ad_creative_atomic(
+        self, creative_id: int, approved_by: str = ""
+    ) -> dict[str, Any] | None:
+        """Atomic transition pending_review → publishing. Returns row on success, None if the
+        creative was not in pending_review state (already approved, rejected, or in-flight).
+
+        This is the race-condition fix: two concurrent approves will see the second one return
+        None and the dashboard can show "already being processed".
+        """
+        from datetime import datetime
+
+        result = (
+            self._client.table("ad_creatives")
+            .update({
+                "status": "publishing",
+                "approved_by": approved_by or "dashboard",
+                "approved_at": datetime.utcnow().isoformat(),
+            })
+            .eq("id", creative_id)
+            .eq("status", "pending_review")
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    def mark_ad_creative_published(
+        self, creative_id: int, meta_creative_id: str
+    ) -> dict[str, Any]:
+        result = (
+            self._client.table("ad_creatives")
+            .update({
+                "status": "published",
+                "meta_creative_id": meta_creative_id,
+            })
+            .eq("id", creative_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def revert_ad_creative_to_pending(self, creative_id: int) -> dict[str, Any]:
+        """Rollback if Meta push fails after atomic transition to 'publishing'."""
+        result = (
+            self._client.table("ad_creatives")
+            .update({"status": "pending_review", "approved_by": None, "approved_at": None})
+            .eq("id", creative_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def reject_ad_creative(self, creative_id: int) -> dict[str, Any]:
+        result = (
+            self._client.table("ad_creatives")
+            .update({"status": "rejected"})
+            .eq("id", creative_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def pause_ad_creative(self, creative_id: int) -> dict[str, Any]:
+        result = (
+            self._client.table("ad_creatives")
+            .update({"status": "paused"})
+            .eq("id", creative_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def set_ad_creative_published_from_paused(self, creative_id: int) -> dict[str, Any]:
+        """Used when founder clicks Go Live on a previously-paused creative."""
+        result = (
+            self._client.table("ad_creatives")
+            .update({"status": "published"})
+            .eq("id", creative_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
     # ── Messages ──
 
     def create_message(self, message_data: dict[str, Any]) -> dict[str, Any]:

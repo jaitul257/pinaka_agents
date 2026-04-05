@@ -139,6 +139,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
         <a href="/dashboard" class="nav-link {"active" if active == "products" else ""}">Products</a>
         <a href="/dashboard/add" class="nav-link {"active" if active == "add" else ""}">+ Add Product</a>
         <a href="/dashboard/images" class="nav-link {"active" if active == "images" else ""}">Shopify Images</a>
+        <a href="/dashboard/ad-creatives" class="nav-link {"active" if active == "ad-creatives" else ""}">Ad Creatives</a>
         <div class="nav-right">
             <a href="/dashboard/logout" class="nav-link">Logout</a>
         </div>
@@ -656,6 +657,19 @@ async def edit_product_page(sku: str, dash_token: str | None = Cookie(None)):
         <h1>Edit Product</h1>
         <div class="gold-divider"></div>
         {_product_form(f"/dashboard/edit/{sku}", product, button_text="Update Product")}
+        <div class="gold-divider"></div>
+        <div class="card">
+            <h3>Ad Creatives</h3>
+            <p style="font-size: 14px; color: var(--text-muted); margin: 8px 0 16px 0;">
+                Generate 3 Claude-drafted ad copy variants for this product.
+                Drafts appear on the Ad Creatives page for review.
+            </p>
+            <form method="post" action="/dashboard/ad-creatives/generate" style="display:inline;">
+                <input type="hidden" name="sku" value="{sku}">
+                <button type="submit" class="btn btn-primary">Generate Ad Drafts</button>
+            </form>
+            <a href="/dashboard/ad-creatives" class="btn" style="margin-left:8px;">View All Drafts →</a>
+        </div>
     """
     return HTMLResponse(_base_html("Edit Product", body, active="products"))
 
@@ -1232,3 +1246,448 @@ async def delete_image(
         msg = f"Error:+{e}"
 
     return RedirectResponse(f"/dashboard/images?msg={msg}", status_code=303)
+
+
+# ── Ad Creatives (Phase 6.1) ──
+#
+# Dashboard-driven creative generation and Meta push. Click "Generate Ad Drafts"
+# on a product's edit page → Claude generates 3 variants in the background → drafts
+# appear on /dashboard/ad-creatives for review → founder clicks Approve → Meta push
+# with status=PAUSED (soft-pause window) → founder clicks Go Live for ACTIVE.
+
+
+def _ad_creatives_banner_html(msg: str = "") -> str:
+    """Warning banner when Meta creative push isn't fully configured."""
+    from src.core.settings import settings as _settings
+    if _settings.is_meta_creative_ready and not msg:
+        return ""
+    if msg:
+        # URL-decoded success/error message from a previous action
+        alert_class = "alert-error" if "Error" in msg or "Failed" in msg else "alert-success"
+        return f'<div class="alert {alert_class}">{msg.replace("+", " ")}</div>'
+    missing = []
+    if not _settings.meta_ads_access_token:
+        missing.append("META_ADS_ACCESS_TOKEN")
+    if not _settings.meta_ad_account_id:
+        missing.append("META_AD_ACCOUNT_ID")
+    if not _settings.meta_facebook_page_id:
+        missing.append("META_FACEBOOK_PAGE_ID")
+    return f"""
+    <div class="alert alert-error" style="margin-bottom:16px;">
+        <strong>Meta push disabled</strong> — drafts can be generated and reviewed,
+        but Approve buttons are inactive until these Railway env vars are set:
+        <code>{', '.join(missing)}</code>.
+        Create a Facebook Page for Pinaka Jewellery and link it to the Business Portfolio,
+        then set <code>META_FACEBOOK_PAGE_ID</code> on Railway.
+    </div>
+    """
+
+
+def _status_badge_html(status: str, meta_creative_id: str | None = None) -> str:
+    """Render a status badge pill with aria-label for screen readers."""
+    colors = {
+        "pending_review": ("#C17E1A", "rgba(193,126,26,0.12)", "Pending Review"),
+        "publishing":     ("#3B7EC5", "rgba(59,126,197,0.12)", "Publishing..."),
+        "published":      ("#2E7D4F", "rgba(46,125,79,0.12)", "Published (Paused on Meta)"),
+        "rejected":       ("#9E9893", "rgba(158,152,147,0.15)", "Rejected"),
+        "paused":         ("#C4392D", "rgba(196,57,45,0.10)", "Paused"),
+    }
+    color, bg, label = colors.get(status, ("#6B6560", "rgba(107,101,96,0.1)", status))
+    aria = f'aria-label="Status: {label}"'
+    extra = f" #{meta_creative_id[:12]}" if meta_creative_id and status == "published" else ""
+    return (
+        f'<span {aria} style="display:inline-block;font-size:11px;font-weight:600;'
+        f'text-transform:uppercase;letter-spacing:1px;padding:4px 10px;border-radius:9999px;'
+        f'color:{color};background:{bg};">{label}{extra}</span>'
+    )
+
+
+def _variant_card_html(creative: dict, ready: bool) -> str:
+    """Render one variant card in the grid."""
+    from html import escape
+    status = creative.get("status", "pending_review")
+    label = creative.get("variant_label", "?")
+    cta = creative.get("cta", "SHOP_NOW")
+    headline = escape(creative.get("headline", ""))
+    primary_text = escape(creative.get("primary_text", ""))
+    description = escape(creative.get("description", ""))
+    image_url = escape(creative.get("image_url", ""))
+    creative_id = creative.get("id", 0)
+    meta_creative_id = creative.get("meta_creative_id")
+    warning = creative.get("validation_warning")
+
+    warning_html = ""
+    if warning:
+        warning_html = (
+            f'<div style="font-size:11px;color:#C4392D;margin:8px 0;padding:6px 10px;'
+            f'background:rgba(196,57,45,0.08);border-radius:4px;">'
+            f'⚠ {escape(str(warning))[:200]}</div>'
+        )
+
+    rejected_style = "opacity:0.5;text-decoration:line-through;" if status == "rejected" else ""
+
+    actions_html = ""
+    if status == "pending_review":
+        approve_disabled = "" if ready else 'disabled style="opacity:0.4;cursor:not-allowed;"'
+        actions_html = f"""
+            <form method="post" action="/dashboard/ad-creatives/{creative_id}/approve" style="display:inline;width:48%;">
+                <button type="submit" class="btn btn-primary" style="width:100%;" {approve_disabled}>Approve & Push</button>
+            </form>
+            <form method="post" action="/dashboard/ad-creatives/{creative_id}/reject" style="display:inline;width:48%;margin-left:4%;">
+                <button type="submit" class="btn btn-danger" style="width:100%;">Reject</button>
+            </form>
+        """
+    elif status == "published":
+        actions_html = f"""
+            <form method="post" action="/dashboard/ad-creatives/{creative_id}/set-live" style="display:inline;width:48%;">
+                <button type="submit" class="btn btn-primary" style="width:100%;">Go Live</button>
+            </form>
+            <form method="post" action="/dashboard/ad-creatives/{creative_id}/pause" style="display:inline;width:48%;margin-left:4%;">
+                <button type="submit" class="btn" style="width:100%;">Pause</button>
+            </form>
+        """
+    elif status == "publishing":
+        actions_html = '<div style="font-size:12px;color:var(--text-muted);text-align:center;">Pushing to Meta...</div>'
+    elif status == "rejected":
+        actions_html = ""
+
+    return f"""
+    <div class="card" style="{rejected_style}padding:0;overflow:hidden;">
+        <img src="{image_url}" alt="Variant {label} image" style="width:100%;aspect-ratio:1/1;object-fit:cover;display:block;border-bottom:1px solid var(--border);">
+        <div style="padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);">Variant {label}</span>
+                {_status_badge_html(status, meta_creative_id)}
+            </div>
+            <div style="font-size:10px;font-family:'Geist Mono',monospace;color:var(--accent);margin-bottom:8px;">CTA: {cta}</div>
+            <h3 style="font-size:15px;line-height:1.3;margin-bottom:8px;color:var(--text-primary);">{headline}</h3>
+            <p style="font-size:13px;color:var(--text-secondary);line-height:1.5;margin-bottom:12px;max-height:80px;overflow:hidden;">{primary_text}</p>
+            {f'<p style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">{description}</p>' if description else ''}
+            {warning_html}
+            <div style="display:flex;gap:0;margin-top:12px;">
+                {actions_html}
+            </div>
+        </div>
+    </div>
+    """
+
+
+def _batch_section_html(batch_id: str, creatives: list[dict], ready: bool) -> str:
+    """Render a batch of 3 variants as a horizontal row."""
+    from html import escape
+    if not creatives:
+        return ""
+    sku = creatives[0].get("sku", "?")
+    created_at = creatives[0].get("created_at", "")[:16].replace("T", " ")
+    cards_html = "".join(_variant_card_html(c, ready) for c in creatives)
+    return f"""
+    <div style="margin-bottom:32px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+            <div>
+                <h3 style="font-size:14px;">{escape(sku)}</h3>
+                <div style="font-size:11px;color:var(--text-muted);font-family:'Geist Mono',monospace;">
+                    Batch {escape(batch_id[:8])} · {escape(created_at)}
+                </div>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+            {cards_html}
+        </div>
+    </div>
+    """
+
+
+def _empty_state_html() -> str:
+    return """
+    <div class="card" style="text-align:center;padding:48px 24px;">
+        <h2 style="font-size:28px;margin-bottom:12px;">No ad drafts yet</h2>
+        <p style="font-size:14px;color:var(--text-muted);margin-bottom:24px;">
+            Generate 3 Claude-drafted ad copy variants from any product.
+        </p>
+        <a href="/dashboard" class="btn btn-primary">Go to Products →</a>
+    </div>
+    """
+
+
+@router.get("/ad-creatives", response_class=HTMLResponse)
+async def ad_creatives_page(
+    dash_token: str | None = Cookie(None),
+    msg: str = "",
+    pending: str = "",
+):
+    """List all ad creative drafts, grouped by batch, newest first."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.core.settings import settings as _settings
+    db = _get_db()
+    creatives = db.get_recent_ad_creatives(limit=60)
+
+    # Group by batch, preserve order (first occurrence wins = newest first)
+    batches: dict[str, list[dict]] = {}
+    for c in creatives:
+        bid = c.get("generation_batch_id", "unknown")
+        batches.setdefault(bid, []).append(c)
+
+    # Within each batch, sort by variant_label A/B/C
+    for bid in batches:
+        batches[bid].sort(key=lambda x: x.get("variant_label", ""))
+
+    pending_banner = ""
+    if pending:
+        pending_banner = f"""
+        <div class="alert" style="background:rgba(59,126,197,0.08);color:#3B7EC5;">
+            Generating 3 variants for batch <code>{pending[:8]}</code>...
+            Refresh the page in about 15 seconds.
+        </div>
+        """
+
+    if not batches:
+        body = f"""
+            <h1>Ad Creatives</h1>
+            <div class="gold-divider"></div>
+            {_ad_creatives_banner_html(msg)}
+            {pending_banner}
+            {_empty_state_html()}
+        """
+    else:
+        batches_html = "".join(
+            _batch_section_html(bid, items, _settings.is_meta_creative_ready)
+            for bid, items in batches.items()
+        )
+        body = f"""
+            <h1>Ad Creatives</h1>
+            <div class="gold-divider"></div>
+            {_ad_creatives_banner_html(msg)}
+            {pending_banner}
+            {batches_html}
+        """
+
+    return HTMLResponse(_base_html("Ad Creatives", body, active="ad-creatives"))
+
+
+async def _run_generation_task(
+    sku: str, batch_id: str, idempotency_key: str
+) -> None:
+    """BackgroundTask worker: Claude generate → persist variants → mark batch complete.
+
+    Keeps errors out of the request path. Dashboard polls batch status via refresh.
+    """
+    from src.marketing.ad_generator import AdCreativeGenerator, AdGeneratorError
+
+    db = _get_db()
+    try:
+        product = db.get_product_by_sku(sku)
+        if not product:
+            db.update_generation_batch_status(
+                batch_id, "failed", error_message=f"Product {sku} not found"
+            )
+            return
+
+        gen = AdCreativeGenerator()
+        variants, returned_batch_id, dna_hash = gen.generate(product, n_variants=3)
+
+        rows = [
+            v.to_db_row(sku=sku, generation_batch_id=batch_id, brand_dna_hash=dna_hash)
+            for v in variants
+        ]
+        db.create_ad_creative_batch(rows)
+        db.update_generation_batch_status(
+            batch_id, "complete", variant_count=len(variants)
+        )
+        logger.info(
+            "Ad creative batch %s complete: %d variants for sku=%s", batch_id, len(variants), sku
+        )
+    except AdGeneratorError as e:
+        logger.exception("Ad generation failed for batch %s", batch_id)
+        db.update_generation_batch_status(batch_id, "failed", error_message=str(e))
+    except Exception as e:  # pragma: no cover — catch-all for unexpected
+        logger.exception("Unexpected error in ad generation batch %s", batch_id)
+        db.update_generation_batch_status(batch_id, "failed", error_message=f"{type(e).__name__}: {e}")
+
+
+@router.post("/ad-creatives/generate")
+async def ad_creatives_generate(
+    request: Request,
+    dash_token: str | None = Cookie(None),
+    sku: str = Form(...),
+):
+    """Launch a Claude generation run in the background + redirect immediately.
+
+    Uses an idempotency key (sha1 of sku + ISO-minute) via upsert on generation_batches.
+    A double-submit in the same minute returns the existing batch_id, not a new one.
+    """
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from fastapi import BackgroundTasks
+    import hashlib
+    import uuid
+    from datetime import datetime
+
+    # Idempotency key stable within a 1-minute window
+    minute_bucket = datetime.utcnow().strftime("%Y%m%d%H%M")
+    idempotency_key = hashlib.sha1(f"{sku}|{minute_bucket}".encode()).hexdigest()
+
+    db = _get_db()
+    batch_id = str(uuid.uuid4())
+    existing = db.create_generation_batch({
+        "id": batch_id,
+        "sku": sku,
+        "idempotency_key": idempotency_key,
+        "status": "generating",
+    })
+    # If upsert returned a row with a different id, another request won the race
+    actual_batch_id = existing.get("id", batch_id) if existing else batch_id
+
+    # Only run the background task for new batches (idempotency guard)
+    if actual_batch_id == batch_id:
+        background_tasks = BackgroundTasks()
+        background_tasks.add_task(_run_generation_task, sku, batch_id, idempotency_key)
+        response = RedirectResponse(
+            f"/dashboard/ad-creatives?pending={batch_id}", status_code=303
+        )
+        response.background = background_tasks
+        return response
+
+    return RedirectResponse(
+        f"/dashboard/ad-creatives?pending={actual_batch_id}", status_code=303
+    )
+
+
+@router.post("/ad-creatives/{creative_id}/approve")
+async def ad_creatives_approve(
+    creative_id: int, dash_token: str | None = Cookie(None)
+):
+    """Atomic transition pending_review → publishing, push to Meta (PAUSED), mark published.
+
+    Race-safe: two concurrent approves will see the second one return None from the
+    atomic update → show "already being processed" and abort.
+    """
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.core.settings import settings as _settings
+    if not _settings.is_meta_creative_ready:
+        return RedirectResponse(
+            "/dashboard/ad-creatives?msg=Error:+Meta+push+not+configured",
+            status_code=303,
+        )
+
+    db = _get_db()
+    transitioned = db.approve_ad_creative_atomic(creative_id, approved_by="dashboard")
+    if transitioned is None:
+        return RedirectResponse(
+            "/dashboard/ad-creatives?msg=Error:+Already+processed+or+not+in+pending+state",
+            status_code=303,
+        )
+
+    # Load the product for the Meta call (product_name, sku)
+    product = db.get_product_by_sku(transitioned.get("sku", ""))
+    product_name = product.get("name", transitioned.get("sku", "Pinaka")) if product else "Pinaka"
+
+    from src.marketing.ad_generator import AdVariant
+    from src.marketing.meta_creative import MetaCreativeClient, MetaCreativeError
+
+    variant = AdVariant(
+        variant_label=transitioned.get("variant_label", "A"),
+        headline=transitioned.get("headline", ""),
+        primary_text=transitioned.get("primary_text", ""),
+        description=transitioned.get("description", ""),
+        cta=transitioned.get("cta", "SHOP_NOW"),
+        image_url=transitioned.get("image_url", ""),
+    )
+
+    client = MetaCreativeClient()
+    try:
+        result = await client.create_creative(
+            variant,
+            product_name=product_name,
+            product_sku=transitioned.get("sku", ""),
+            batch_id=transitioned.get("generation_batch_id", ""),
+        )
+        db.mark_ad_creative_published(creative_id, result.creative_id)
+        msg = f"Approved:+pushed+to+Meta+(PAUSED):+{result.creative_id[:16]}"
+    except MetaCreativeError as e:
+        # Rollback: put draft back in pending_review so founder can retry
+        db.revert_ad_creative_to_pending(creative_id)
+        logger.exception("Meta creative push failed for creative_id=%s", creative_id)
+        msg = f"Error:+Meta+push+failed:+{str(e)[:80]}"
+    except Exception as e:
+        db.revert_ad_creative_to_pending(creative_id)
+        logger.exception("Unexpected error pushing creative_id=%s", creative_id)
+        msg = f"Error:+{type(e).__name__}"
+
+    return RedirectResponse(f"/dashboard/ad-creatives?msg={msg}", status_code=303)
+
+
+@router.post("/ad-creatives/{creative_id}/reject")
+async def ad_creatives_reject(
+    creative_id: int, dash_token: str | None = Cookie(None)
+):
+    """Mark a draft rejected. No Meta call — only changes DB status."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    db = _get_db()
+    db.reject_ad_creative(creative_id)
+    return RedirectResponse(
+        "/dashboard/ad-creatives?msg=Rejected", status_code=303
+    )
+
+
+@router.post("/ad-creatives/{creative_id}/set-live")
+async def ad_creatives_set_live(
+    creative_id: int, dash_token: str | None = Cookie(None)
+):
+    """Flip a PAUSED Meta creative to ACTIVE. Used after the 'Approve' soft-pause window."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.marketing.meta_creative import MetaCreativeClient, MetaCreativeError
+
+    db = _get_db()
+    creative = db.get_ad_creative(creative_id)
+    if not creative or not creative.get("meta_creative_id"):
+        return RedirectResponse(
+            "/dashboard/ad-creatives?msg=Error:+Creative+not+found+or+never+pushed+to+Meta",
+            status_code=303,
+        )
+
+    client = MetaCreativeClient()
+    try:
+        await client.set_creative_status(creative["meta_creative_id"], "ACTIVE")
+        msg = f"Creative+{creative['meta_creative_id'][:12]}+is+now+ACTIVE+on+Meta"
+    except MetaCreativeError as e:
+        logger.exception("Failed to set creative %s active", creative_id)
+        msg = f"Error:+{str(e)[:80]}"
+    return RedirectResponse(f"/dashboard/ad-creatives?msg={msg}", status_code=303)
+
+
+@router.post("/ad-creatives/{creative_id}/pause")
+async def ad_creatives_pause(
+    creative_id: int, dash_token: str | None = Cookie(None)
+):
+    """Flip an ACTIVE Meta creative back to PAUSED (undo go-live)."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.marketing.meta_creative import MetaCreativeClient, MetaCreativeError
+
+    db = _get_db()
+    creative = db.get_ad_creative(creative_id)
+    if not creative or not creative.get("meta_creative_id"):
+        return RedirectResponse(
+            "/dashboard/ad-creatives?msg=Error:+Creative+not+found",
+            status_code=303,
+        )
+
+    client = MetaCreativeClient()
+    try:
+        await client.set_creative_status(creative["meta_creative_id"], "PAUSED")
+        db.pause_ad_creative(creative_id)
+        msg = f"Creative+{creative['meta_creative_id'][:12]}+paused+on+Meta"
+    except MetaCreativeError as e:
+        logger.exception("Failed to pause creative %s", creative_id)
+        msg = f"Error:+{str(e)[:80]}"
+    return RedirectResponse(f"/dashboard/ad-creatives?msg={msg}", status_code=303)

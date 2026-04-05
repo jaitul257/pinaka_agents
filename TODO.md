@@ -34,7 +34,7 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 - [x] Generated never-expiring System User token from "Conversions API System User" (expires_at=0)
 - [x] Railway env vars set: `META_ADS_ACCESS_TOKEN`, `META_BUSINESS_ID=1035697978984161`, `META_CATALOG_ID=2850427255291757`, `META_APP_ID=930736393145618`, `META_AD_ACCOUNT_ID=act_27080581041558231` (corrected from wrong `act_149386420603321`)
 - [x] Verified: token valid, all scopes present (ads_management, ads_read, catalog_management, business_management), ad account + catalog both reachable
-- [ ] Set `META_APP_SECRET` on Railway (still missing)
+- [x] `META_APP_SECRET` set on Railway (2026-04-04, verified via appsecret_proof — stored for future use, codebase does not currently require it since token is scoped + never-expiring)
 
 ---
 
@@ -53,12 +53,20 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 - **Ref:** DESIGN.md has full specs: hero layout, collection grid, PDP buy flow, navigation, photography direction, anti-patterns.
 - **Why:** Current store is default Dawn theme with zero brand identity. Design system ready, needs implementation.
 
-### 6.1 Automated Ad Creative Generation
-- [ ] AI-generated ad copy per product (headline, description, CTA)
-- [ ] Product image selection from catalog for ad creatives
-- [ ] A/B variant generation (2-3 versions per product)
-- [ ] Slack review before pushing to Meta/Google
-- **Why:** Currently ad copy is manual. At $75/day budget, creative refresh matters for avoiding ad fatigue.
+### 6.1 Automated Ad Creative Generation — DONE (2026-04-05, pending human steps)
+- [x] AI-generated ad copy per product (headline, primary_text, description, CTA) via Claude Sonnet 4
+- [x] Product image selection from Shopify catalog (deterministic, 1 per variant, no duplicates)
+- [x] 3-variant generation with brand-DNA validation + URL allowlist + prompt injection defense
+- [x] Dashboard review at /dashboard/ad-creatives (no Slack — per founder direction)
+- [x] Meta Ad Creative API push with status=PAUSED (soft-pause window, 2am-typo protection)
+- [x] Atomic approve transition (race-safe via UPDATE-WHERE-status=pending_review)
+- [x] Background task generation with idempotency key (sha1 sku+minute) to survive Claude 10-25s calls
+- [x] 59 new tests passing (185 total — was 126)
+- **PENDING HUMAN:** Create Facebook Page for Pinaka Jewellery + link to Business Portfolio
+- **PENDING HUMAN:** Set `META_FACEBOOK_PAGE_ID` on Railway
+- **PENDING HUMAN:** Run migration 007 via Supabase Dashboard SQL Editor (CLI not linked)
+- **Deferred to 6.1.1:** closed-loop Meta insights feedback into next prompt generation
+- **Why:** Creative is the top of the funnel. Even if outside voices said it's premature at $75/day, founder directed "ship to learn" — infrastructure ready before budget scales.
 
 ### 6.2 Review Request Automation
 - [ ] Post-delivery review solicitation via email (7-14 days after delivery)
