@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from src.api.app import app
 from src.marketing.ad_generator import AdVariant
-from src.marketing.meta_creative import MetaCreativeError, MetaCreativeResult
+from src.marketing.meta_creative import MetaAdResult, MetaCreativeError, MetaCreativeResult
 
 
 @pytest.fixture
@@ -46,12 +46,19 @@ def mock_db():
 
 @pytest.fixture
 def ready_meta_settings():
-    """Patch is_meta_creative_ready to True so Approve buttons are enabled."""
+    """Patch is_meta_creative_ready to True so Approve buttons are enabled.
+
+    By default is_meta_ad_ready is False (no default ad set), so Go Live falls back
+    to creative-only mode. Individual tests can override is_meta_ad_ready=True to
+    exercise the Phase 6.2 Ad auto-creation path.
+    """
     with patch("src.core.settings.settings") as s:
         s.is_meta_creative_ready = True
+        s.is_meta_ad_ready = False
         s.meta_ads_access_token = "t"
         s.meta_ad_account_id = "act_1"
         s.meta_facebook_page_id = "123"
+        s.meta_default_adset_id = ""
         yield s
 
 
@@ -244,23 +251,64 @@ def test_reject_marks_rejected_no_meta_call(client, auth_cookie, mock_db):
 # ── Set-live route (flip PAUSED to ACTIVE) ──
 
 
-def test_set_live_flips_meta_active(client, auth_cookie, mock_db, ready_meta_settings):
+def test_set_live_creative_only_when_no_default_adset(
+    client, auth_cookie, mock_db, ready_meta_settings
+):
+    """Backwards-compat: if META_DEFAULT_ADSET_ID is not set, flip creative but skip Ad creation."""
     mock_db.get_ad_creative.return_value = {
-        "id": 10, "meta_creative_id": "creative_xyz", "status": "published",
+        "id": 10, "meta_creative_id": "creative_xyz", "sku": "DTB", "variant_label": "A",
+        "status": "published",
     }
+    ready_meta_settings.is_meta_ad_ready = False
     with patch("src.marketing.meta_creative.MetaCreativeClient") as MockClient:
         MockClient.return_value.set_creative_status = AsyncMock(
             return_value=MetaCreativeResult(creative_id="creative_xyz", status="ACTIVE")
         )
+        MockClient.return_value.create_ad = AsyncMock()
         resp = client.post(
             "/dashboard/ad-creatives/10/set-live",
             cookies=auth_cookie,
             follow_redirects=False,
         )
+        MockClient.return_value.create_ad.assert_not_called()
     assert resp.status_code == 303
-    # Meta side flipped to ACTIVE → our DB status flipped to 'live' → UI shows "LIVE on Meta"
     assert "LIVE" in resp.headers["location"]
-    mock_db.set_ad_creative_live.assert_called_once_with(10)
+    mock_db.set_ad_creative_live.assert_called_once_with(
+        10, meta_ad_id=None, meta_adset_id=None
+    )
+
+
+def test_set_live_creates_ad_when_default_adset_configured(
+    client, auth_cookie, mock_db, ready_meta_settings
+):
+    """Phase 6.2: Go Live flips creative AND creates an Ad under the default Ad Set."""
+    mock_db.get_ad_creative.return_value = {
+        "id": 11, "meta_creative_id": "creative_abc", "sku": "DTB-LBG-7",
+        "variant_label": "B", "status": "published",
+    }
+    ready_meta_settings.is_meta_ad_ready = True
+    ready_meta_settings.meta_default_adset_id = "adset_999"
+
+    with patch("src.marketing.meta_creative.MetaCreativeClient") as MockClient:
+        MockClient.return_value.set_creative_status = AsyncMock(
+            return_value=MetaCreativeResult(creative_id="creative_abc", status="ACTIVE")
+        )
+        MockClient.return_value.create_ad = AsyncMock(
+            return_value=MetaAdResult(
+                ad_id="ad_12345", adset_id="adset_999",
+                creative_id="creative_abc", status="ACTIVE",
+            )
+        )
+        resp = client.post(
+            "/dashboard/ad-creatives/11/set-live",
+            cookies=auth_cookie,
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+    assert "ad_12345" in resp.headers["location"]
+    mock_db.set_ad_creative_live.assert_called_once_with(
+        11, meta_ad_id="ad_12345", meta_adset_id="adset_999"
+    )
 
 
 def test_set_live_fails_if_never_pushed(client, auth_cookie, mock_db, ready_meta_settings):

@@ -38,6 +38,15 @@ class MetaCreativeResult:
     object_story_id: str | None = None
 
 
+@dataclass
+class MetaAdResult:
+    """Return value from create_ad() — the Ad object that references a creative + ad set."""
+    ad_id: str
+    adset_id: str
+    creative_id: str
+    status: str  # 'ACTIVE' or 'PAUSED'
+
+
 def _slugify(name: str) -> str:
     """URL-friendly product handle (Shopify convention). Mirrors meta_catalog._slugify."""
     slug = (name or "").lower().strip()
@@ -237,3 +246,96 @@ class MetaCreativeClient:
 
         logger.info("Meta ad creative %s → status=%s", creative_id, status)
         return MetaCreativeResult(creative_id=creative_id, status=status)
+
+    async def create_ad(
+        self,
+        creative_id: str,
+        ad_name: str,
+        adset_id: str | None = None,
+        status: str = "ACTIVE",
+    ) -> MetaAdResult:
+        """Create an Ad object that references an existing creative + ad set.
+
+        This is Phase 6.2 — collapses the manual "attach creative to ad set" step
+        that used to require a trip to Meta Ads Manager. The Ad inherits targeting,
+        budget, and optimization from the Ad Set, so all we need is the creative ID.
+
+        The Ad Set itself stays PAUSED by default (set up once manually); when the
+        founder flips it to ACTIVE in Ads Manager the first time, all subsequent
+        Go Live clicks from the dashboard start serving impressions immediately.
+
+        Safety: defaults to status=ACTIVE because that's what the user intends when
+        clicking Go Live — but since the parent Ad Set starts PAUSED, no impressions
+        serve until the user explicitly activates the Ad Set in Ads Manager once.
+        """
+        self._require_configured()
+
+        adset_id = adset_id or settings.meta_default_adset_id
+        if not adset_id:
+            raise MetaCreativeError(
+                "Meta Ad creation requires META_DEFAULT_ADSET_ID. "
+                "Create an Ad Set in Meta Ads Manager (or via the bootstrap script) first."
+            )
+        if status not in ("ACTIVE", "PAUSED"):
+            raise MetaCreativeError(
+                f"Invalid Ad status: {status}. Must be ACTIVE or PAUSED."
+            )
+
+        url = (
+            f"https://graph.facebook.com/{self._api_version}"
+            f"/{self._ad_account_id}/ads"
+        )
+        import json as _json
+
+        payload = {
+            "name": ad_name[:255],
+            "adset_id": adset_id,
+            "creative": _json.dumps({"creative_id": creative_id}),
+            "status": status,
+            "access_token": self._access_token,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(url, data=payload)
+        except httpx.TimeoutException:
+            raise MetaCreativeError(
+                f"Meta /ads timeout for creative {creative_id}"
+            )
+        except httpx.HTTPError as e:
+            raise MetaCreativeError(f"Meta /ads network error: {e}")
+
+        body = {}
+        try:
+            body = response.json()
+        except Exception:
+            pass
+
+        if response.status_code >= 400:
+            err_msg = body.get("error", {}).get("message", response.text[:300])
+            raise MetaCreativeError(
+                f"Meta /ads {response.status_code}: {err_msg}"
+            )
+        if "error" in body:
+            err = body["error"]
+            raise MetaCreativeError(
+                f"Meta /ads 200 with embedded error: "
+                f"{err.get('message', 'unknown')} (code={err.get('code')})"
+            )
+
+        ad_id = body.get("id")
+        if not ad_id:
+            raise MetaCreativeError(
+                f"Meta /ads 200 but no 'id' in response: {body}"
+            )
+
+        logger.info(
+            "Meta ad created: ad_id=%s creative_id=%s adset_id=%s status=%s",
+            ad_id, creative_id, adset_id, status,
+        )
+        return MetaAdResult(
+            ad_id=str(ad_id),
+            adset_id=adset_id,
+            creative_id=creative_id,
+            status=status,
+        )

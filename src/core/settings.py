@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     meta_facebook_page_id: str = ""  # Required for /act_{id}/adcreatives API (Phase 6.1 ad creative push)
     meta_app_id: str = ""  # Pinaka Marketing app ID (for future appsecret_proof if enabled)
     meta_app_secret: str = ""  # App secret (stored but not required unless "Require App Secret" is toggled on)
+    # Phase 6.2 — pre-created containers that hold auto-generated Ads
+    meta_default_campaign_id: str = ""  # OUTCOME_SALES campaign (PAUSED by default, user flips once)
+    meta_default_adset_id: str = ""  # Ad Set with targeting/budget/$25 cap (PAUSED by default)
 
     # ── Google Ads ──
     google_ads_developer_token: str = ""
@@ -149,6 +152,16 @@ class Settings(BaseSettings):
             and self.meta_ad_account_id
             and self.meta_facebook_page_id
         )
+
+    @property
+    def is_meta_ad_ready(self) -> bool:
+        """True when Phase 6.2 Ad object auto-creation is fully configured.
+
+        Requires everything in is_meta_creative_ready PLUS a default Ad Set to attach
+        new Ads to. When False, "Go Live" still flips creative status but skips Ad
+        creation (so the flow stays backwards-compatible).
+        """
+        return self.is_meta_creative_ready and bool(self.meta_default_adset_id)
 
 
 settings = Settings()

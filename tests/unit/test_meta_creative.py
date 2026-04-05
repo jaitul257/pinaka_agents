@@ -7,6 +7,7 @@ import pytest
 
 from src.marketing.ad_generator import AdVariant
 from src.marketing.meta_creative import (
+    MetaAdResult,
     MetaCreativeClient,
     MetaCreativeError,
     MetaCreativeResult,
@@ -35,6 +36,7 @@ def configured_client():
         mock_settings.meta_ad_account_id = "act_27080581041558231"
         mock_settings.meta_facebook_page_id = "1234567890"
         mock_settings.meta_graph_api_version = "v21.0"
+        mock_settings.meta_default_adset_id = "120244523287540359"
         mock_settings.storefront_domain = "pinakajewellery.com"
         yield MetaCreativeClient()
 
@@ -250,3 +252,124 @@ async def test_set_creative_status_meta_error(configured_client):
     ):
         with pytest.raises(MetaCreativeError, match="Creative not found"):
             await configured_client.set_creative_status("bad_id", "ACTIVE")
+
+
+# ── create_ad (Phase 6.2) ──
+
+
+async def test_create_ad_happy_path_uses_default_adset(configured_client):
+    """Ad creation reads META_DEFAULT_ADSET_ID from settings when adset_id not passed."""
+    response = _mock_response(200, {"id": "120244523999999999"})
+    mock_client = _mock_async_client(response)
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient", return_value=mock_client
+    ):
+        result = await configured_client.create_ad(
+            creative_id="959138700395572",
+            ad_name="Pinaka — DTB-LBG-7-14YKG — Variant A",
+        )
+    assert isinstance(result, MetaAdResult)
+    assert result.ad_id == "120244523999999999"
+    assert result.adset_id == "120244523287540359"  # from fixture settings
+    assert result.creative_id == "959138700395572"
+    assert result.status == "ACTIVE"  # default
+
+    # Verify the payload sent to Meta
+    call_args = mock_client.post.call_args
+    payload = call_args.kwargs["data"]
+    assert payload["adset_id"] == "120244523287540359"
+    assert payload["status"] == "ACTIVE"
+    assert '"creative_id": "959138700395572"' in payload["creative"]
+
+
+async def test_create_ad_with_explicit_adset_overrides_default(configured_client):
+    response = _mock_response(200, {"id": "ad_override"})
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient",
+        return_value=_mock_async_client(response),
+    ):
+        result = await configured_client.create_ad(
+            creative_id="creative_1",
+            ad_name="Override test",
+            adset_id="custom_adset",
+        )
+    assert result.adset_id == "custom_adset"
+
+
+async def test_create_ad_paused_status(configured_client):
+    response = _mock_response(200, {"id": "ad_paused"})
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient",
+        return_value=_mock_async_client(response),
+    ):
+        result = await configured_client.create_ad(
+            creative_id="c1", ad_name="Paused ad", status="PAUSED"
+        )
+    assert result.status == "PAUSED"
+
+
+async def test_create_ad_invalid_status_raises(configured_client):
+    with pytest.raises(MetaCreativeError, match="Must be ACTIVE or PAUSED"):
+        await configured_client.create_ad(
+            creative_id="c1", ad_name="Bad status", status="ARCHIVED"
+        )
+
+
+async def test_create_ad_missing_default_adset_raises():
+    """If neither explicit adset_id nor META_DEFAULT_ADSET_ID is set, raise with setup hint."""
+    with patch("src.marketing.meta_creative.settings") as s:
+        s.meta_ads_access_token = "t"
+        s.meta_capi_access_token = ""
+        s.meta_ad_account_id = "act_1"
+        s.meta_facebook_page_id = "page_1"
+        s.meta_graph_api_version = "v25.0"
+        s.meta_default_adset_id = ""
+        client = MetaCreativeClient()
+        with pytest.raises(MetaCreativeError, match="META_DEFAULT_ADSET_ID"):
+            await client.create_ad(creative_id="c1", ad_name="no adset")
+
+
+async def test_create_ad_400_raises_with_meta_message(configured_client):
+    response = _mock_response(
+        400, {"error": {"message": "Ad set not found", "code": 100}}
+    )
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient",
+        return_value=_mock_async_client(response),
+    ):
+        with pytest.raises(MetaCreativeError, match="Ad set not found"):
+            await configured_client.create_ad(creative_id="c1", ad_name="test")
+
+
+async def test_create_ad_200_with_embedded_error_raises(configured_client):
+    response = _mock_response(
+        200, {"error": {"message": "creative missing", "code": 100}}
+    )
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient",
+        return_value=_mock_async_client(response),
+    ):
+        with pytest.raises(MetaCreativeError, match="embedded error"):
+            await configured_client.create_ad(creative_id="c1", ad_name="test")
+
+
+async def test_create_ad_200_without_id_raises(configured_client):
+    response = _mock_response(200, {"other": "value"})
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient",
+        return_value=_mock_async_client(response),
+    ):
+        with pytest.raises(MetaCreativeError, match="no 'id'"):
+            await configured_client.create_ad(creative_id="c1", ad_name="test")
+
+
+async def test_create_ad_name_clamped_to_255(configured_client):
+    response = _mock_response(200, {"id": "ad_1"})
+    mock_client = _mock_async_client(response)
+    long_name = "X" * 500
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient", return_value=mock_client
+    ):
+        await configured_client.create_ad(creative_id="c1", ad_name=long_name)
+    payload = mock_client.post.call_args.kwargs["data"]
+    assert len(payload["name"]) <= 255

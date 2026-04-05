@@ -1316,6 +1316,7 @@ def _variant_card_html(creative: dict, ready: bool) -> str:
     image_url = escape(creative.get("image_url", ""))
     creative_id = creative.get("id", 0)
     meta_creative_id = creative.get("meta_creative_id")
+    meta_ad_id = creative.get("meta_ad_id")
     warning = creative.get("validation_warning")
 
     warning_html = ""
@@ -1349,11 +1350,24 @@ def _variant_card_html(creative: dict, ready: bool) -> str:
             </form>
         """
     elif status == "live":
+        if meta_ad_id:
+            ad_link = (
+                f"https://adsmanager.facebook.com/adsmanager/manage/ads/edit?"
+                f"selected_ad_ids={meta_ad_id}"
+            )
+            live_note = (
+                f'<div style="font-size:11px;color:#2E7D4F;line-height:1.4;text-align:center;padding:8px 4px;">'
+                f'Ad <a href="{ad_link}" target="_blank" style="color:var(--accent);text-decoration:underline;font-family:\'Geist Mono\',monospace;">#{meta_ad_id}</a> created under default Ad Set. '
+                f'Flip the Ad Set to ACTIVE in Ads Manager to start serving impressions.</div>'
+            )
+        else:
+            live_note = (
+                '<div style="font-size:11px;color:var(--text-muted);line-height:1.4;text-align:center;padding:8px 4px;">'
+                'Creative active in Meta Creative Library. '
+                '<a href="https://adsmanager.facebook.com/adsmanager/manage/ads" target="_blank" style="color:var(--accent);text-decoration:underline;">Open Ads Manager</a> to attach it to an Ad Set.</div>'
+            )
         actions_html = f"""
-            <div style="font-size:11px;color:var(--text-muted);line-height:1.4;text-align:center;padding:8px 4px;">
-                Creative is active in Meta's Creative Library.
-                Attach it to an Ad Set in <a href="https://adsmanager.facebook.com/adsmanager/manage/ads" target="_blank" style="color:var(--accent);text-decoration:underline;">Ads Manager</a> for impressions to serve.
-            </div>
+            {live_note}
             <form method="post" action="/dashboard/ad-creatives/{creative_id}/pause" style="display:inline;width:100%;">
                 <button type="submit" class="btn" style="width:100%;">Archive from dashboard</button>
             </form>
@@ -1679,10 +1693,22 @@ async def ad_creatives_reject(
 async def ad_creatives_set_live(
     creative_id: int, dash_token: str | None = Cookie(None)
 ):
-    """Flip a PAUSED Meta creative to ACTIVE. Used after the 'Approve' soft-pause window."""
+    """Flip creative to ACTIVE AND create an Ad object attached to the default Ad Set.
+
+    Phase 6.2: collapses the "attach creative to ad set" manual step. After this runs,
+    the only thing between the founder and served impressions is flipping the parent
+    Ad Set from PAUSED → ACTIVE in Ads Manager (one-time setup; subsequent Go Live
+    clicks start serving immediately).
+
+    Flow:
+      1. POST /{creative_id}?status=ACTIVE → creative is live in Creative Library
+      2. POST /act_{id}/ads with {creative_id, adset_id} → new Ad object created ACTIVE
+      3. DB: status='live', meta_ad_id=<returned>, meta_adset_id=<default>
+    """
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
+    from src.core.settings import settings as _settings
     from src.marketing.meta_creative import MetaCreativeClient, MetaCreativeError
 
     db = _get_db()
@@ -1694,10 +1720,34 @@ async def ad_creatives_set_live(
         )
 
     client = MetaCreativeClient()
+    meta_creative_id = creative["meta_creative_id"]
     try:
-        await client.set_creative_status(creative["meta_creative_id"], "ACTIVE")
-        db.set_ad_creative_live(creative_id)
-        msg = f"Creative+{creative['meta_creative_id']}+is+now+LIVE+on+Meta"
+        # Step 1: activate the creative asset
+        await client.set_creative_status(meta_creative_id, "ACTIVE")
+
+        # Step 2: create an Ad under the default Ad Set (Phase 6.2). Backwards-compat:
+        # if no default ad set configured, skip Ad creation and just flip the creative.
+        ad_id: str | None = None
+        adset_id: str | None = None
+        if _settings.is_meta_ad_ready:
+            sku = creative.get("sku", "unknown")
+            variant = creative.get("variant_label", "A")
+            ad_name = f"Pinaka — {sku} — Variant {variant} — {meta_creative_id[-6:]}"
+            ad_result = await client.create_ad(
+                creative_id=meta_creative_id,
+                ad_name=ad_name,
+                status="ACTIVE",
+            )
+            ad_id = ad_result.ad_id
+            adset_id = ad_result.adset_id
+
+        db.set_ad_creative_live(
+            creative_id, meta_ad_id=ad_id, meta_adset_id=adset_id
+        )
+        if ad_id:
+            msg = f"LIVE:+creative+{meta_creative_id}+→+ad+{ad_id}"
+        else:
+            msg = f"Creative+{meta_creative_id}+is+now+LIVE+on+Meta"
     except MetaCreativeError as e:
         logger.exception("Failed to set creative %s active", creative_id)
         msg = f"Error:+{str(e)[:80]}"

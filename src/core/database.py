@@ -669,15 +669,28 @@ class Database:
         )
         return result.data[0] if result.data else {}
 
-    def set_ad_creative_live(self, creative_id: int) -> dict[str, Any]:
+    def set_ad_creative_live(
+        self,
+        creative_id: int,
+        meta_ad_id: str | None = None,
+        meta_adset_id: str | None = None,
+    ) -> dict[str, Any]:
         """Transition a `published` (PAUSED on Meta) creative to `live` (ACTIVE on Meta).
 
         Called after a successful Meta UPDATE status=ACTIVE. Without this, the dashboard
         keeps showing the stale 'Paused on Meta' badge even though Meta's side flipped.
+
+        Phase 6.2: also persists the Meta Ad ID + Ad Set ID created during Go Live,
+        so the dashboard can deep-link to the Ad in Ads Manager.
         """
+        updates: dict[str, Any] = {"status": "live"}
+        if meta_ad_id:
+            updates["meta_ad_id"] = meta_ad_id
+        if meta_adset_id:
+            updates["meta_adset_id"] = meta_adset_id
         result = (
             self._client.table("ad_creatives")
-            .update({"status": "live"})
+            .update(updates)
             .eq("id", creative_id)
             .execute()
         )
