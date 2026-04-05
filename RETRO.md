@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-04
+Last updated: 2026-04-04 (late evening)
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,32 @@ Last updated: 2026-04-04
 ---
 
 ## Push Log
+
+### 2026-04-04 (late evening) — Meta Ads Never-Expiring System User Token
+
+**What shipped:**
+- Generated a never-expiring System User token from the "Conversions API System User" in Pinaka Jewellery Business Portfolio (`1035697978984161`) — no more 60-day renewal cycles
+- Railway env vars set/updated: `META_ADS_ACCESS_TOKEN` (new token), `META_BUSINESS_ID=1035697978984161`, `META_CATALOG_ID=2850427255291757`, `META_APP_ID=930736393145618`
+- **Discovered and corrected wrong `META_AD_ACCOUNT_ID`** on Railway: was `act_149386420603321` (stale/unreachable), actual account linked to the System User is `act_27080581041558231` ("Pinaka Jewellery's ad account", USD, America/Los_Angeles, $0 spend)
+- Verified token end-to-end: valid, `expires_at=0` (NEVER), all required scopes (`ads_management`, `ads_read`, `catalog_management`, `business_management`, `attribution_read`), ad account + catalog + insights endpoints all return 200
+
+**What went well:**
+- Debug-token endpoint (`/debug_token?input_token=...`) is the fastest way to verify type, expiry, and scopes in one call — should be the first check on any new Meta token
+- Once the System User had the right app role, token generation was one click
+
+**What was painful:**
+- **Wrong ad account ID in Railway all along.** Token looked broken (`Ad account owner has NOT granted ads_management or ads_read permission`), but the root cause was the ID itself — the account in Railway wasn't the account the System User had access to. Spent time chasing permissions before checking the ID. Lesson: when Meta says "no permission", also suspect "wrong resource ID", not just scopes.
+- First token attempt failed with "No permissions available" because the System User had no app role on Pinaka Marketing. Required adding the app to the System User inside Business Settings → System Users → Assets.
+- Meta's UI doesn't show which ad account a System User is actually linked to without calling `/me/adaccounts` — had to discover the correct ID via API.
+
+**Lessons learned:**
+- **Always use System User tokens for server-to-server Meta integrations.** User access tokens (even long-lived) expire every 60 days; System User tokens issued with `set_token_expires_in_days=0` never expire. No renewal cron needed.
+- **When a Meta API call returns a permission error, verify the resource ID before re-granting scopes.** The error "ad account owner has NOT granted X permission" can mean the token has no access to *this specific* account — which is also true when the account ID is simply wrong or stale.
+- **Use `GET /me/adaccounts?access_token=...` to discover which ad accounts a System User can actually reach.** This is the ground truth; don't trust env vars from six months ago.
+- **System User ≠ app role automatically.** Even if the System User exists in the Business Portfolio, you must explicitly assign the app (Pinaka Marketing) in Business Settings → System Users → Add Assets → Apps, or token generation returns "No permissions available".
+- **Business Portfolio resources have their own catalog.** The Conversions API System User's catalog (`2850427255291757`, "Shopify Product Catalog System User") is distinct from any catalog tied to an individual user account. Make sure Railway's `META_CATALOG_ID` matches the one the token can actually reach.
+
+---
 
 ### 2026-04-04 (evening) — Custom Domain + Google Ads Setup
 

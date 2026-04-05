@@ -30,10 +30,11 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 - [ ] Create conversion action in Google Ads → Tools → Conversions → Import → Upload clicks
 - [ ] Set Railway: `GOOGLE_ADS_CONVERSION_ACTION_ID`
 
-### Meta Ads Token Renewal
-- [ ] Current `META_ADS_ACCESS_TOKEN` expires ~June 1, 2026 (60-day token)
-- [ ] Regenerate via Graph API Explorer before expiry
-- [ ] Consider setting up a system user token (never expires) once app is added to business portfolio
+### Meta Ads Token Renewal — DONE (2026-04-04)
+- [x] Generated never-expiring System User token from "Conversions API System User" (expires_at=0)
+- [x] Railway env vars set: `META_ADS_ACCESS_TOKEN`, `META_BUSINESS_ID=1035697978984161`, `META_CATALOG_ID=2850427255291757`, `META_APP_ID=930736393145618`, `META_AD_ACCOUNT_ID=act_27080581041558231` (corrected from wrong `act_149386420603321`)
+- [x] Verified: token valid, all scopes present (ads_management, ads_read, catalog_management, business_management), ad account + catalog both reachable
+- [ ] Set `META_APP_SECRET` on Railway (still missing)
 
 ---
 
@@ -70,7 +71,7 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 
 ## Operational: Ongoing Maintenance
 
-- [ ] Monitor Meta Ads token expiry (renew before June 1, 2026)
+- [x] ~~Monitor Meta Ads token expiry~~ — now a never-expiring System User token (2026-04-04)
 - [ ] Monitor cron job success rates on cron-job.org dashboard
 - [ ] Review Sentry for production errors weekly
 - [ ] Check ROAS Slack reports weekly and act on budget recommendations

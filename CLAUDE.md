@@ -25,7 +25,9 @@ Pinaka Agents is an AI-powered autonomous operations system for **Pinaka Jewelle
 | **Supabase Project** | fhtzzpklpkdfptxrxlek |
 | **Slack Channel** | C0APKCZDCTG |
 | **Meta Pixel ID** | 1422946742915513 |
-| **Meta Ad Account** | act_149386420603321 |
+| **Meta Ad Account** | act_27080581041558231 |
+| **Meta Business Portfolio** | 1035697978984161 |
+| **Meta Catalog ID** | 2850427255291757 |
 | **Meta App (Marketing)** | Pinaka Marketing (ID: 930736393145618) |
 | **Cron Dashboard** | https://console.cron-job.org/dashboard |
 | **GitHub Repo** | https://github.com/jaitul257/pinaka_agents |
