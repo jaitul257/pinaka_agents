@@ -1,6 +1,6 @@
 # TODO — Pinaka Agents
 
-Last updated: 2026-04-01
+Last updated: 2026-04-05
 
 ## Phases 1-5: COMPLETE
 
@@ -53,7 +53,7 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 - **Ref:** DESIGN.md has full specs: hero layout, collection grid, PDP buy flow, navigation, photography direction, anti-patterns.
 - **Why:** Current store is default Dawn theme with zero brand identity. Design system ready, needs implementation.
 
-### 6.1 Automated Ad Creative Generation — DONE (2026-04-05, pending human steps)
+### 6.1 Automated Ad Creative Generation — DONE (2026-04-05)
 - [x] AI-generated ad copy per product (headline, primary_text, description, CTA) via Claude Sonnet 4
 - [x] Product image selection from Shopify catalog (deterministic, 1 per variant, no duplicates)
 - [x] 3-variant generation with brand-DNA validation + URL allowlist + prompt injection defense
@@ -61,15 +61,30 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 - [x] Meta Ad Creative API push with status=PAUSED (soft-pause window, 2am-typo protection)
 - [x] Atomic approve transition (race-safe via UPDATE-WHERE-status=pending_review)
 - [x] Background task generation with idempotency key (sha1 sku+minute) to survive Claude 10-25s calls
-- [x] 59 new tests passing (185 total — was 126)
 - [x] Create Facebook Page for Pinaka Jewellery + link to Business Portfolio (2026-04-05, Page ID 982012465004487)
 - [x] Set `META_FACEBOOK_PAGE_ID` on Railway (2026-04-05)
-- **PENDING HUMAN:** Run migration 007 via Supabase Dashboard SQL Editor (CLI not linked)
-- **PENDING HUMAN:** Switch Pinaka Marketing app (930736393145618) from Development Mode to Live Mode at https://developers.facebook.com/apps/930736393145618/app-review/status/ — requires Privacy Policy URL, Data Deletion URL, app icon (Meta errored: "Ads creative post was created by an app that is in development mode")
+- [x] Run migration 007 via Supabase CLI (2026-04-05, after `migration repair`)
+- [x] Switch Pinaka Marketing app (930736393145618) from Development Mode to Live Mode (2026-04-05)
+- [x] Fix status tracking bug: added `live` status via migration 008, fixed ID truncation, full end-to-end verified (2026-04-05)
+- [x] Fix Shopify→Supabase image sync: cron now writes `products.images`, dashboard has lazy backfill (2026-04-05)
 - **Deferred to 6.1.1:** closed-loop Meta insights feedback into next prompt generation
 - **Why:** Creative is the top of the funnel. Even if outside voices said it's premature at $75/day, founder directed "ship to learn" — infrastructure ready before budget scales.
 
-### 6.2 Review Request Automation
+### 6.2 Auto-create Meta Ad on Go Live — DONE (2026-04-05, pending payment method)
+- [x] `MetaCreativeClient.create_ad()` — POSTs to `/act_{id}/ads`, full error handling with `error_user_title`/`error_user_msg` extraction
+- [x] Bootstrap Campaign `120244523278190359` (OUTCOME_SALES, PAUSED) + Ad Set `120244523287540359` (US 25-65, $25/day, purchase-optimized, PAUSED) via Meta API
+- [x] Railway env vars set: `META_DEFAULT_CAMPAIGN_ID`, `META_DEFAULT_ADSET_ID`
+- [x] Migration 009: `meta_ad_id` + `meta_adset_id` columns on ad_creatives
+- [x] Dashboard "Go Live" flow creates Ad object automatically, deep-links card to Ads Manager
+- [x] Backwards-compat: falls back to creative-only mode if no default ad set configured
+- [x] 197 tests green (10 new unit + 2 integration + 1 regression test)
+- **PENDING HUMAN (BLOCKER):** Add payment method at https://business.facebook.com/billing_hub/accounts/details/?asset_id=27080581041558231 — Meta blocks Ad creation without a card, even for PAUSED Ads under a PAUSED Ad Set. Error surfaces as "No Payment Method: Update payment method".
+- **PENDING HUMAN (one-time):** Flip default Ad Set `120244523287540359` from PAUSED → ACTIVE in Ads Manager once payment method is in place. After this, all future Go Live clicks serve impressions immediately.
+- **PENDING HUMAN (one-time):** Flip default Campaign `120244523278190359` from PAUSED → ACTIVE in Ads Manager.
+- **State:** 2 creatives live on Meta (`959138700395572`, `1679259843246920`), 0 Ads (blocked), 1 variant pending_review (Variant C of batch ddeea2d8).
+- **Why:** Collapses the "attach creative to ad set" manual step that used to require a trip to Ads Manager after every approval. One click from draft to impressions (after first-time setup).
+
+### 6.3 Review Request Automation
 - [ ] Post-delivery review solicitation via email (7-14 days after delivery)
 - [ ] Platform-specific links (Google Reviews, Trustpilot)
 - [ ] Slack approval before sending

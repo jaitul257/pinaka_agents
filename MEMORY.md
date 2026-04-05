@@ -1,7 +1,9 @@
 - [Jaitul Profile](user_profile.md) — Solo founder, Pinaka Jewellery, DTC diamond bracelets, building AI ops
-- [Business Details](business_details.md) — All platform URLs, IDs, and key business params
-- [Project State](project_state.md) — Phases 1-5 complete, Phase 6.0 design done, storefront build next
+- [Business Details](business_details.md) — All platform URLs, IDs, Meta campaign/adset defaults, correct ad account ID
+- [Project State](project_state.md) — Phases 1-6.2 complete, blocked on Meta payment method for first impressions
 - [Testing Conventions](feedback_testing.md) — Always mock AsyncDatabase with AsyncMock, mock APIs at client level
+- [Shipping Style](feedback_shipping_style.md) — User prefers "one shot it" execution over plan-review cycles, backed by dense tests
+- [Meta API Quirks](reference_meta_api.md) — Hidden error fields, v25.0 gotchas, payment method gate, creative≠ad semantics
 - [Cron-job.org Access](reference_cronjob.md) — Cron scheduling via API, not Railway native, 11 active jobs
 - [Design Preferences](feedback_design.md) — Simplicity over information density, fast checkout, big fonts, less buttons
 - [Retro Process](feedback_retro.md) — Update RETRO.md after every push, read before starting work

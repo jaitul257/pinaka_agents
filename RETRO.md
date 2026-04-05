@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-04 (late evening)
+Last updated: 2026-04-05 (morning)
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,59 @@ Last updated: 2026-04-04 (late evening)
 ---
 
 ## Push Log
+
+### 2026-04-05 — Phase 6.2: Auto-create Meta Ad on Go Live + 6.1 polish
+
+**What shipped:**
+- **Phase 6.2 complete**: "Go Live" button in dashboard now does creative ACTIVE → create Ad object under default Ad Set → persist ad_id → deep-link the card into Ads Manager. Collapses the manual "attach creative to ad set" trip that used to be required after Phase 6.1.
+- Bootstrapped Pinaka's ad account via API: Campaign `120244523278190359` (OUTCOME_SALES, PAUSED) + Ad Set `120244523287540359` (US 25-65, $25/day, purchase-optimized, PAUSED). Stored as `META_DEFAULT_CAMPAIGN_ID` + `META_DEFAULT_ADSET_ID` on Railway.
+- `MetaCreativeClient.create_ad()` — POSTs to `/act_{id}/ads` with full error handling including rich error extraction
+- Migration 009: `meta_ad_id` + `meta_adset_id` columns on ad_creatives
+- `_extract_meta_error()` helper — surfaces `error_user_title` + `error_user_msg` (the fields Meta hides the actual error behind), not just the useless generic `message`
+- **Phase 6.1 polish**: fixed status tracking bug where "Go Live" flipped Meta to ACTIVE but the dashboard kept rendering "Published (Paused on Meta)" because the DB state never changed. Added `live` status value via migration 008.
+- Fixed creative ID truncation — two places were slicing display to 12 chars, hiding the last 3 digits of 15-digit Meta IDs, making them useless for Ads Manager lookups.
+- **Supabase image sync fix**: `/cron/sync-shopify-products` was only embedding to ChromaDB, never writing `products.images` to Supabase. First real end-to-end test failed with "Product has no images" because no code path ever backfilled from Shopify's `images[].src`. Added cron backfill + inline lazy backfill in dashboard generate handler as a fallback for new products.
+- Real Claude generation + Meta push live end-to-end: Variant A pushed as creative `959138700395572`, flipped ACTIVE successfully. Variant B pushed as creative `1679259843246920`, ACTIVE, but Ad creation blocked on payment method.
+- 197 tests green (was 186): 10 new unit tests for `create_ad`, 2 integration tests for Go Live Ad auto-creation flow, 1 regression test for `error_user_title` extraction.
+
+**What went well:**
+- **Real end-to-end testing surfaced three bugs no test could have caught**: Meta v21→v25 deprecation mid-session, the `published`/`live` status tracking gap, and the creative ID display truncation. All in <20 min after starting to exercise the live dashboard.
+- `_extract_meta_error()` turned a useless "Invalid parameter" into the actionable "No Payment Method: Update payment method at billing hub." Write once, pays off for every future Meta 4xx.
+- Backwards-compat fallback in Go Live: if `META_DEFAULT_ADSET_ID` is empty, skip Ad creation and just flip the creative. Means tests and staging work without requiring a real ad set, and first-time setup is soft-gated on an env var instead of crashing.
+- `supabase migration repair --status applied 001 002 003 004 007` unblocked a migration history that was out of sync from previous manual SQL Editor runs. Cleaner than hand-editing `supabase_migrations.schema_migrations`.
+- Full session: from "lets one shot it with 6.2" to deployed + smoke tested in a single push. No intermediate reviews, no plan file, no outside voices. Trusted the existing Phase 6.1 foundation.
+
+**What was painful:**
+- **Meta v25.0 API quirks that only surfaced via direct API calls** — none are documented in the official docs:
+  - Campaign creation now requires explicit `is_adset_budget_sharing_enabled=false` when not using campaign budget
+  - Ad Set creation requires `targeting_automation.advantage_audience=1` or explicit disable, no silent default
+  - Advantage+ audience forces `age_max >= 65` (can't do 25-54 targeting with advantage_audience on)
+  - Ad creation requires a payment method on the ad account even for PAUSED Ads under a PAUSED Ad Set
+- **Supabase CLI migration history was out of sync** because earlier migrations were applied manually via SQL Editor. `supabase db push` tried to re-run 001 from scratch and hit "relation already exists". Fix was `migration repair` to mark history without running.
+- **User confused Claude.ai Pro/Max with Anthropic API billing.** Spent a few back-and-forth turns clarifying that the two products have separate billing at different URLs (claude.ai vs console.anthropic.com). User had added funds to Pro plan thinking it would unblock the API. Needed to explain the distinction clearly before the smoke test could run with real Claude output.
+- **Variant A first go-live attempt was actually broken in two ways**, but only the user's screenshot revealed it. From inside the code it "worked" — we flipped Meta to ACTIVE and logged success. The UI still said "PAUSED ON META" though, and the ID was truncated. Lesson: `curl /GET` against the actual Meta resource is the only real smoke test for write operations. Logs lie.
+- **Ran out of Anthropic credits mid-session** — the first real generation attempt hit "Your credit balance is too low". Had to work around with synthetic variants for the smoke test, then user added $5 to unblock. Sonnet 4 cost: ~$0.02 per 3-variant generation, so $5 = ~250 batches which is plenty of runway.
+
+**Lessons learned:**
+- **Meta API errors put the useful detail in `error_user_title` + `error_user_msg`, NOT in `message`.** The `message` field is almost always a useless generic like "Invalid parameter" or "Unsupported request". Always grab the user-facing fields first, fall back to `message`. Add this to every Meta client helper from day one — don't wait for it to bite.
+- **Creative `status` on Meta is NOT what makes ads serve impressions.** Creatives are reusable assets in Creative Library with their own lifecycle (DRAFT/ACTIVE/DELETED). Ads are the objects that serve impressions. Ad Sets contain Ads. Campaigns contain Ad Sets. All three levels have independent status flags, and ALL three must be ACTIVE for impressions to flow. Phase 6.1 shipped with the assumption that "flip creative to ACTIVE = ads are running", which is wrong. Phase 6.2 corrects this by also creating the Ad object.
+- **Logs lie, GET requests don't.** When a write API call returns 200, don't trust the response — follow up with a GET on the resource and inspect the real state. This caught the status-tracking bug immediately (Meta said ACTIVE, dashboard said PAUSED) and surfaced the truncated ID.
+- **"Ship to learn" works when the foundation is solid.** Phase 6.1's test coverage (60 tests around the ad creative flow) meant Phase 6.2 could drop in without breaking anything. The 10 new tests for Phase 6.2 slotted into the existing mock patterns cleanly. Lesson: invest heavily in the first version's test scaffolding; future iterations are free.
+- **Backwards-compat fallback is cheap insurance.** `is_meta_ad_ready` property defaults to False when `META_DEFAULT_ADSET_ID` is empty. Go Live still works in creative-only mode for anyone without the Phase 6.2 setup. 3 lines of code, saves a deploy rollback.
+- **The lazy-backfill-plus-cron pattern is the right way to sync derived state from external APIs.** Cron runs every 15 min for correctness. Dashboard button path does an inline fetch when it needs fresh data now. User never sees staleness, cron catches the batch case.
+
+**Pending human steps (must complete to unblock full 6.2):**
+1. **Add payment method** to Meta Ad Account at https://business.facebook.com/billing_hub/accounts/details/?asset_id=27080581041558231 — currently blocks Ad creation entirely. No card = no ads, even paused.
+2. **Flip default Ad Set `120244523287540359` from PAUSED → ACTIVE** in Meta Ads Manager after payment method is added. One-time setup; subsequent Go Live clicks serve impressions with zero manual steps.
+3. **Flip default Campaign `120244523278190359` from PAUSED → ACTIVE** in Meta Ads Manager. Also one-time.
+
+**State as of end-of-session:**
+- 2 creatives live in Meta Creative Library (ACTIVE): Variant A `959138700395572`, Variant B `1679259843246920`
+- 0 Ads created (blocked on payment method)
+- 1 creative still pending_review: Variant C `3-carat lab-grown diamonds`
+- Full pipeline end-to-end-testable as soon as payment method is on file
+
+---
 
 ### 2026-04-05 — Phase 6.1: Automated Ad Creative Generation
 
