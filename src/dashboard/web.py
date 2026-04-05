@@ -1288,13 +1288,15 @@ def _status_badge_html(status: str, meta_creative_id: str | None = None) -> str:
     colors = {
         "pending_review": ("#C17E1A", "rgba(193,126,26,0.12)", "Pending Review"),
         "publishing":     ("#3B7EC5", "rgba(59,126,197,0.12)", "Publishing..."),
-        "published":      ("#2E7D4F", "rgba(46,125,79,0.12)", "Published (Paused on Meta)"),
+        "published":      ("#C17E1A", "rgba(193,126,26,0.12)", "Paused on Meta"),
+        "live":           ("#2E7D4F", "rgba(46,125,79,0.12)", "Live on Meta"),
         "rejected":       ("#9E9893", "rgba(158,152,147,0.15)", "Rejected"),
-        "paused":         ("#C4392D", "rgba(196,57,45,0.10)", "Paused"),
+        "paused":         ("#C4392D", "rgba(196,57,45,0.10)", "Removed"),
     }
     color, bg, label = colors.get(status, ("#6B6560", "rgba(107,101,96,0.1)", status))
     aria = f'aria-label="Status: {label}"'
-    extra = f" #{meta_creative_id[:12]}" if meta_creative_id and status == "published" else ""
+    show_id = meta_creative_id and status in ("published", "live")
+    extra = f" #{meta_creative_id}" if show_id else ""
     return (
         f'<span {aria} style="display:inline-block;font-size:11px;font-weight:600;'
         f'text-transform:uppercase;letter-spacing:1px;padding:4px 10px;border-radius:9999px;'
@@ -1343,7 +1345,17 @@ def _variant_card_html(creative: dict, ready: bool) -> str:
                 <button type="submit" class="btn btn-primary" style="width:100%;">Go Live</button>
             </form>
             <form method="post" action="/dashboard/ad-creatives/{creative_id}/pause" style="display:inline;width:48%;margin-left:4%;">
-                <button type="submit" class="btn" style="width:100%;">Pause</button>
+                <button type="submit" class="btn" style="width:100%;">Archive</button>
+            </form>
+        """
+    elif status == "live":
+        actions_html = f"""
+            <div style="font-size:11px;color:var(--text-muted);line-height:1.4;text-align:center;padding:8px 4px;">
+                Creative is active in Meta's Creative Library.
+                Attach it to an Ad Set in <a href="https://adsmanager.facebook.com/adsmanager/manage/ads" target="_blank" style="color:var(--accent);text-decoration:underline;">Ads Manager</a> for impressions to serve.
+            </div>
+            <form method="post" action="/dashboard/ad-creatives/{creative_id}/pause" style="display:inline;width:100%;">
+                <button type="submit" class="btn" style="width:100%;">Archive from dashboard</button>
             </form>
         """
     elif status == "publishing":
@@ -1634,7 +1646,7 @@ async def ad_creatives_approve(
             batch_id=transitioned.get("generation_batch_id", ""),
         )
         db.mark_ad_creative_published(creative_id, result.creative_id)
-        msg = f"Approved:+pushed+to+Meta+(PAUSED):+{result.creative_id[:16]}"
+        msg = f"Approved:+pushed+to+Meta+(PAUSED):+{result.creative_id}"
     except MetaCreativeError as e:
         # Rollback: put draft back in pending_review so founder can retry
         db.revert_ad_creative_to_pending(creative_id)
@@ -1684,7 +1696,8 @@ async def ad_creatives_set_live(
     client = MetaCreativeClient()
     try:
         await client.set_creative_status(creative["meta_creative_id"], "ACTIVE")
-        msg = f"Creative+{creative['meta_creative_id'][:12]}+is+now+ACTIVE+on+Meta"
+        db.set_ad_creative_live(creative_id)
+        msg = f"Creative+{creative['meta_creative_id']}+is+now+LIVE+on+Meta"
     except MetaCreativeError as e:
         logger.exception("Failed to set creative %s active", creative_id)
         msg = f"Error:+{str(e)[:80]}"
@@ -1712,6 +1725,6 @@ async def ad_creatives_pause(
     db = _get_db()
     db.pause_ad_creative(creative_id)
     return RedirectResponse(
-        "/dashboard/ad-creatives?msg=Marked+paused+(internal+only).+To+pause+live+ads,+use+Meta+Ads+Manager",
+        "/dashboard/ad-creatives?msg=Archived+from+dashboard.+To+stop+ads+on+Meta,+pause+the+Ad+in+Meta+Ads+Manager",
         status_code=303,
     )

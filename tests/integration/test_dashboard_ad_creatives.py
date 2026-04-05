@@ -258,7 +258,9 @@ def test_set_live_flips_meta_active(client, auth_cookie, mock_db, ready_meta_set
             follow_redirects=False,
         )
     assert resp.status_code == 303
-    assert "ACTIVE" in resp.headers["location"]
+    # Meta side flipped to ACTIVE → our DB status flipped to 'live' → UI shows "LIVE on Meta"
+    assert "LIVE" in resp.headers["location"]
+    mock_db.set_ad_creative_live.assert_called_once_with(10)
 
 
 def test_set_live_fails_if_never_pushed(client, auth_cookie, mock_db, ready_meta_settings):

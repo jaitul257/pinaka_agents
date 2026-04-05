@@ -669,6 +669,20 @@ class Database:
         )
         return result.data[0] if result.data else {}
 
+    def set_ad_creative_live(self, creative_id: int) -> dict[str, Any]:
+        """Transition a `published` (PAUSED on Meta) creative to `live` (ACTIVE on Meta).
+
+        Called after a successful Meta UPDATE status=ACTIVE. Without this, the dashboard
+        keeps showing the stale 'Paused on Meta' badge even though Meta's side flipped.
+        """
+        result = (
+            self._client.table("ad_creatives")
+            .update({"status": "live"})
+            .eq("id", creative_id)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
     # ── Messages ──
 
     def create_message(self, message_data: dict[str, Any]) -> dict[str, Any]:
