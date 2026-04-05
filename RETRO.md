@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-02
+Last updated: 2026-04-04
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,62 @@ Last updated: 2026-04-02
 ---
 
 ## Push Log
+
+### 2026-04-04 (evening) — Custom Domain + Google Ads Setup
+
+**What shipped:**
+- Custom domain `pinakajewellery.com` connected to Shopify via Cloudflare DNS (DNS-only mode, primary domain, SSL live)
+- New `shopify_storefront_url` setting + `storefront_domain` property; Meta/Google catalog feeds now use the custom domain for customer-facing product links (Admin API still uses myshopify)
+- Auto `age_group` / `gender` / `color` metafields added to `_upsert_google_metafields` — jewelry products in Google's Apparel category require these for full visibility
+- Google Ads Developer Token applied for Basic Access (Manager `708-325-3807`, token `V6l4c0c4rIoZxMOeFSl72Q`, awaiting 2-15 day review)
+- Linked regular Ads account `268-380-3995` as sub-account under Manager `708-325-3807`
+- Railway env vars consolidated: `SHOPIFY_STOREFRONT_URL`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_MERCHANT_ID=5759598456`
+
+**What went well:**
+- Every Google Merchant Center issue (domain mismatch, missing MPN, missing age_group/gender/color) was fixable by extending one helper (`_upsert_google_metafields`) and re-saving the product from the dashboard — the infrastructure we built earlier paid off immediately
+- Cloudflare DNS setup was smooth once the grey cloud (DNS only) rule was understood
+- Writing a proper Google Ads API design doc upfront (instead of hoping for automated approval) matches what Google's reviewers actually want
+
+**What was painful:**
+- **Account email chaos**: Merchant Center ended up under `jaitul25@gmail.com`, Google Ads Manager under `jaitul257@gmail.com`. Spent significant time untangling which account owned what. Having two Gmail accounts for the same business is a trap — everything should be under one.
+- Cloudflare + Shopify "Error 1000 DNS points to prohibited IP" — the www subdomain was proxied (orange cloud) when it needed to be DNS-only (grey cloud). Cached response took a hard refresh to clear.
+- Two Merchant Center accounts existed (`5757278712` old/abandoned, `5759598456` new/active) because of prior setup attempts. Had to reconcile which one was "real".
+- Got confused myself about whether developer tokens require Manager (MCC) accounts — initially told the user "no Manager needed", was wrong. Developer tokens ONLY come from Manager accounts. Corrected mid-conversation. Need to remember this for next time.
+- Shopify Google & YouTube app pushed the product with the old myshopify URL initially — "Mismatched domains" error. Fix: set primary domain first, then re-save the product to trigger re-sync.
+
+**Lessons learned:**
+- **Developer tokens require Manager (MCC) accounts.** Regular Google Ads accounts don't have API Center. This is non-negotiable Google policy.
+- **Cloudflare + Shopify = DNS only mode (grey cloud), always.** Orange cloud causes SSL errors, Error 1000, and infinite redirects. Shopify handles SSL + CDN via Fastly; Cloudflare proxy just gets in the way.
+- **Save the "why this took two emails" pain to memory.** Future setups: ONE Google account per business, no exceptions. Use a dedicated Gmail or Workspace email tied to the brand.
+- **Google Merchant Center requires both product-level metafields AND category-level requirements.** For jewelry (Apparel & Accessories): mpn, condition, custom_product, google_product_category, age_group, gender, color. Missing any → "Limits visibility" warning.
+- **Shopify primary domain at time of product sync = the URL that ends up in Google's feed.** Change primary domain later → stale feeds until a product update triggers re-sync. Build the custom domain before running the initial product sync.
+- **Writing a proper API design doc for Google Ads Basic Access review gets faster approval than a one-line justification.** Include architecture, data flow, rate limits, security, and explicit "first-party, single account, no SaaS" language.
+- **Trust the automated-but-stale UI banners, verify via the source-of-truth page.** Merchant Center showed "Verify website" banner even after domain was verified — Business Info page showed "Verified + Claimed". Always check the actual settings page before debugging cached notifications.
+
+---
+
+### 2026-04-04 — Persistent Storage Fix & Streamlit Removal
+
+**What shipped:** Eliminated all ephemeral local file storage. Products now persist across Railway deploys via Supabase. ChromaDB rebuilds on startup. Removed dead Streamlit dashboard (1,122 lines). Fixed 2 broken reconcile tests. Fixed Settings `extra` config. 126/126 tests passing.
+
+**What went well:**
+- Thorough audit before coding — traced every data flow (Shopify ↔ Dashboard ↔ Supabase ↔ ChromaDB) which revealed the Streamlit dashboard was dead code
+- The HTML dashboard (`web.py`) was already wired correctly to Supabase+Shopify, so no dashboard rewrite needed
+- ChromaDB startup rebuild worked first try — 2 products embedded in ~5 seconds on deploy
+
+**What was painful:**
+- Tests wouldn't run locally due to Railway CLI injecting `RAILWAY_*` env vars that Pydantic Settings rejected (`extra = "forbid"` by default). Pre-existing bug, never caught because tests were presumably run before Railway CLI was linked.
+- Two reconcile tests were broken for the same reason documented in CLAUDE.md: using `MagicMock` instead of `AsyncMock` for async Slack methods. Pattern keeps repeating.
+
+**Lessons learned:**
+- Always audit before implementing. The "fix Streamlit dashboard" task turned into "delete Streamlit dashboard" once we checked what's actually deployed.
+- Two dashboards existed doing the same thing differently — one saved to local JSON, one to Supabase. Duplication breeds inconsistency. Single source of truth matters.
+- Pydantic BaseSettings defaults to `extra = "forbid"`. Any environment (Railway, Docker, CI) that injects extra env vars will break it. Always set `extra = "ignore"`.
+- ChromaDB downloads its ONNX model (~79MB) on every Railway deploy since the container resets. Adds ~2s to startup. Could cache via Railway volume if it becomes a problem.
+- When a test needs to mock an async method, **always use AsyncMock**. This is the third time this lesson appears — it should be muscle memory by now.
+- `embed_all_from_directory()` was defined but never called anywhere — dead code. Always grep for callers before assuming a function is used.
+
+---
 
 ### 2026-04-02 — Phase 6.0 Design System (Shopify Storefront)
 **What shipped:** Updated DESIGN.md with complete Shopify storefront design system (hero, collection, PDP, navigation, mobile patterns, photography direction, Atelier Ledger, anti-patterns). TODO.md updated with Phase 6.0 tasks.
