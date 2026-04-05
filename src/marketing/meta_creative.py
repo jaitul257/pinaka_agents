@@ -30,6 +30,27 @@ class MetaCreativeError(Exception):
     """Raised when Meta Ad Creative API calls fail (4xx, 5xx, embedded error, network)."""
 
 
+def _extract_meta_error(body: dict) -> str:
+    """Pull the most useful message from a Meta error envelope.
+
+    Meta puts the human-readable explanation in `error_user_title` + `error_user_msg`,
+    but falls back to the generic `message` field. Grabbing only `message` (as our
+    original code did) loses critical context like "No Payment Method" vs the useless
+    "Invalid parameter". Always check all three.
+    """
+    err = body.get("error", {}) if isinstance(body, dict) else {}
+    user_title = err.get("error_user_title", "")
+    user_msg = err.get("error_user_msg", "")
+    generic = err.get("message", "")
+    if user_title and user_msg:
+        return f"{user_title}: {user_msg}"
+    if user_msg:
+        return user_msg
+    if user_title:
+        return user_title
+    return generic or "unknown Meta error"
+
+
 @dataclass
 class MetaCreativeResult:
     """Return value from create_creative()."""
@@ -167,7 +188,7 @@ class MetaCreativeClient:
                 f"{response.text[:300]}"
             )
         if response.status_code >= 400:
-            err_msg = body.get("error", {}).get("message", response.text[:300])
+            err_msg = _extract_meta_error(body) if body else response.text[:300]
             raise MetaCreativeError(
                 f"Meta /adcreatives {response.status_code}: {err_msg}"
             )
@@ -177,7 +198,7 @@ class MetaCreativeClient:
             err = body["error"]
             raise MetaCreativeError(
                 f"Meta /adcreatives 200 with embedded error: "
-                f"{err.get('message', 'unknown')} (type={err.get('type')}, code={err.get('code')})"
+                f"{_extract_meta_error(body)} (type={err.get('type')}, code={err.get('code')})"
             )
 
         creative_id = body.get("id")
@@ -239,7 +260,7 @@ class MetaCreativeClient:
                 body = response.json()
             except Exception:
                 pass
-            err_msg = body.get("error", {}).get("message", response.text[:300])
+            err_msg = _extract_meta_error(body) if body else response.text[:300]
             raise MetaCreativeError(
                 f"Meta /{creative_id} status update failed ({response.status_code}): {err_msg}"
             )
@@ -312,7 +333,7 @@ class MetaCreativeClient:
             pass
 
         if response.status_code >= 400:
-            err_msg = body.get("error", {}).get("message", response.text[:300])
+            err_msg = _extract_meta_error(body) if body else response.text[:300]
             raise MetaCreativeError(
                 f"Meta /ads {response.status_code}: {err_msg}"
             )
@@ -320,7 +341,7 @@ class MetaCreativeClient:
             err = body["error"]
             raise MetaCreativeError(
                 f"Meta /ads 200 with embedded error: "
-                f"{err.get('message', 'unknown')} (code={err.get('code')})"
+                f"{_extract_meta_error(body)} (code={err.get('code')})"
             )
 
         ad_id = body.get("id")

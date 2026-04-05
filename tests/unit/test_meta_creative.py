@@ -373,3 +373,24 @@ async def test_create_ad_name_clamped_to_255(configured_client):
         await configured_client.create_ad(creative_id="c1", ad_name=long_name)
     payload = mock_client.post.call_args.kwargs["data"]
     assert len(payload["name"]) <= 255
+
+
+async def test_create_ad_surfaces_error_user_title_and_msg(configured_client):
+    """Real Meta errors put the actionable detail in error_user_title + error_user_msg,
+    not in the generic `message` field. Regression test for the "No Payment Method"
+    bug where the dashboard showed 'Invalid parameter' instead of 'Update payment method'.
+    """
+    response = _mock_response(400, {
+        "error": {
+            "message": "Invalid parameter",  # useless generic
+            "error_user_title": "No Payment Method",
+            "error_user_msg": "Update payment method: Visit the Billing and payment center.",
+            "code": 100,
+        }
+    })
+    with patch(
+        "src.marketing.meta_creative.httpx.AsyncClient",
+        return_value=_mock_async_client(response),
+    ):
+        with pytest.raises(MetaCreativeError, match="No Payment Method.*Update payment method"):
+            await configured_client.create_ad(creative_id="c1", ad_name="test")
