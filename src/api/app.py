@@ -453,25 +453,66 @@ async def cron_sync_products():
 
 @app.post("/cron/sync-shopify-products", dependencies=[Depends(verify_cron_secret)])
 async def cron_sync_shopify_products():
-    """Pull products from Shopify and embed them in ChromaDB for RAG search."""
+    """Pull products from Shopify, embed them in ChromaDB, and backfill images to Supabase.
+
+    Phase 6.1 addition: also syncs `products.images` from Shopify images[].src. Without
+    this, `ad_creatives` generation would fail for any product whose images weren't manually
+    set via the dashboard (which is every auto-synced product today). Matches Shopify
+    products to Supabase rows via `shopify_product_id` (unique).
+    """
     from src.product.embeddings import ProductEmbeddings
 
     shopify = ShopifyClient()
     embeddings = ProductEmbeddings()
-    synced = 0
+    db = AsyncDatabase()
+    embedded = 0
+    images_synced = 0
+    images_skipped = 0
 
     try:
-        products = await shopify.get_products(limit=50)
-        for product in products:
-            embeddings.embed_shopify_product(product)
-            synced += 1
+        shopify_products = await shopify.get_products(limit=50)
+
+        # Build a lookup of existing Supabase products by shopify_product_id for O(1) matching
+        existing = await db.get_all_products()
+        by_shopify_id = {
+            int(p["shopify_product_id"]): p
+            for p in existing
+            if p.get("shopify_product_id")
+        }
+
+        for sp in shopify_products:
+            embeddings.embed_shopify_product(sp)
+            embedded += 1
+
+            sp_id = sp.get("id")
+            if not sp_id:
+                continue
+
+            supabase_row = by_shopify_id.get(int(sp_id))
+            if not supabase_row:
+                # Product is in Shopify but not in Supabase — skip (dashboard handles creation)
+                images_skipped += 1
+                continue
+
+            # Extract image URLs from Shopify's images[] payload
+            image_urls = [img.get("src", "") for img in sp.get("images", []) if img.get("src")]
+            if not image_urls:
+                continue
+
+            # Only write if different (avoid unnecessary UPDATEs + trigger firings)
+            current = supabase_row.get("images") or []
+            if list(current) != image_urls:
+                await db.update_product_images(supabase_row["sku"], image_urls)
+                images_synced += 1
     finally:
         await shopify.close()
 
     return {
         "status": "ok",
         "module": "shopify_product_sync",
-        "synced": synced,
+        "embedded": embedded,
+        "images_synced": images_synced,
+        "images_skipped_no_supabase_row": images_skipped,
         "total_in_index": embeddings.product_count(),
     }
 

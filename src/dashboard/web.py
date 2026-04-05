@@ -1484,6 +1484,33 @@ async def _run_generation_task(
             )
             return
 
+        # Lazy image backfill: if Supabase row has no images, pull from Shopify now.
+        # The cron /cron/sync-shopify-products does this every 15 min, but new products
+        # shouldn't have to wait. Only fires when images are missing + shopify_product_id exists.
+        if not product.get("images") and product.get("shopify_product_id"):
+            try:
+                from src.core.shopify_client import ShopifyClient
+                shopify = ShopifyClient()
+                try:
+                    sp = await shopify.get_product(int(product["shopify_product_id"]))
+                finally:
+                    await shopify.close()
+                if sp:
+                    image_urls = [
+                        img.get("src", "")
+                        for img in sp.get("images", [])
+                        if img.get("src")
+                    ]
+                    if image_urls:
+                        db.update_product_images(sku, image_urls)
+                        product["images"] = image_urls
+                        logger.info(
+                            "Lazy backfilled %d images for sku=%s from Shopify",
+                            len(image_urls), sku,
+                        )
+            except Exception:
+                logger.exception("Lazy image backfill failed for sku=%s (continuing)", sku)
+
         gen = AdCreativeGenerator()
         variants, returned_batch_id, dna_hash = gen.generate(product, n_variants=3)
 

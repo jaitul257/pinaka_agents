@@ -501,6 +501,16 @@ class Database:
     def delete_product(self, sku: str) -> None:
         self._client.table("products").delete().eq("sku", sku).execute()
 
+    def update_product_images(self, sku: str, image_urls: list[str]) -> dict[str, Any]:
+        """Overwrite the images column for a product. Used by Shopify image sync."""
+        result = (
+            self._client.table("products")
+            .update({"images": image_urls})
+            .eq("sku", sku)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
     # ── Ad Creatives (Phase 6.1) ──
 
     def create_generation_batch(self, data: dict[str, Any]) -> dict[str, Any]:
