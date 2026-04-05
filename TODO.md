@@ -11,16 +11,20 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 ## Pending: External Platform Setup (no code needed)
 
 ### Google Ads API (blocks Google ad spend sync + offline conversions)
-- [ ] Apply for Google Ads Developer Token at ads.google.com → Tools → API Center (5-15 business days)
+- [x] Applied for Google Ads Developer Token (2026-04-04, Manager 708-325-3807, Token: V6l4c0c4rIoZxMOeFSl72Q, currently Test Account — awaiting Basic Access approval, 2-15 business days)
+- [ ] Link Google Ads regular account 268-380-3995 as sub-account under Manager 708-325-3807
 - [ ] Create OAuth2 credentials in Google Cloud Console
 - [ ] Generate refresh token via google-ads auth helper
-- [ ] Set Railway env vars: `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`
+- [ ] Set Railway env vars: `GOOGLE_ADS_CUSTOMER_ID=2683803995`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID=7083253807`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`
 
 ### Google Merchant Center (blocks Google Shopping ads)
-- [ ] Create account at merchants.google.com
-- [ ] Link to Google Ads account
-- [ ] Create service account in Google Cloud Console
-- [ ] Set Railway env vars: `GOOGLE_MERCHANT_ID`, `GOOGLE_SERVICE_ACCOUNT_PATH`
+- [x] Created Merchant Center account 5759598456 (2026-04-04, under jaitul25@gmail.com, connected via Shopify Google & YouTube app)
+- [x] Verified + claimed pinakajewellery.com custom domain
+- [x] Configured shipping (15 day handling + 2-5 day transit, free insured) and returns policy
+- [x] First product synced (Diamond Tennis Bracelet - Lab Grown) with age_group/gender/color/mpn metafields
+- [x] Old duplicate Merchant Center 5757278712 superseded (can delete later, low priority)
+- [ ] Create service account in Google Cloud Console (for API-based sync, currently using Shopify native app)
+- [ ] Set Railway env vars: `GOOGLE_SERVICE_ACCOUNT_PATH` (already set: `GOOGLE_MERCHANT_ID=5759598456`)
 
 ### Google Ads Conversion Action (blocks server-side conversion tracking)
 - [ ] Create conversion action in Google Ads → Tools → Conversions → Import → Upload clicks
@@ -37,13 +41,13 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 
 ### 6.0 Shopify Storefront Design & Build
 - [x] Design system updated for Shopify (DESIGN.md — see "Shopify Storefront Sections")
-- [ ] Apply design system to Shopify theme (hero, collection grid, PDP, footer)
+- [x] Connect custom domain pinakajewellery.com to Shopify (2026-04-04, Cloudflare DNS, primary domain, SSL live, SHOPIFY_STOREFRONT_URL env var set, ad catalog feeds updated to use custom domain)
+- [ ] Apply design system to Shopify theme (hero, collection grid, PDP, footer) — theme files exist in `shopify-theme/` (untracked, mid-build)
 - [ ] Product photography: studio shots on cream linen with directional light
 - [ ] Implement Atelier Ledger section (live order timeline from Supabase)
 - [ ] Craft Timeline section (5-step making process)
 - [ ] Founder Note section
 - [ ] Mobile: sticky bottom CTA on PDP, slide-in cart drawer
-- [ ] Connect custom domain pinakajewellery.com to Shopify
 - **Ref:** Design preview HTML at `/tmp/design-consultation-preview-1775112210.html`. Run `/design-consultation` for full context.
 - **Ref:** DESIGN.md has full specs: hero layout, collection grid, PDP buy flow, navigation, photography direction, anti-patterns.
 - **Why:** Current store is default Dawn theme with zero brand identity. Design system ready, needs implementation.
