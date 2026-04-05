@@ -627,7 +627,7 @@ async def add_product_submit(
                     if shopify_id:
                         _get_db().upsert_product({"sku": sku, "name": name, "shopify_product_id": shopify_id})
                         # Set Google Shopping metafields so Merchant Center accepts it
-                        await _upsert_google_metafields(shopify_id, sku, category)
+                        await _upsert_google_metafields(shopify_id, sku, category, metal)
                     shopify_msg = f"+and+created+in+Shopify+(ID:+{shopify_id})"
                     logger.info("Product %s pushed to Shopify (ID: %s)", sku, shopify_id)
                 else:
@@ -772,7 +772,7 @@ async def edit_product_submit(
                     )
                     if resp.status_code == 200:
                         # Keep Google Shopping metafields in sync
-                        await _upsert_google_metafields(shopify_id, sku, category)
+                        await _upsert_google_metafields(shopify_id, sku, category, metal)
                         shopify_msg = "+and+updated+in+Shopify"
                     else:
                         shopify_msg = f"+but+Shopify+update+failed:+{resp.status_code}"
@@ -864,18 +864,28 @@ _GOOGLE_CATEGORY_IDS = {
 }
 
 
-async def _upsert_google_metafields(product_id: int, sku: str, category: str) -> None:
+async def _upsert_google_metafields(
+    product_id: int,
+    sku: str,
+    category: str,
+    metal: str = "",
+) -> None:
     """Set Google Shopping metafields on a Shopify product so Google Merchant Center
-    accepts it without a real GTIN. Handmade jewelry uses: custom_product=TRUE,
-    mpn=<sku>, brand=<vendor>, condition=new, and a specific google_product_category.
+    accepts it without a real GTIN and with full visibility in Apparel & Accessories.
+    Handmade jewelry uses: custom_product=TRUE, mpn=<sku>, brand=<vendor>, condition=new,
+    google_product_category=<jewelry>, age_group=adult, gender=unisex, color=<metal>.
     Safe to call on create or edit — existing metafields are updated in place.
     """
     google_cat = _GOOGLE_CATEGORY_IDS.get(category, "188")  # 188 = generic Jewelry
+    color = metal or "Gold"  # fall back to generic "Gold" if metal not provided
     desired = [
         ("mm-google-shopping", "mpn", sku),
         ("mm-google-shopping", "condition", "new"),
         ("mm-google-shopping", "custom_product", "TRUE"),
         ("mm-google-shopping", "google_product_category", google_cat),
+        ("mm-google-shopping", "age_group", "adult"),
+        ("mm-google-shopping", "gender", "unisex"),
+        ("mm-google-shopping", "color", color),
     ]
 
     async with httpx.AsyncClient(timeout=15) as client:
