@@ -15,9 +15,10 @@ Pinaka Agents is an AI-powered autonomous operations system for **Pinaka Jewelle
 | **Brand** | Pinaka Jewellery |
 | **Product** | Premium handcrafted diamond tennis bracelets |
 | **Founder** | Jaitul |
-| **Website** | https://pinakajewellery.com |
+| **Website (customer-facing)** | https://pinakajewellery.com (custom domain, live on Cloudflare DNS) |
 | **Shopify Admin** | https://admin.shopify.com/store/pinaka-jewellery |
-| **Shopify Domain** | pinaka-jewellery.myshopify.com |
+| **Shopify Domain (Admin API)** | pinaka-jewellery.myshopify.com |
+| **Google Merchant Center ID** | 5759598456 |
 | **Shopify API Version** | 2025-01 |
 | **Email From** | hello@pinakajewellery.com (Jaitul at Pinaka Jewellery) |
 | **Railway App URL** | https://pinaka-agents-production-198b5.up.railway.app |
