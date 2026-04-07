@@ -44,8 +44,7 @@ body.dark-mode a.header__heading-link.link.link--text {
   color: #FAF7F2 !important;
 }
 
-/* ── Geist Mono for prices/data ── */
-@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&display=swap');
+/* Geist Mono loaded via <link> in theme.liquid <head> for better LCP */
 
 :root {
   --font-data: 'Geist Mono', 'SF Mono', monospace;
@@ -308,68 +307,71 @@ body.dark-mode a.header__heading-link.link.link--text {
   color: var(--pinaka-warning);
 }
 
-/* ── Dark mode: make Dawn's existing separator lines visible ── */
-body.dark-mode {
-  --color-border: 250, 247, 242;
-  --color-foreground: 250, 247, 242;
+/* Dark mode overrides moved to theme-toggle.liquid (single source of truth) */
+
+/* ── Trust Badges (homepage + PDP) ── */
+.pinaka-trust-badges {
+  padding: 40px 0;
 }
 
-/* Ledger entry rows */
-body.dark-mode .pinaka-ledger__entry {
-  border-bottom-color: rgba(250, 247, 242, 0.12) !important;
+.pinaka-trust-badges__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  text-align: center;
 }
 
-/* Craft timeline cards — restore subtle card surface killed by global transparent rule */
-body.dark-mode .pinaka-craft-timeline__step {
-  background-color: rgba(250, 247, 242, 0.03) !important;
-  border: 1px solid rgba(250, 247, 242, 0.1) !important;
-  box-shadow: none !important;
+.pinaka-trust-badges__item {
+  padding: 20px 12px;
 }
 
-/* Founder note — restore faint accent tint killed by global transparent rule */
-body.dark-mode .pinaka-founder-note {
-  background-color: rgba(212, 160, 23, 0.06) !important;
+.pinaka-trust-badges__icon {
+  font-size: 20px;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
 }
 
-/* ── Dark mode product cards: remove box, subtle image tile, loose text below ── */
-body.dark-mode .card-wrapper .card,
-body.dark-mode .card {
-  background-color: transparent !important;
-  border: none !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
+.pinaka-trust-badges__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pinaka-charcoal);
+  margin-bottom: 4px;
+  letter-spacing: 0.02em;
 }
 
-/* Subtle dark tile behind the image only */
-body.dark-mode .card__inner,
-body.dark-mode .card .card__media,
-body.dark-mode .card__media {
-  background: radial-gradient(ellipse at 50% 40%, rgba(212, 160, 23, 0.05) 0%, transparent 60%),
-    linear-gradient(155deg, #1f1d1a, #151310) !important;
-  border: 1px solid rgba(250, 247, 242, 0.06) !important;
-  border-radius: 6px !important;
-  overflow: hidden;
+.pinaka-trust-badges__detail {
+  font-size: 11px;
+  color: var(--pinaka-text2);
+  line-height: 1.4;
 }
 
-/* Title + price area: no background, sit outside the image tile */
-body.dark-mode .card__content,
-body.dark-mode .card__information,
-body.dark-mode .card-information {
-  background-color: transparent !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-  padding-top: 14px !important;
+/* ── PDP Enhancements ── */
+/* Shipping note below buy buttons */
+.pinaka-pdp-shipping {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--pinaka-text2);
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--pinaka-accent-subtle);
+  border-radius: 6px;
 }
 
-body.dark-mode .card__heading,
-body.dark-mode .card__heading a {
-  color: #FAF7F2 !important;
+.pinaka-pdp-shipping__icon {
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
-body.dark-mode .card-information .price,
-body.dark-mode .card__information .price,
-body.dark-mode .price__regular .price-item {
-  color: #D4D0CA !important;
+.pinaka-pdp-shipping strong {
+  color: var(--pinaka-charcoal);
+}
+
+/* Product page image aspect ratio */
+.product__media-item img {
+  aspect-ratio: 1/1;
+  object-fit: cover;
 }
 
 /* ── Responsive ── */
@@ -399,5 +401,15 @@ body.dark-mode .price__regular .price-item {
 
   .pinaka-ledger__city {
     display: none;
+  }
+
+  .pinaka-trust-badges__grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+
+  /* Extra bottom padding to clear sticky CTA on PDP */
+  .product {
+    padding-bottom: 80px;
   }
 }

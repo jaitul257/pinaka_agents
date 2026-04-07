@@ -82,127 +82,152 @@
     transition: all 0.3s ease;
   }
 
-  /* Dark mode styles */
+  /* ── Dark mode ──
+     Targeted overrides only. No wildcard * rules that break Dawn's
+     dropdowns, modals, cart drawer, predictive search, or newsletter popups.
+     Each rule targets a specific Dawn element or Pinaka section. */
+
   body.dark-mode {
     background-color: #1a1815 !important;
+    color: #FAF7F2;
   }
 
-  body.dark-mode *:not(img):not(svg) {
-    background-color: transparent !important;
+  /* Dawn layout containers */
+  body.dark-mode .color-scheme-1,
+  body.dark-mode .color-scheme-2,
+  body.dark-mode .color-scheme-3 {
+    background-color: #1a1815 !important;
+    color: #FAF7F2;
   }
 
   body.dark-mode .header {
     background-color: #2C2825 !important;
   }
 
+  body.dark-mode footer,
+  body.dark-mode .footer {
+    background-color: #2C2825 !important;
+  }
+
+  /* Text colors */
   body.dark-mode h1,
   body.dark-mode h2,
   body.dark-mode h3,
   body.dark-mode h4,
-  body.dark-mode h5,
-  body.dark-mode h6,
-  body.dark-mode p,
-  body.dark-mode span,
-  body.dark-mode div,
-  body.dark-mode section,
-  body.dark-mode article,
-  body.dark-mode main,
-  body.dark-mode li {
+  body.dark-mode .h1,
+  body.dark-mode .h2,
+  body.dark-mode .h3 {
     color: #FAF7F2 !important;
-    background-color: transparent !important;
   }
 
+  body.dark-mode p,
+  body.dark-mode li,
+  body.dark-mode .rte,
+  body.dark-mode .prose {
+    color: #D4D0CA !important;
+  }
+
+  body.dark-mode .header__heading-link,
   body.dark-mode .header__heading-link .h2 {
     color: #FAF7F2 !important;
   }
 
-  body.dark-mode button,
-  body.dark-mode .button,
-  body.dark-mode a.button,
+  /* Buttons — only primary CTA buttons, not Dawn UI controls */
+  body.dark-mode .button--primary,
+  body.dark-mode .shopify-payment-button__button,
   body.dark-mode .cta {
     background-color: #D4A017 !important;
     color: #2C2825 !important;
-    padding: 14px 36px !important;
-    border-radius: 8px !important;
   }
 
-  body.dark-mode button:hover,
-  body.dark-mode .button:hover,
-  body.dark-mode a.button:hover,
+  body.dark-mode .button--primary:hover,
   body.dark-mode .cta:hover {
     background-color: #B8890F !important;
   }
 
-  body.dark-mode footer {
-    background-color: #2C2825 !important;
+  /* Links */
+  body.dark-mode a:not(.button):not(.cta) {
+    color: #D4A017;
   }
 
-  body.dark-mode a {
-    color: #D4A017 !important;
-  }
-
-  body.dark-mode a.button,
-  body.dark-mode .cta {
-    color: #2C2825 !important;
-  }
-
-  body.dark-mode .card {
-    background-color: #3a3630 !important;
-    border: 1px solid rgba(212, 160, 23, 0.25) !important;
-    border-radius: 8px;
-  }
-
-  body.dark-mode .card__content {
+  /* Product cards */
+  body.dark-mode .card,
+  body.dark-mode .card-wrapper .card {
     background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
   }
 
-  body.dark-mode .card__information {
+  body.dark-mode .card__inner,
+  body.dark-mode .card .card__media,
+  body.dark-mode .card__media {
+    background: radial-gradient(ellipse at 50% 40%, rgba(212, 160, 23, 0.05) 0%, transparent 60%),
+      linear-gradient(155deg, #1f1d1a, #151310) !important;
+    border: 1px solid rgba(250, 247, 242, 0.06) !important;
+    border-radius: 6px !important;
+  }
+
+  body.dark-mode .card__content,
+  body.dark-mode .card__information,
+  body.dark-mode .card-information {
     background-color: transparent !important;
+    padding-top: 14px !important;
   }
 
-  body.dark-mode .card__image {
-    background-color: #3a3630 !important;
+  body.dark-mode .card__heading,
+  body.dark-mode .card__heading a {
+    color: #FAF7F2 !important;
   }
 
-  body.dark-mode img {
-    opacity: 1 !important;
-    display: block !important;
+  body.dark-mode .price,
+  body.dark-mode .price-item {
+    color: #D4D0CA !important;
   }
 
+  /* Blockquotes / rich text */
   body.dark-mode blockquote {
     color: #D4D0CA !important;
   }
 
-  body.dark-mode .rich-text {
-    color: #D4D0CA !important;
-  }
-
+  /* Dividers */
   body.dark-mode hr,
-  body.dark-mode .divider,
-  body.dark-mode .section-divider {
-    border-color: rgba(212, 160, 23, 0.4) !important;
-    background-color: rgba(212, 160, 23, 0.4) !important;
+  body.dark-mode .divider {
+    border-color: rgba(250, 247, 242, 0.12) !important;
   }
 
-  body.dark-mode .timeline__label,
-  body.dark-mode .timeline__item-label {
-    color: #D4A017 !important;
-  }
-
-  body.dark-mode .timeline__heading,
-  body.dark-mode .timeline__item-heading {
+  /* Dawn interactive components — keep their backgrounds functional */
+  body.dark-mode .cart-drawer,
+  body.dark-mode .menu-drawer,
+  body.dark-mode .modal__content,
+  body.dark-mode .predictive-search,
+  body.dark-mode .disclosure__list-wrapper {
+    background-color: #2C2825 !important;
     color: #FAF7F2 !important;
   }
 
-  body.dark-mode .timeline__description,
-  body.dark-mode .timeline__item-description {
-    color: #D4D0CA !important;
+  body.dark-mode .cart-drawer a,
+  body.dark-mode .menu-drawer a,
+  body.dark-mode .modal__content a {
+    color: #FAF7F2 !important;
   }
 
-  body.dark-mode .rte,
-  body.dark-mode .prose {
-    overflow-x: auto !important;
-    word-wrap: break-word !important;
+  /* Pinaka custom sections */
+  body.dark-mode .pinaka-hero {
+    background-color: #1a1815;
+  }
+
+  body.dark-mode .pinaka-craft-timeline__step {
+    background-color: rgba(250, 247, 242, 0.03) !important;
+    border: 1px solid rgba(250, 247, 242, 0.1) !important;
+    box-shadow: none !important;
+  }
+
+  body.dark-mode .pinaka-founder-note {
+    background-color: rgba(212, 160, 23, 0.06) !important;
+  }
+
+  body.dark-mode .pinaka-ledger__entry {
+    border-bottom-color: rgba(250, 247, 242, 0.12) !important;
   }
 
   body.dark-mode .theme-toggle {

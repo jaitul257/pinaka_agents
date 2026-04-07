@@ -1,0 +1,46 @@
+<!-- pinaka-custom.css loaded globally via theme.liquid -->
+
+<div class="pinaka-trust-badges color-{{ section.settings.color_scheme }}">
+  <div class="page-width">
+    <div class="pinaka-trust-badges__grid">
+      {%- for block in section.blocks -%}
+        <div class="pinaka-trust-badges__item" {{ block.shopify_attributes }}>
+          <div class="pinaka-trust-badges__icon">{{ block.settings.icon }}</div>
+          <div class="pinaka-trust-badges__label">{{ block.settings.label }}</div>
+          {%- if block.settings.detail != blank -%}
+            <div class="pinaka-trust-badges__detail">{{ block.settings.detail }}</div>
+          {%- endif -%}
+        </div>
+      {%- endfor -%}
+    </div>
+  </div>
+</div>
+
+{% schema %}
+{
+  "name": "Trust Badges",
+  "settings": [
+    { "type": "color_scheme", "id": "color_scheme", "label": "Color scheme", "default": "scheme-1" }
+  ],
+  "blocks": [
+    {
+      "type": "badge",
+      "name": "Badge",
+      "settings": [
+        { "type": "text", "id": "icon", "label": "Icon (emoji or text)", "default": "+" },
+        { "type": "text", "id": "label", "label": "Label", "default": "Handcrafted" },
+        { "type": "text", "id": "detail", "label": "Detail text", "default": "Set by hand under 10x magnification" }
+      ]
+    }
+  ],
+  "presets": [{
+    "name": "Trust Badges",
+    "blocks": [
+      { "type": "badge", "settings": { "icon": "&#9670;", "label": "Handcrafted", "detail": "Every stone set by hand" } },
+      { "type": "badge", "settings": { "icon": "&#9670;", "label": "Ships in 15 Days", "detail": "Made to order, fully insured" } },
+      { "type": "badge", "settings": { "icon": "&#9670;", "label": "Free Lifetime Care", "detail": "Cleaning, inspection, repair" } },
+      { "type": "badge", "settings": { "icon": "&#9670;", "label": "Lab-Grown Diamonds", "detail": "Certified, conflict-free" } }
+    ]
+  }]
+}
+{% endschema %}
