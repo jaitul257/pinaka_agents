@@ -1,0 +1,403 @@
+/* Pinaka Jewellery — Custom Design System Overrides for Dawn */
+
+/* ── Force cream background on body ── */
+body,
+.color-scheme-1 {
+  background-color: #FAF7F2 !important;
+}
+
+h1,
+h2,
+h3,
+.h1,
+.h2,
+.h3 {
+  color: #2C2825;
+}
+
+/* ── Header text styling to match hero (all pages, all color schemes) ── */
+.header__heading-link,
+.header__heading-link:hover,
+.header__heading-link:focus,
+.header__heading-link .h2,
+.header__heading-link:hover .h2,
+a.header__heading-link.link.link--text,
+.header .header__heading-link {
+  color: #2C2825 !important;
+}
+
+.header__heading-link .h2 {
+  font-size: 2.4rem !important;
+}
+
+@media only screen and (min-width: 750px) {
+  .header__heading-link .h2 {
+    font-size: 2.4rem !important;
+  }
+}
+
+/* Dark mode keeps cream */
+body.dark-mode .header__heading-link,
+body.dark-mode .header__heading-link:hover,
+body.dark-mode .header__heading-link .h2,
+body.dark-mode a.header__heading-link.link.link--text {
+  color: #FAF7F2 !important;
+}
+
+/* ── Geist Mono for prices/data ── */
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&display=swap');
+
+:root {
+  --font-data: 'Geist Mono', 'SF Mono', monospace;
+  --pinaka-accent: #D4A017;
+  --pinaka-accent-hover: #B8890F;
+  --pinaka-accent-subtle: rgba(212, 160, 23, 0.12);
+  --pinaka-gold: #C5A55A;
+  --pinaka-charcoal: #2C2825;
+  --pinaka-cream: #FAF7F2;
+  --pinaka-text2: #6B6560;
+  --pinaka-muted: #9E9893;
+  --pinaka-border: #E8E2D9;
+  --pinaka-success: #2E7D4F;
+  --pinaka-warning: #C17E1A;
+}
+
+/* ── Hero section: split layout ── */
+.pinaka-hero {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 48px 48px 56px;
+  display: grid;
+  grid-template-columns: 2fr 3fr;
+  gap: 48px;
+  align-items: center;
+}
+
+.pinaka-hero h1 {
+  font-size: clamp(36px, 3.5vw, 52px);
+  font-weight: 400;
+  line-height: 1.1;
+  margin-bottom: 16px;
+  color: var(--pinaka-charcoal);
+}
+
+.pinaka-hero p {
+  font-size: 17px;
+  color: var(--pinaka-text2);
+  line-height: 1.6;
+  margin-bottom: 28px;
+}
+
+.pinaka-hero .cta {
+  display: inline-block;
+  background: var(--pinaka-accent);
+  color: var(--pinaka-charcoal);
+  font-weight: 600;
+  font-size: 15px;
+  padding: 14px 36px;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.pinaka-hero .cta:hover {
+  background: var(--pinaka-accent-hover);
+}
+
+.pinaka-hero .hero-img {
+  width: 100%;
+  aspect-ratio: 5/4;
+  border-radius: 10px;
+  background: radial-gradient(ellipse at 55% 50%, rgba(197, 165, 90, 0.15) 0%, transparent 55%),
+    linear-gradient(155deg, #F5F0E8, #FFFFFF);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 32px rgba(44, 40, 37, 0.08);
+  overflow: hidden;
+}
+
+.pinaka-hero .hero-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pinaka-hero .hero-placeholder {
+  font-style: italic;
+  font-size: 18px;
+  color: var(--pinaka-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* ── Gold divider ── */
+.pinaka-rule {
+  height: 1px;
+  background: var(--pinaka-gold);
+  opacity: 0.35;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+/* ── Price font override ── */
+.price-item,
+.price {
+  font-family: var(--font-data) !important;
+}
+
+/* ── Craft Timeline ── */
+.pinaka-craft-timeline {
+  padding: 48px clamp(24px, 5vw, 80px);
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.pinaka-craft-timeline__label {
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
+}
+
+.pinaka-craft-timeline__heading {
+  font-size: 2rem;
+  font-weight: 400;
+  margin-bottom: 2rem;
+}
+
+.pinaka-craft-timeline__grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 20px;
+}
+
+.pinaka-craft-timeline__step {
+  text-align: center;
+  padding: 20px 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(44, 40, 37, 0.05);
+}
+
+.pinaka-craft-timeline__num {
+  font-family: var(--font-data);
+  font-size: 10px;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
+}
+
+.pinaka-craft-timeline__name {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.pinaka-craft-timeline__desc {
+  font-size: 11px;
+  color: var(--pinaka-text2);
+  line-height: 1.4;
+}
+
+/* ── Founder Note ── */
+.pinaka-founder-note {
+  background: var(--pinaka-accent-subtle);
+  padding: 56px clamp(24px, 6vw, 112px);
+}
+
+.pinaka-founder-note__inner {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.pinaka-founder-note blockquote {
+  font-size: 20px;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--pinaka-charcoal);
+  max-width: 640px;
+  margin: 0 0 12px 0;
+  padding: 0;
+  border: none;
+}
+
+.pinaka-founder-note .sig {
+  font-style: italic;
+  font-size: 17px;
+  color: var(--pinaka-accent);
+}
+
+/* ── Atelier Ledger ── */
+.pinaka-ledger {
+  padding: 48px 0;
+}
+
+.pinaka-ledger__label {
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
+}
+
+.pinaka-ledger__heading {
+  font-size: 1.75rem;
+  font-weight: 400;
+  margin-bottom: 4px;
+}
+
+.pinaka-ledger__sub {
+  font-size: 14px;
+  color: var(--pinaka-text2);
+  margin-bottom: 24px;
+}
+
+.pinaka-ledger__entry {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--pinaka-border);
+  font-size: 14px;
+}
+
+.pinaka-ledger__date {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--pinaka-muted);
+  min-width: 52px;
+}
+
+.pinaka-ledger__detail {
+  flex: 1;
+  padding: 0 16px;
+}
+
+.pinaka-ledger__city {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--pinaka-muted);
+  text-align: right;
+}
+
+.pinaka-ledger__tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-family: var(--font-data);
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 8px;
+}
+
+.pinaka-ledger__tag--shipped {
+  background: rgba(46, 125, 79, 0.08);
+  color: var(--pinaka-success);
+}
+
+.pinaka-ledger__tag--polishing,
+.pinaka-ledger__tag--setting {
+  background: rgba(193, 126, 26, 0.08);
+  color: var(--pinaka-warning);
+}
+
+/* ── Dark mode: make Dawn's existing separator lines visible ── */
+body.dark-mode {
+  --color-border: 250, 247, 242;
+  --color-foreground: 250, 247, 242;
+}
+
+/* Ledger entry rows */
+body.dark-mode .pinaka-ledger__entry {
+  border-bottom-color: rgba(250, 247, 242, 0.12) !important;
+}
+
+/* Craft timeline cards — restore subtle card surface killed by global transparent rule */
+body.dark-mode .pinaka-craft-timeline__step {
+  background-color: rgba(250, 247, 242, 0.03) !important;
+  border: 1px solid rgba(250, 247, 242, 0.1) !important;
+  box-shadow: none !important;
+}
+
+/* Founder note — restore faint accent tint killed by global transparent rule */
+body.dark-mode .pinaka-founder-note {
+  background-color: rgba(212, 160, 23, 0.06) !important;
+}
+
+/* ── Dark mode product cards: remove box, subtle image tile, loose text below ── */
+body.dark-mode .card-wrapper .card,
+body.dark-mode .card {
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Subtle dark tile behind the image only */
+body.dark-mode .card__inner,
+body.dark-mode .card .card__media,
+body.dark-mode .card__media {
+  background: radial-gradient(ellipse at 50% 40%, rgba(212, 160, 23, 0.05) 0%, transparent 60%),
+    linear-gradient(155deg, #1f1d1a, #151310) !important;
+  border: 1px solid rgba(250, 247, 242, 0.06) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+}
+
+/* Title + price area: no background, sit outside the image tile */
+body.dark-mode .card__content,
+body.dark-mode .card__information,
+body.dark-mode .card-information {
+  background-color: transparent !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  padding-top: 14px !important;
+}
+
+body.dark-mode .card__heading,
+body.dark-mode .card__heading a {
+  color: #FAF7F2 !important;
+}
+
+body.dark-mode .card-information .price,
+body.dark-mode .card__information .price,
+body.dark-mode .price__regular .price-item {
+  color: #D4D0CA !important;
+}
+
+/* ── Responsive ── */
+@media (max-width: 749px) {
+  .pinaka-hero {
+    grid-template-columns: 1fr;
+    padding: 32px 24px 40px;
+    gap: 24px;
+  }
+
+  .pinaka-hero .hero-img {
+    order: -1;
+    aspect-ratio: 4/3;
+  }
+
+  .pinaka-hero h1 {
+    font-size: 32px;
+  }
+
+  .pinaka-craft-timeline__grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pinaka-founder-note {
+    padding: 40px 24px;
+  }
+
+  .pinaka-ledger__city {
+    display: none;
+  }
+}
