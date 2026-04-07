@@ -1,0 +1,20 @@
+{{ 'pinaka-custom.css' | asset_url | stylesheet_tag }}
+
+<div class="pinaka-founder-note">
+  <div class="pinaka-founder-note__inner">
+    <blockquote>{{ section.settings.quote }}</blockquote>
+    <div class="sig">&mdash; {{ section.settings.name }}, {{ section.settings.title }}</div>
+  </div>
+</div>
+
+{% schema %}
+{
+  "name": "Founder Note",
+  "settings": [
+    { "type": "textarea", "id": "quote", "label": "Quote", "default": "I started Pinaka because I couldn't find a tennis bracelet that was handcrafted at a fair price. Every piece is set by hand, inspected under 10x magnification, and shipped fully insured. Questions? Email me directly." },
+    { "type": "text", "id": "name", "label": "Name", "default": "Jaitul" },
+    { "type": "text", "id": "title", "label": "Title", "default": "Founder" }
+  ],
+  "presets": [{ "name": "Founder Note" }]
+}
+{% endschema %}
