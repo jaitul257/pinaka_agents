@@ -146,7 +146,7 @@ The `Pinaka_AI_Implementation.docx` laid out 6 AI agent modules to automate a je
 | **More products** | Only 1 active product. Collection grid looks empty. "Test Ring One" is draft. Need 3-6 products for the collection to feel real. | 2-4 hours (product data + images + Shopify push) |
 | **Product images** | Current images are phone photos on dark cloth. Need professional/lifestyle shots on cream linen (matching design mockup). | External (photography) |
 | **Meta Ad Account payment method** | Blocks ad serving. No ads can run until a card is on file at Meta Business billing hub. | 5 min (add card in Meta) |
-| **Meta app Live Mode** | Development mode blocks ad creative creation. Needs Privacy Policy URL + Data Deletion URL + app icon. | 15 min (Meta developer console) |
+| ~~**Meta app Live Mode**~~ | ~~Development mode blocks ad creative creation.~~ **DONE — app is Live.** | ✅ |
 
 ### Medium Priority
 
@@ -156,7 +156,7 @@ The `Pinaka_AI_Implementation.docx` laid out 6 AI agent modules to automate a je
 | **About page** | Nav link "About" goes nowhere. Need founder story page. | 1-2 hours |
 | **Mobile PDP testing** | Variant pills, sticky CTA, overall responsiveness on real devices. | 1 hour |
 | **Email templates polish** | Current templates are functional but not branded. Should match design system. | 2-3 hours |
-| **Google Ads developer token** | Applied for Basic Access, awaiting 2-15 day review. Blocks Google Ads API writes. | Waiting |
+| **Google Ads developer token** | Applied for Basic Access, in review. Blocks Google Ads API writes. | Waiting |
 | **Abandoned cart flow test** | Cron exists but hasn't been tested end-to-end with a real abandoned checkout. | 1 hour |
 
 ### Low Priority (Nice to Have)
