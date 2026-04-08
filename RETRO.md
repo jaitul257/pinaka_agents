@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-07
+Last updated: 2026-04-08
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,39 @@ Last updated: 2026-04-07
 ---
 
 ## Push Log
+
+### 2026-04-08 — Phase 8.1-8.3: Agent Upgrades, Awareness, Marketing Strategy
+
+**What shipped:**
+- **6 agent upgrades**: Confidence scoring (high/medium/low + auto-escalate), cross-agent feedback loop (finance → marketing), customer memory (past 10 interactions), token optimization (51% reduction on Order Ops), Slack Block Kit formatting, storefront AI concierge chat widget
+- **Heartbeat awareness system**: `observations` table + `/cron/heartbeat` every 30 min. 5 cheap SQL checks (stuck orders, unanswered messages, shipping delays, unacted observations, agent failures). Claude only invoked when issues found.
+- **Marketing strategy**: Full-funnel 3-campaign structure (Prospecting $40/day, Retargeting $25/day, Retention $10/day). Seasonal calendar (6 windows). Margin-driven budget allocation. `/cron/marketing-snapshot` every 6h (data only, $0 LLM), `/cron/marketing-weekly` Monday 9AM (Claude strategy review).
+- **Storefront chat widget**: Gold chat bubble on every page of pinakajewellery.com. Claude + Shopify MCP for product search. Product cards, follow-up suggestions, mobile responsive.
+- **About page**: Custom section + template pushed to theme. Page created in Shopify admin.
+- **Dashboard fixes**: Edit button per product (loads from Shopify API), per-size pricing fix (HTML quote escaping), variant_options column added.
+- **14 active cron jobs** on cron-job.org including heartbeat, marketing snapshot, weekly strategy.
+
+**What went well:**
+- Research-first approach for awareness system — the heartbeat + observations pattern from industry research was exactly right. Cheap SQL checks first, LLM only when needed.
+- Token optimization halved Order Ops cost (31K → 15K tokens) just by reducing max_tokens and trimming context nulls.
+- Marketing cadence research prevented a mistake — 30-min marketing cron would have hurt Meta learning phase. Weekly is correct for $75/day high-AOV.
+- All 5 agents validated in production with real Claude calls. Complaint escalation worked correctly (agent chose to post to Slack instead of emailing).
+
+**What was painful:**
+- Dashboard pricing bug took 3 iterations to find. Root cause: `"` in HTML attribute `value="6""` broke the value. Fix: single-quoted attributes `value='6"'`.
+- Audit logger had sync/async mismatch — `await` on a sync Supabase call. Worked on Railway (via asyncio.to_thread wrapper) but failed locally.
+- Agent tool parameter mismatch (`order_id` vs `shopify_order_id`) wasn't caught by tests — only surfaced in production. Need integration tests that exercise tool wrappers with real parameter shapes.
+- AGENT_ENABLED env var required a redeploy to take effect — Railway doesn't hot-reload env vars into running processes.
+- Supabase migration naming: `007_name.sql` gets skipped, must use `<timestamp>_name.sql` pattern. Same lesson from Phase 8 — now firmly in CLAUDE.md.
+
+**Lessons learned:**
+- **Marketing at low volume: weekly > daily.** At 1-2 purchases/week, daily optimization is noise-chasing. 15% ROAS penalty from over-tinkering is documented.
+- **Agent awareness needs a perception layer.** Raw webhooks are events, not awareness. The `observations` table converts events into business-level observations that agents can reason about.
+- **Cheap checks first, LLM when needed.** The heartbeat runs 48 SQL checks/day at $0. Claude fires maybe 1-2 times/day when real issues exist. 99% of beats cost nothing.
+- **HTML attribute quoting matters for form values.** Any value containing special characters (`"`, `'`, `<`, `>`) needs proper escaping. Single-quoted attributes or `&quot;` entities.
+- **Test tool wrappers with the actual parameter names Claude will send.** Unit tests mocked at too high a level and missed the name mismatch.
+
+---
 
 ### 2026-04-07 — Phase 8: Agentic Layer
 

@@ -69,14 +69,14 @@ Cron Jobs (cron-job.org) → FastAPI endpoints → Business Logic → Slack/Emai
 
 ## Database
 
-Supabase PostgreSQL. Migrations in `supabase/migrations/` (001-006b, 20260407120000).
+Supabase PostgreSQL. Migrations in `supabase/migrations/` (001-006b, 20260407-20260408).
 
-**Core tables:** orders, customers, messages, daily_stats, products, listing_drafts, refunds, voice_examples, review_requests, agent_audit_log
+**Core tables:** orders, customers, messages, daily_stats, products, listing_drafts, refunds, voice_examples, review_requests, agent_audit_log, observations, heartbeat_state
 
 ## Development Commands
 
 ```bash
-# Run tests (232 total, all passing)
+# Run tests (242 total, all passing)
 .venv/bin/python -m pytest tests/ -v
 
 # Run specific test file
@@ -163,7 +163,10 @@ Only ask the user if the variable is not set on Railway or needs to be created f
 | 5 | AsyncDatabase, attribution capture, ad spend sync (Meta/Google), product catalog feeds, Google offline conversions, ROAS cron |
 | 6.0-6.2 | Ad creative generation (Claude), Meta Creative Library push, Go-Live ad creation, dashboard ad management |
 | 7 | Storefront: homepage sections (trust badges, atelier ledger, craft timeline), PDP Metal/Wrist Size variants (12 combos), design system alignment (Cormorant Garamond/Geist Mono/DM Sans), dark mode, dashboard multi-variant support with per-size pricing |
-| 8 | Agentic layer: BaseAgent (Claude tool_use loop), ToolRegistry (17 tools wrapping existing functions), PolicyEngine (7 guardrail policies), ContextAssembler, AuditLogger, 5 specialized agents (Order Ops, Customer Service, Marketing, Finance, Retention), dual-path webhook integration, agent_audit_log table, 35 agent tests |
+| 8.0 | Agentic layer: BaseAgent (Claude tool_use loop), ToolRegistry, PolicyEngine (7 guardrails), ContextAssembler, AuditLogger, 5 agents (Order Ops, Customer Service, Marketing, Finance, Retention), dual-path webhooks, agent_audit_log table |
+| 8.1 | Agent upgrades: confidence scoring, cross-agent feedback loop (finance → marketing), customer memory (past interactions), token optimization (51% reduction), Slack Block Kit, storefront AI concierge chat widget |
+| 8.2 | Agent awareness: observations table, heartbeat monitor (30-min cron, cheap SQL checks, Claude only when issues found), observation writers in webhooks |
+| 8.3 | Marketing strategy: 3-campaign funnel (Prospecting/Retargeting/Retention), seasonal calendar (6 windows), margin-driven budget, 6h data snapshots, Monday 9AM weekly strategy review |
 
 ## Shopify Theme Development
 
