@@ -1011,25 +1011,46 @@ async def delete_product(sku: str, dash_token: str | None = Cookie(None)):
 
 def _shopify_product_to_local(p: dict) -> dict:
     """Convert a Shopify product dict to local catalog format."""
+    import re as _re
+
     variants = p.get("variants", [])
     first_sku = variants[0].get("sku", "") if variants else ""
 
     # Extract unique option values
     metals = sorted({v["option1"] for v in variants if v.get("option1") and v["option1"] != "Default Title"})
     sizes = sorted({v["option2"] for v in variants if v.get("option2")})
+
+    # Normalize sizes to include " quote (e.g. '6' -> '6"')
+    normalized_sizes = []
+    for s in sizes:
+        if not s.endswith('"'):
+            s = s + '"'
+        normalized_sizes.append(s)
+    sizes = normalized_sizes
+
     size_prices = {}
     for v in variants:
         if v.get("option2"):
-            size_prices[v["option2"]] = float(v.get("price", 0))
+            size_key = v["option2"]
+            if not size_key.endswith('"'):
+                size_key = size_key + '"'
+            size_prices[size_key] = float(v.get("price", 0))
 
-    # Use first variant SKU as the product-level SKU
+    # Derive base product SKU by stripping variant suffix (-YG-6, -WG-65, etc.)
+    # Pattern: base SKU ends before the metal code
     sku = first_sku or f"SHOP-{p['id']}"
+    if first_sku and metals:
+        metal_codes = {"Yellow Gold": "-YG-", "White Gold": "-WG-", "Rose Gold": "-RG-"}
+        for mc in metal_codes.values():
+            idx = first_sku.find(mc)
+            if idx > 0:
+                sku = first_sku[:idx]
+                break
 
     body_html = p.get("body_html", "") or ""
     # Strip basic HTML tags for the story field
-    import re
-    story = re.sub(r"<[^>]+>", " ", body_html).strip()
-    story = re.sub(r"\s+", " ", story)
+    story = _re.sub(r"<[^>]+>", " ", body_html).strip()
+    story = _re.sub(r"\s+", " ", story)
 
     return {
         "sku": sku,
@@ -1048,7 +1069,11 @@ def _shopify_product_to_local(p: dict) -> dict:
 
 
 async def _load_product_from_shopify_by_id(product_id: int) -> dict | None:
-    """Load a product from Shopify by product ID."""
+    """Load a product from Shopify by product ID.
+
+    If the product already exists in the local catalog (by shopify_product_id),
+    merges Shopify variant data into the existing record so SKU stays consistent.
+    """
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
@@ -1060,7 +1085,20 @@ async def _load_product_from_shopify_by_id(product_id: int) -> dict | None:
             p = resp.json().get("product")
             if not p:
                 return None
-            return _shopify_product_to_local(p)
+
+            shopify_data = _shopify_product_to_local(p)
+
+            # Check if product already exists in local catalog
+            db = _get_db()
+            all_products = db.get_all_products()
+            for existing in all_products:
+                if existing.get("shopify_product_id") == product_id:
+                    # Merge: keep existing SKU and local fields, update variant info from Shopify
+                    existing["variant_options"] = shopify_data["variant_options"]
+                    existing.setdefault("materials", shopify_data["materials"])
+                    return existing
+
+            return shopify_data
     except Exception:
         logger.exception("Failed to load product from Shopify ID %s", product_id)
         return None
