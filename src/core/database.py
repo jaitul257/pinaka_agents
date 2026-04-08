@@ -10,7 +10,7 @@ use in FastAPI async handlers.
 import asyncio
 import functools
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from supabase import create_client
@@ -762,6 +762,21 @@ class Database:
             .execute()
         )
         return result.data
+
+    def mark_abandoned_carts(self, delay_minutes: int = 60) -> int:
+        """Transition 'created' carts older than delay_minutes to 'abandoned'.
+
+        Returns the number of carts marked as abandoned.
+        """
+        cutoff = (datetime.utcnow() - timedelta(minutes=delay_minutes)).isoformat()
+        result = (
+            self._client.table("cart_events")
+            .update({"event_type": "abandoned"})
+            .eq("event_type", "created")
+            .lt("created_at", cutoff)
+            .execute()
+        )
+        return len(result.data) if result.data else 0
 
     def cancel_cart_recovery(self, checkout_token: str) -> None:
         """Cancel pending recovery email when order completes."""

@@ -184,6 +184,7 @@ def test_cron_abandoned_carts(mock_db_cls, mock_slack_cls, mock_class_cls, clien
     """Abandoned cart cron should flag carts for Slack review."""
     mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
+    mock_db.mark_abandoned_carts.return_value = 0
     mock_db.get_abandoned_carts_pending_recovery.return_value = [
         {
             "id": 1,
@@ -221,6 +222,7 @@ def test_cron_abandoned_carts_skip_low_value(mock_db_cls, mock_slack_cls, mock_c
     """Abandoned carts under $1 should be skipped."""
     mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
+    mock_db.mark_abandoned_carts.return_value = 0
     mock_db.get_abandoned_carts_pending_recovery.return_value = [
         {
             "id": 2,
@@ -235,6 +237,21 @@ def test_cron_abandoned_carts_skip_low_value(mock_db_cls, mock_slack_cls, mock_c
     response = client.post("/cron/abandoned-carts", headers=cron_headers)
     assert response.status_code == 200
     assert response.json()["flagged"] == 0
+
+
+@patch("src.api.app.MessageClassifier")
+@patch("src.api.app.SlackNotifier")
+@patch("src.api.app.AsyncDatabase")
+def test_cron_abandoned_carts_marks_created_as_abandoned(mock_db_cls, mock_slack_cls, mock_class_cls, client, cron_headers):
+    """Cron should transition 'created' carts to 'abandoned' before processing."""
+    mock_db = AsyncMock()
+    mock_db_cls.return_value = mock_db
+    mock_db.mark_abandoned_carts.return_value = 2  # 2 carts transitioned
+    mock_db.get_abandoned_carts_pending_recovery.return_value = []
+
+    response = client.post("/cron/abandoned-carts", headers=cron_headers)
+    assert response.status_code == 200
+    mock_db.mark_abandoned_carts.assert_called_once_with(60)
 
 
 # ── Cron: Morning Digest ──

@@ -1,10 +1,10 @@
 # TODO — Pinaka Agents
 
-Last updated: 2026-04-05
+Last updated: 2026-04-07
 
-## Phases 1-5: COMPLETE
+## Phases 1-8.3: COMPLETE
 
-All core infrastructure shipped and deployed. 126 tests passing. System is live on Railway.
+All core infrastructure + agentic layer shipped and deployed. 243 tests passing. System is live on Railway with 5 autonomous agents, heartbeat awareness, and marketing strategy crons.
 
 ---
 
@@ -40,18 +40,18 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 
 ## Phase 6: Planned Features
 
-### 6.0 Shopify Storefront Design & Build
+### 6.0 Shopify Storefront Design & Build — MOSTLY DONE
 - [x] Design system updated for Shopify (DESIGN.md — see "Shopify Storefront Sections")
-- [x] Connect custom domain pinakajewellery.com to Shopify (2026-04-04, Cloudflare DNS, primary domain, SSL live, SHOPIFY_STOREFRONT_URL env var set, ad catalog feeds updated to use custom domain)
-- [ ] Apply design system to Shopify theme (hero, collection grid, PDP, footer) — theme files exist in `shopify-theme/` (untracked, mid-build)
+- [x] Connect custom domain pinakajewellery.com to Shopify (2026-04-04, Cloudflare DNS, primary domain, SSL live)
+- [x] Theme CSS customizations (`shopify-theme/assets/pinaka-custom.css`)
+- [x] About page section + template (`shopify-theme/sections/pinaka-about.liquid`)
+- [x] Sticky bottom CTA on PDP (IntersectionObserver, mobile-only)
+- [x] AI concierge chat widget live on all pages
+- [x] Dark mode support for all custom sections
+- [x] Trust badges, Atelier Ledger section, Craft Timeline
 - [ ] Product photography: studio shots on cream linen with directional light
-- [ ] Implement Atelier Ledger section (live order timeline from Supabase)
-- [ ] Craft Timeline section (5-step making process)
-- [ ] Founder Note section
-- [ ] Mobile: sticky bottom CTA on PDP, slide-in cart drawer
-- **Ref:** Design preview HTML at `/tmp/design-consultation-preview-1775112210.html`. Run `/design-consultation` for full context.
-- **Ref:** DESIGN.md has full specs: hero layout, collection grid, PDP buy flow, navigation, photography direction, anti-patterns.
-- **Why:** Current store is default Dawn theme with zero brand identity. Design system ready, needs implementation.
+- [ ] Slide-in cart drawer
+- **Ref:** DESIGN.md has full specs.
 
 ### 6.1 Automated Ad Creative Generation — DONE (2026-04-05)
 - [x] AI-generated ad copy per product (headline, primary_text, description, CTA) via Claude Sonnet 4
@@ -93,6 +93,56 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 
 ---
 
+## Phase 7: Storefront — DONE (2026-04-07)
+
+- [x] Homepage sections (trust badges, atelier ledger, craft timeline)
+- [x] PDP Metal/Wrist Size variants (12 combos, per-size pricing $4,500-$5,100)
+- [x] Design system alignment (Cormorant Garamond/Geist Mono/DM Sans)
+- [x] Dark mode, sticky CTA, chat widget
+
+## Phase 8: Agentic Layer — DONE (2026-04-08)
+
+- [x] Agent framework (BaseAgent, ToolRegistry, PolicyEngine, ContextAssembler, AuditLogger)
+- [x] 5 specialized agents (Order Ops, Customer Service, Marketing, Finance, Retention)
+- [x] Dual-path webhook (agent_enabled flag, fallback to procedural)
+- [x] Confidence scoring + auto-escalate on low confidence
+- [x] Cross-agent feedback loop (finance margins → marketing budget allocation)
+- [x] Customer memory (past 10 interactions in context)
+- [x] Token optimization (51% reduction on Order Ops)
+- [x] Slack Block Kit formatting for all agent posts
+- [x] Storefront AI concierge chat widget (Claude + Shopify MCP)
+- [x] Heartbeat awareness system (observations table + 30-min SQL checks)
+- [x] Marketing strategy: 3-campaign structure, seasonal calendar, 6h data snapshots, Monday weekly review
+- [x] Abandoned cart flow fix: mark_abandoned_carts transition (2026-04-07)
+- [x] 14 active cron jobs on cron-job.org
+
+---
+
+## Next Up
+
+### High Priority (blockers / revenue)
+- [ ] **Add Meta Ad Account payment method** — blocks all ad serving. URL: https://business.facebook.com/billing_hub/accounts/details/?asset_id=27080581041558231
+- [ ] **Flip Meta Campaign + Ad Set to ACTIVE** — after payment method added
+- [ ] **More products** — only 1 active product (Diamond Tennis Bracelet). Need 3-6 for collection grid.
+- [ ] **Full checkout flow test** — end-to-end: add to cart → checkout → payment → order webhook → agent processing
+- [ ] **Product photography** — studio shots on cream linen with directional light
+
+### Medium Priority (improvements)
+- [ ] Google Ads developer token approval (in review, 2-15 business days from 2026-04-04)
+- [ ] Google Ads OAuth2 setup (after token approved)
+- [ ] Review request automation (post-delivery email, 7-14 days after delivery)
+- [ ] Slide-in cart drawer for mobile
+- [ ] Closed-loop Meta insights feedback into ad creative generation
+
+### Low Priority (tech debt)
+- [ ] `apply_budget_change` Slack button: auto-change Meta/Google budgets (intentional defer)
+- [ ] `datetime.utcnow()` deprecation warnings (cosmetic, Python 3.12+)
+- [ ] Health endpoint: add real DB/Shopify connectivity test
+- [ ] CI/CD pipeline (tests run locally, Railway auto-deploys on push)
+- [ ] pytest-cov integration
+
+---
+
 ## Operational: Ongoing Maintenance
 
 - [x] ~~Monitor Meta Ads token expiry~~ — now a never-expiring System User token (2026-04-04)
@@ -100,14 +150,3 @@ All core infrastructure shipped and deployed. 126 tests passing. System is live 
 - [ ] Review Sentry for production errors weekly
 - [ ] Check ROAS Slack reports weekly and act on budget recommendations
 - [ ] Verify Shopify webhook health (auto-recovery runs every 30 min)
-
----
-
-## Known Gaps (low priority)
-
-- [ ] `apply_budget_change` Slack button logs action but doesn't auto-change Meta/Google budgets (intentional, deferred until API proven stable)
-- [ ] `datetime.utcnow()` deprecation warnings in app.py (12 instances, cosmetic, Python 3.12+)
-- [ ] Health endpoint does shallow checks only (no real DB/Shopify connectivity test)
-- [ ] No CI/CD pipeline (tests run locally, Railway auto-deploys on push)
-- [ ] No pytest-cov integration (coverage not measured)
-- [ ] Dashboard uses sync Database (not migrated to async, Streamlit has different runtime)

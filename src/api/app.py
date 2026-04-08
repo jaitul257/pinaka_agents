@@ -743,6 +743,11 @@ async def cron_abandoned_carts():
     classifier = MessageClassifier()
     flagged = 0
 
+    # Transition stale "created" carts to "abandoned" (60-min delay)
+    newly_abandoned = await db.mark_abandoned_carts(settings.abandoned_cart_delay_minutes)
+    if newly_abandoned:
+        logger.info("Marked %d carts as abandoned", newly_abandoned)
+
     carts = await db.get_abandoned_carts_pending_recovery()
 
     for cart in carts:
@@ -807,6 +812,18 @@ async def cron_abandoned_carts():
             "shopify_checkout_token": cart["shopify_checkout_token"],
             "recovery_email_status": "pending",
         })
+
+        # Fire observation for agent awareness
+        try:
+            from src.agents.observations import observe_cart_abandoned
+            await observe_cart_abandoned(
+                email=customer_email or "anonymous",
+                cart_value=cart_value,
+                items=product_names,
+            )
+        except Exception:
+            pass  # Non-critical
+
         flagged += 1
 
     return {"status": "ok", "module": "cart_recovery", "flagged": flagged}
