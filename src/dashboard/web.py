@@ -368,9 +368,16 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
     variant_sizes_available = ['6"', '6.5"', '7"', '7.5"']
     saved_variant_opts = p.get("variant_options", {})
     saved_metals = saved_variant_opts.get("metals", variant_metals_available)
-    saved_sizes = saved_variant_opts.get("sizes", variant_sizes_available)
+    # Normalize saved sizes to always include " quote
+    raw_saved_sizes = saved_variant_opts.get("sizes", variant_sizes_available)
+    saved_sizes = [s if s.endswith('"') else s + '"' for s in raw_saved_sizes]
     # Per-size pricing: {size: retail_price}
-    size_pricing = saved_variant_opts.get("size_pricing", {})
+    # Normalize keys — may come with or without " quote from various sources
+    raw_size_pricing = saved_variant_opts.get("size_pricing", {})
+    size_pricing = {}
+    for k, v in raw_size_pricing.items():
+        normalized = k if k.endswith('"') else k + '"'
+        size_pricing[normalized] = v
 
     categories = ["Bracelets", "Necklaces", "Rings", "Earrings", "Pendants", "Other"]
     cat_options = "".join(f'<option value="{c}" {"selected" if c == p.get("category", "Bracelets") else ""}>{c}</option>' for c in categories)
@@ -438,9 +445,9 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;">
                         {"".join(f'''<div style="border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;">
                             <label style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;">
-                                <input type="checkbox" name="variant_sizes" value="{s}" {"checked" if s in saved_sizes else ""}> {s}
+                                <input type="checkbox" name="variant_sizes" value='{s}' {"checked" if s in saved_sizes else ""}> {s}
                             </label>
-                            <input type="number" name="price_{s.replace(chr(34),"").replace(".","_")}" value="{size_pricing.get(s, first_variant.get("retail", 2850))}" step="1" min="0" style="width:100%;text-align:center;font-size:14px;padding:6px;" placeholder="Retail $">
+                            <input type="number" name="price_{s.replace(chr(34),'').replace('.','_')}" value="{int(size_pricing.get(s, first_variant.get('retail', 0)))}" step="1" min="0" style="width:100%;text-align:center;font-size:14px;padding:6px;" placeholder="Retail $">
                         </div>''' for s in variant_sizes_available)}
                     </div>
                     <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">Set retail price per wrist size. All metals share the same size-based price.</p>
@@ -586,7 +593,9 @@ async def add_product_submit(
     # Parse multi-value form fields
     form_data = await request.form()
     variant_metals = form_data.getlist("variant_metals")
-    variant_sizes = form_data.getlist("variant_sizes")
+    raw_sizes = form_data.getlist("variant_sizes")
+    # Normalize sizes to always include " quote (HTML attribute may strip it)
+    variant_sizes = [s if s.endswith('"') else s + '"' for s in raw_sizes]
 
     # Per-size pricing
     size_prices: dict[str, float] = {}
@@ -826,9 +835,11 @@ async def edit_product_submit(
     # Parse multi-value form fields
     form_data = await request.form()
     variant_metals = form_data.getlist("variant_metals")
-    variant_sizes = form_data.getlist("variant_sizes")
+    raw_sizes = form_data.getlist("variant_sizes")
+    # Normalize sizes to always include " quote (HTML attribute may strip it)
+    variant_sizes = [s if s.endswith('"') else s + '"' for s in raw_sizes]
 
-    # Per-size pricing
+    # Per-size pricing — read from price_6, price_6_5, price_7, price_7_5 fields
     size_prices: dict[str, float] = {}
     for s in ['6"', '6.5"', '7"', '7.5"']:
         field_name = f"price_{s.replace(chr(34), '').replace('.', '_')}"
