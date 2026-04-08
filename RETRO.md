@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-05 (morning)
+Last updated: 2026-04-07
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,67 @@ Last updated: 2026-04-05 (morning)
 ---
 
 ## Push Log
+
+### 2026-04-07 — Phase 8: Agentic Layer
+
+**What shipped:**
+- **Agent framework** (`src/agents/`): BaseAgent with Claude tool_use reasoning loop, ToolRegistry (17 tools wrapping existing functions), PolicyEngine (7 guardrail policies), ContextAssembler, AuditLogger
+- **5 specialized agents**: Order Ops, Customer Service, Marketing, Finance, Retention — each with domain-specific system prompts and tool sets
+- **Dual-path integration**: `shopify_webhooks.py` routes through agent when `agent_enabled=True`, falls back to procedural on failure. Existing flow unchanged when flag is off.
+- **35 new tests** (232 total, all passing). Tests cover ToolRegistry, all 7 policies, BaseAgent loop (text, tool_use, deny, escalate, max_turns, error recovery).
+- **`agent_audit_log` table** live on Supabase with 3 indexes. Migration applied via `supabase db push`.
+
+**What went well:**
+- Research-first approach: reading Anthropic's building-effective-agents guide, Shopify agent ecosystem, and real implementations before coding led to better architecture decisions.
+- Raw API loop over tool_runner/Agent SDK — gives full control over guardrail injection. Tool_runner can be adopted later.
+- Wrapping existing functions as tools means zero business logic rewriting. All 39 action functions stay as-is.
+- 232 tests all green first try — no regressions from the dual-path webhook changes.
+
+**Lessons learned:**
+- Supabase migration filenames must match `<timestamp>_name.sql` pattern. Old-style `007_name.sql` gets skipped by `supabase db push`. Used `20260407120000_agent_audit.sql`.
+- `is_error: True` on tool results is critical — Claude adapts and tries alternatives instead of crashing the loop.
+- Tool descriptions need prompt engineering equal to system prompts (Anthropic's advice). Each tool got a detailed description telling Claude when/how to use it.
+- Three-layer guardrail model (input validation, execution controls, output filtering) is cleaner than a flat policy list.
+- `agent_enabled` defaults to False — zero risk to production until explicitly flipped on Railway.
+
+---
+
+### 2026-04-07 — Homepage sections, PDP variants, design system alignment
+
+**What shipped:**
+- **Homepage**: Trust Badges (3 badges), Atelier Ledger ("Recently Crafted" with 4 entries), Craft Timeline, Founder Note all live via updated index.json
+- **PDP Metal + Wrist Size variants**: 12 Shopify variants (3 metals x 4 sizes) created via REST API, Dawn's built-in pill picker auto-renders
+- **PDP Typography**: Cormorant Garamond 36px title, Geist Mono 26px price, DM Sans 16px body, matching design-consultation-preview exactly
+- **Variant pills**: transparent bg, 1px border, 8px 18px padding, 12px uppercase muted labels, gold selected state
+- **Dashboard multi-variant support**: Metal checkboxes + Wrist Size checkboxes with per-size pricing, auto-generates variant matrix for Shopify push
+- **Trust badges updated**: removed "Free Lifetime Care", changed "Lab-Grown Diamonds" to "Lab-Grown & Natural"
+- 197 tests still passing after dashboard changes
+
+**What went well:**
+- Shopify theme settings already had Cormorant + DM Sans configured (`cormorant_n4`, `dm_sans_n4`). No need for Google Fonts duplication, just Geist Mono.
+- Dawn's variant picker with `picker_type: "button"` works out of the box. Adding options to the product was all that was needed.
+- Pushing `config/settings_data.json` alongside other files forced Shopify to recompile all templates immediately, bypassing the CDN cache issue.
+
+**What was painful:**
+- **Shopify CDN caching was the #1 blocker.** Template and asset changes pushed via CLI reported "success" but didn't appear on the storefront for 15-30+ minutes. The compiled template version (`t/3`) and CSS `?v=` hash are baked into the compiled theme and DON'T update until Shopify recompiles.
+- **The `--only` flag without `--nodelete` DELETES files not in the filter.** One push accidentally removed Dawn's built-in snippets, breaking the preview URL with Liquid errors. Had to do a full theme restore immediately.
+- **Multiple redundant font loads**: Shopify CDN (via settings), Google Fonts in theme.liquid, Google Fonts in section. Consolidated to: Shopify CDN for Cormorant + DM Sans, Google Fonts only for Geist Mono.
+- **Tried 5 approaches** before finding the settings_data.json trick: waiting for propagation, preview URLs, inline style sections, custom_liquid blocks, renamed CSS files.
+
+**Lessons learned:**
+- **To force Shopify CDN recompilation, push `config/settings_data.json` alongside your changes.** This is the only reliable way to get immediate propagation. The settings file triggers a full theme recompile on Shopify's side.
+- **Never use `shopify theme push --only` without `--nodelete`.** The default behavior deletes all remote files NOT matching the `--only` filter. Always add `--nodelete` for partial pushes.
+- **Don't duplicate font loading.** Check `config/settings_data.json` for `type_header_font` and `type_body_font` before adding Google Fonts links. Shopify already loads these via `font_face` in theme.liquid.
+- **Use Shopify CSS variables instead of hardcoded font names.** `var(--font-heading-family)` works because settings_data.json sets the font. Override size/weight only, not font-family.
+- **The `pinaka-pdp-styles` section approach (inline `<style>` in a template section) works but is fragile.** It depends on product.json propagating. Putting CSS in the global `pinaka-custom.css` asset is more reliable since it loads via theme.liquid.
+- **Shopify REST Admin API works for product variant creation without `write_products` scope in shopify.app.toml.** The Railway access token has broader scopes than the app manifest declares.
+- **Shopify's `cormorant_n4` is "Cormorant", NOT "Cormorant Garamond".** These are different typefaces with different letterforms. The design system uses Cormorant Garamond from Google Fonts. Must explicitly load from Google Fonts and override `font-family` — can't rely on Shopify's built-in font.
+- **Always set `-webkit-font-smoothing: antialiased` on body.** Without it, fonts render heavier/blurrier on macOS. The design mockup has it, Dawn doesn't.
+- **Dark mode needs explicit overrides for EVERY custom section.** Dawn's dark mode only covers its own components. Trust badges, variant pills, craft timeline, ledger — all need `body.dark-mode` rules for text color, borders, and backgrounds. Don't assume Dawn handles it.
+- **Dark mode header: use same bg as body (`#1a1815`), remove ALL borders.** The announcement bar has a subtle `border-bottom` that creates a visible line. Must `border: none !important` on `.announcement-bar`, `.utility-bar`, `.header`, and `.header-wrapper`.
+- **Compare computed styles element-by-element against the design source.** Use `getComputedStyle()` audit on every PDP element (h1, price, desc, labels, pills, button) to find exact mismatches. Font-family, font-size, font-weight, margin, padding, color, background — check ALL of them. The devil is in the details (Cormorant vs Cormorant Garamond, 0px vs 6px margin, auto vs antialiased smoothing).
+
+---
 
 ### 2026-04-05 — Phase 6.2: Auto-create Meta Ad on Go Live + 6.1 polish
 

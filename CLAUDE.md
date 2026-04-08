@@ -43,7 +43,8 @@ Shopify Webhooks → FastAPI → Supabase → AI Processing → Slack Approval �
 Cron Jobs (cron-job.org) → FastAPI endpoints → Business Logic → Slack/Email/DB
 ```
 
-**8 modules** in `src/`:
+**9 modules** in `src/`:
+- `agents/` — AI agent framework: BaseAgent (Claude tool_use loop), ToolRegistry, PolicyEngine (7 guardrail policies), ContextAssembler, AuditLogger, 5 specialized agents
 - `api/` — FastAPI app, Shopify webhooks, inbound email handler
 - `core/` — Database, settings, email, Slack, Shopify client, rate limiter, attribution
 - `shipping/` — Fraud detection, insurance, ShipStation tracking, evidence collection
@@ -68,15 +69,15 @@ Cron Jobs (cron-job.org) → FastAPI endpoints → Business Logic → Slack/Emai
 
 ## Database
 
-Supabase PostgreSQL. Migrations in `supabase/migrations/` (001-006b).
+Supabase PostgreSQL. Migrations in `supabase/migrations/` (001-006b, 20260407120000).
 
-**Core tables:** orders, customers, messages, daily_stats, products, listing_drafts, refunds, voice_examples, review_requests
+**Core tables:** orders, customers, messages, daily_stats, products, listing_drafts, refunds, voice_examples, review_requests, agent_audit_log
 
 ## Development Commands
 
 ```bash
-# Run tests (126 total, all passing)
-.venv/bin/pytest tests/ -v
+# Run tests (232 total, all passing)
+.venv/bin/python -m pytest tests/ -v
 
 # Run specific test file
 .venv/bin/pytest tests/unit/test_shipping.py -v
@@ -160,6 +161,41 @@ Only ask the user if the variable is not set on Railway or needs to be created f
 | 3 | Order webhooks, tracking, delivery emails, evidence collection |
 | 4 | Refund pipeline, webhook health monitoring, Meta CAPI, reorder reminders, product dashboard |
 | 5 | AsyncDatabase, attribution capture, ad spend sync (Meta/Google), product catalog feeds, Google offline conversions, ROAS cron |
+| 6.0-6.2 | Ad creative generation (Claude), Meta Creative Library push, Go-Live ad creation, dashboard ad management |
+| 7 | Storefront: homepage sections (trust badges, atelier ledger, craft timeline), PDP Metal/Wrist Size variants (12 combos), design system alignment (Cormorant Garamond/Geist Mono/DM Sans), dark mode, dashboard multi-variant support with per-size pricing |
+| 8 | Agentic layer: BaseAgent (Claude tool_use loop), ToolRegistry (17 tools wrapping existing functions), PolicyEngine (7 guardrail policies), ContextAssembler, AuditLogger, 5 specialized agents (Order Ops, Customer Service, Marketing, Finance, Retention), dual-path webhook integration, agent_audit_log table, 35 agent tests |
+
+## Shopify Theme Development
+
+**Theme directory:** `shopify-theme/`
+**Live theme ID:** 159721455874 (Pinaka Dawn)
+
+### Push commands
+```bash
+# Always include settings_data.json to force CDN recompile
+shopify theme push --store pinaka-jewellery --theme 159721455874 \
+  --only 'assets/pinaka-custom.css' --only 'config/settings_data.json' \
+  --allow-live --nodelete
+
+# NEVER use --only without --nodelete (it deletes unlisted files!)
+```
+
+### Key rules
+- **Always push `config/settings_data.json`** alongside any theme changes to force immediate CDN recompilation. Without it, changes take 15-30+ minutes to propagate.
+- **Always use `--nodelete`** with `--only` flag. Without it, Shopify deletes all remote files not matching the filter.
+- **Shopify's `cormorant_n4` is "Cormorant", not "Cormorant Garamond".** Different typeface. We load Cormorant Garamond from Google Fonts and override with `font-family: 'Cormorant Garamond', serif !important`.
+- **Use CSS variables** from `pinaka-custom.css` (`--pinaka-accent`, `--pinaka-charcoal`, etc.) not hardcoded hex in section files.
+- **Dark mode requires explicit overrides** for every custom section. Dawn only handles its own components.
+- **Design reference:** `file:///private/tmp/design-consultation-preview-1775112210.html` — the source of truth for fonts, sizes, colors, spacing.
+
+### Font stack (from design system)
+| Use | Font | Size | Weight |
+|-----|------|------|--------|
+| Headings | Cormorant Garamond (Google Fonts) | 36px | 400 |
+| Body | DM Sans (Shopify settings) | 16px | 400 |
+| Prices/data | Geist Mono (Google Fonts) | 26px/12px | 500 |
+| Labels | DM Sans | 12px | 600 |
+| Pills | DM Sans | 14px | 400 |
 
 ## gstack
 

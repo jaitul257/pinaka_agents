@@ -358,8 +358,17 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
     first_variant = next(iter(pricing.values()), {})
     cert = p.get("certification") or {}
 
-    metals = ["14K Yellow Gold", "14K White Gold", "14K Rose Gold", "18K Yellow Gold", "18K White Gold", "18K Rose Gold", "Platinum", "Sterling Silver"]
-    metal_options = "".join(f'<option value="{m}" {"selected" if m == materials.get("metal", "14K Yellow Gold") else ""}>{m}</option>' for m in metals)
+    metals_list = ["14K Yellow Gold", "14K White Gold", "14K Rose Gold", "18K Yellow Gold", "18K White Gold", "18K Rose Gold", "Platinum", "Sterling Silver"]
+    metal_options = "".join(f'<option value="{m}" {"selected" if m == materials.get("metal", "14K Yellow Gold") else ""}>{m}</option>' for m in metals_list)
+
+    # Variant options for Metal and Wrist Size
+    variant_metals_available = ["Yellow Gold", "White Gold", "Rose Gold"]
+    variant_sizes_available = ['6"', '6.5"', '7"', '7.5"']
+    saved_variant_opts = p.get("variant_options", {})
+    saved_metals = saved_variant_opts.get("metals", variant_metals_available)
+    saved_sizes = saved_variant_opts.get("sizes", variant_sizes_available)
+    # Per-size pricing: {size: retail_price}
+    size_pricing = saved_variant_opts.get("size_pricing", {})
 
     categories = ["Bracelets", "Necklaces", "Rings", "Earrings", "Pendants", "Other"]
     cat_options = "".join(f'<option value="{c}" {"selected" if c == p.get("category", "Bracelets") else ""}>{c}</option>' for c in categories)
@@ -404,22 +413,36 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
         </div>
 
         <div class="card">
-            <h3>Pricing</h3>
-            <div class="form-grid" style="margin-top:12px;">
-                <div class="form-group">
-                    <label>Variant Name</label>
-                    <input type="text" name="variant_name" value="{first_variant_name}">
-                </div>
+            <h3>Pricing &amp; Variants</h3>
+            <div style="margin-top:12px;">
                 <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
                     <div>
-                        <label>Retail Price ($) *</label>
-                        <input type="number" name="retail" value="{first_variant.get("retail", 2850)}" step="1" min="0" required>
-                    </div>
-                    <div>
-                        <label>Cost ($, private) *</label>
+                        <label>Base Cost ($, private) *</label>
                         <input type="number" name="cost" value="{first_variant.get("cost", 450)}" step="1" min="0" required>
                     </div>
+                    <div>
+                        <label>Variant Name (internal)</label>
+                        <input type="text" name="variant_name" value="{first_variant_name}">
+                    </div>
                 </div>
+                <fieldset style="border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;">
+                    <legend style="font-weight:600;font-size:13px;padding:0 8px;">Metal Options</legend>
+                    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                        {"".join(f'<label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;"><input type="checkbox" name="variant_metals" value="{m}" {"checked" if m in saved_metals else ""}> {m}</label>' for m in variant_metals_available)}
+                    </div>
+                </fieldset>
+                <fieldset style="border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;">
+                    <legend style="font-weight:600;font-size:13px;padding:0 8px;">Wrist Size Options &amp; Pricing</legend>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;">
+                        {"".join(f'''<div style="border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;">
+                            <label style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;">
+                                <input type="checkbox" name="variant_sizes" value="{s}" {"checked" if s in saved_sizes else ""}> {s}
+                            </label>
+                            <input type="number" name="price_{s.replace(chr(34),"").replace(".","_")}" value="{size_pricing.get(s, first_variant.get("retail", 2850))}" step="1" min="0" style="width:100%;text-align:center;font-size:14px;padding:6px;" placeholder="Retail $">
+                        </div>''' for s in variant_sizes_available)}
+                    </div>
+                    <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">Set retail price per wrist size. All metals share the same size-based price.</p>
+                </fieldset>
             </div>
         </div>
 
@@ -505,8 +528,31 @@ async def add_product_page(dash_token: str | None = Cookie(None)):
     return HTMLResponse(_base_html("Add Product", body, active="add"))
 
 
+def _build_shopify_variants(sku: str, variant_metals: list[str], variant_sizes: list[str], size_prices: dict[str, float]) -> list[dict]:
+    """Build Shopify variant payload from Metal × Wrist Size matrix."""
+    import itertools
+    metal_codes = {"Yellow Gold": "YG", "White Gold": "WG", "Rose Gold": "RG"}
+    variants = []
+    for metal, size in itertools.product(variant_metals, variant_sizes):
+        mc = metal_codes.get(metal, "XX")
+        sc = size.replace('"', '').replace('.', '')
+        variant_sku = f"{sku}-{mc}-{sc}"
+        price = size_prices.get(size, 0)
+        variants.append({
+            "option1": metal,
+            "option2": size,
+            "price": str(price),
+            "sku": variant_sku,
+            "inventory_management": None,
+            "inventory_policy": "continue",
+            "requires_shipping": True,
+        })
+    return variants
+
+
 @router.post("/add")
 async def add_product_submit(
+    request: Request,
     dash_token: str | None = Cookie(None),
     name: str = Form(""),
     sku: str = Form(""),
@@ -516,7 +562,6 @@ async def add_product_submit(
     diamond_type: str = Form(""),
     weight_grams: float = Form(12.5),
     variant_name: str = Form("default-7inch"),
-    retail: float = Form(0),
     cost: float = Form(0),
     story: str = Form(""),
     care: str = Form(""),
@@ -535,6 +580,24 @@ async def add_product_submit(
 
     if not name or not sku or not story:
         return RedirectResponse("/dashboard/add", status_code=303)
+
+    # Parse multi-value form fields
+    form_data = await request.form()
+    variant_metals = form_data.getlist("variant_metals")
+    variant_sizes = form_data.getlist("variant_sizes")
+
+    # Per-size pricing
+    size_prices: dict[str, float] = {}
+    for s in ['6"', '6.5"', '7"', '7.5"']:
+        field_name = f"price_{s.replace(chr(34), '').replace('.', '_')}"
+        val = form_data.get(field_name, "0")
+        try:
+            size_prices[s] = float(val) if val else 0
+        except ValueError:
+            size_prices[s] = 0
+
+    # Use first size price as the representative retail for internal records
+    retail = next((size_prices[s] for s in variant_sizes if size_prices.get(s)), 0)
 
     product_data = {
         "sku": sku,
@@ -564,13 +627,18 @@ async def add_product_submit(
             "color": cert_color,
         }
 
-    # Save to Supabase
+    # Save to Supabase (include variant options for form re-population)
     db_record = {
         "sku": sku,
         "name": name,
         "category": category,
         "materials": product_data["materials"],
         "pricing": product_data["pricing"],
+        "variant_options": {
+            "metals": variant_metals,
+            "sizes": variant_sizes,
+            "size_pricing": size_prices,
+        },
         "story": story,
         "care_instructions": care,
         "occasions": product_data["occasions"],
@@ -593,12 +661,25 @@ async def add_product_submit(
         except Exception:
             logger.exception("Embedding failed for %s", sku)
 
-    # Push to Shopify as active product
+    # Push to Shopify as active product with Metal × Wrist Size variants
     shopify_msg = ""
     if push_shopify and settings.shopify_shop_domain and settings.shopify_access_token:
         try:
             tags_list = list(product_data.get("tags", []))
             tags_list.append(sku)
+
+            # Build variant matrix
+            if variant_metals and variant_sizes:
+                shopify_variants = _build_shopify_variants(sku, variant_metals, variant_sizes, size_prices)
+                options_payload = [
+                    {"name": "Metal"},
+                    {"name": "Wrist Size"},
+                ]
+            else:
+                # Fallback: single variant if no options selected
+                shopify_variants = [{"title": variant_name, "price": str(retail), "sku": sku, "inventory_management": None}]
+                options_payload = None
+
             shopify_payload = {
                 "product": {
                     "title": name,
@@ -607,17 +688,13 @@ async def add_product_submit(
                     "product_type": category,
                     "tags": ", ".join(tags_list),
                     "status": "active",
-                    "variants": [
-                        {
-                            "title": variant_name,
-                            "price": str(retail),
-                            "sku": sku,
-                            "inventory_management": None,
-                        }
-                    ],
+                    "variants": shopify_variants,
                 }
             }
-            async with httpx.AsyncClient(timeout=15) as client:
+            if options_payload:
+                shopify_payload["product"]["options"] = options_payload
+
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     _shopify_api("products.json"),
                     headers=_shopify_headers(),
@@ -627,10 +704,10 @@ async def add_product_submit(
                     shopify_id = resp.json().get("product", {}).get("id", "")
                     if shopify_id:
                         _get_db().upsert_product({"sku": sku, "name": name, "shopify_product_id": shopify_id})
-                        # Set Google Shopping metafields so Merchant Center accepts it
                         await _upsert_google_metafields(shopify_id, sku, category, metal)
-                    shopify_msg = f"+and+created+in+Shopify+(ID:+{shopify_id})"
-                    logger.info("Product %s pushed to Shopify (ID: %s)", sku, shopify_id)
+                    n_variants = len(shopify_variants)
+                    shopify_msg = f"+and+created+in+Shopify+(ID:+{shopify_id},+{n_variants}+variants)"
+                    logger.info("Product %s pushed to Shopify (ID: %s, %d variants)", sku, shopify_id, n_variants)
                 else:
                     error_detail = resp.json().get("errors", resp.text[:200])
                     shopify_msg = f"+but+Shopify+push+failed:+{error_detail}"
@@ -676,6 +753,7 @@ async def edit_product_page(sku: str, dash_token: str | None = Cookie(None)):
 
 @router.post("/edit/{sku}")
 async def edit_product_submit(
+    request: Request,
     sku: str,
     dash_token: str | None = Cookie(None),
     name: str = Form(""),
@@ -685,7 +763,6 @@ async def edit_product_submit(
     diamond_type: str = Form(""),
     weight_grams: float = Form(12.5),
     variant_name: str = Form("default-7inch"),
-    retail: float = Form(0),
     cost: float = Form(0),
     story: str = Form(""),
     care: str = Form(""),
@@ -701,6 +778,23 @@ async def edit_product_submit(
 ):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
+
+    # Parse multi-value form fields
+    form_data = await request.form()
+    variant_metals = form_data.getlist("variant_metals")
+    variant_sizes = form_data.getlist("variant_sizes")
+
+    # Per-size pricing
+    size_prices: dict[str, float] = {}
+    for s in ['6"', '6.5"', '7"', '7.5"']:
+        field_name = f"price_{s.replace(chr(34), '').replace('.', '_')}"
+        val = form_data.get(field_name, "0")
+        try:
+            size_prices[s] = float(val) if val else 0
+        except ValueError:
+            size_prices[s] = 0
+
+    retail = next((size_prices[s] for s in variant_sizes if size_prices.get(s)), 0)
 
     product_data = {
         "sku": sku,
@@ -737,6 +831,11 @@ async def edit_product_submit(
         "category": category,
         "materials": product_data["materials"],
         "pricing": product_data["pricing"],
+        "variant_options": {
+            "metals": variant_metals,
+            "sizes": variant_sizes,
+            "size_pricing": size_prices,
+        },
         "story": story,
         "care_instructions": care,
         "occasions": product_data["occasions"],
@@ -760,15 +859,14 @@ async def edit_product_submit(
     # Sync edit to Shopify if product exists there
     shopify_msg = ""
     if push_shopify and settings.shopify_shop_domain and settings.shopify_access_token:
-        # Find Shopify product ID by SKU
         existing = _get_db().get_product_by_sku(sku)
         shopify_id = (existing or {}).get("shopify_product_id")
 
         if shopify_id:
-            # Update existing Shopify product
             try:
                 tags_list = list(product_data.get("tags", []))
                 tags_list.append(sku)
+
                 update_payload = {
                     "product": {
                         "id": shopify_id,
@@ -778,16 +876,27 @@ async def edit_product_submit(
                         "tags": ", ".join(tags_list),
                     }
                 }
-                async with httpx.AsyncClient(timeout=15) as client:
+
+                # Include variant updates if options are set
+                if variant_metals and variant_sizes:
+                    update_payload["product"]["options"] = [
+                        {"name": "Metal"},
+                        {"name": "Wrist Size"},
+                    ]
+                    update_payload["product"]["variants"] = _build_shopify_variants(
+                        sku, variant_metals, variant_sizes, size_prices
+                    )
+
+                async with httpx.AsyncClient(timeout=30) as client:
                     resp = await client.put(
                         _shopify_api(f"products/{shopify_id}.json"),
                         headers=_shopify_headers(),
                         json=update_payload,
                     )
                     if resp.status_code == 200:
-                        # Keep Google Shopping metafields in sync
                         await _upsert_google_metafields(shopify_id, sku, category, metal)
-                        shopify_msg = "+and+updated+in+Shopify"
+                        n_variants = len(update_payload["product"].get("variants", []))
+                        shopify_msg = f"+and+updated+in+Shopify+({n_variants}+variants)" if n_variants else "+and+updated+in+Shopify"
                     else:
                         shopify_msg = f"+but+Shopify+update+failed:+{resp.status_code}"
             except Exception as e:

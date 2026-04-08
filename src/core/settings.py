@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     reorder_reminder_days: str = "90,180,365"  # Days after purchase to check (comma-separated)
     reorder_cooldown_days: int = 180  # Min days between reorder emails per customer
 
+    # Agent system
+    agent_enabled: bool = False  # Feature flag — flip on Railway when ready
+    agent_max_turns: int = 15  # Max reasoning loop iterations per agent run
+
     # Rate limiting
     shopify_qps: float = 2.0  # Shopify Admin API: 2 requests/second (basic plan)
     claude_rpm: int = 50

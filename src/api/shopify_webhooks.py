@@ -108,11 +108,246 @@ async def validate_shopify_request(request: Request) -> tuple[bytes, dict[str, A
 # ── Background task handlers ──
 
 async def _process_order(order_data: dict[str, Any]) -> None:
-    """Process a Shopify order: persist, upsert customer, check fraud, emit events."""
+    """Process a Shopify order: persist, upsert customer, check fraud, emit events.
+
+    Dual-path: when settings.agent_enabled is True, delegates to the Order Ops
+    Agent for autonomous processing with guardrails. Falls back to procedural
+    flow if the agent fails or if agent_enabled is False.
+    """
     try:
-        await _process_order_inner(order_data)
+        if settings.agent_enabled:
+            await _process_order_via_agent(order_data)
+        else:
+            await _process_order_inner(order_data)
     except Exception:
         logger.exception("Failed to process order %s", order_data.get("id"))
+
+
+async def _process_order_via_agent(order_data: dict[str, Any]) -> None:
+    """Process order using the Order Ops Agent (agentic path).
+
+    The agent reasons about the order, runs fraud checks, creates ShipStation
+    orders, and calculates profit — all within guardrail policies. If the agent
+    fails, falls back to the procedural path.
+    """
+    shopify_order_id = order_data.get("id")
+    db = _get_async_db()
+
+    # Step 1: Persist order + customer (same as procedural — must happen first)
+    # The agent needs the order in Supabase to look it up via tools
+    await _persist_order_and_customer(order_data)
+
+    # Step 2: Run the agent
+    try:
+        from src.agents.order_ops import OrderOpsAgent
+        from src.agents.context import ContextAssembler
+
+        agent = OrderOpsAgent()
+        context = await ContextAssembler().for_order(shopify_order_id)
+
+        # Add Shopify raw data for ShipStation order creation
+        context["shopify_data"] = {
+            "shipping_address": order_data.get("shipping_address", {}),
+            "billing_address": order_data.get("billing_address", {}),
+            "line_items": order_data.get("line_items", []),
+            "order_number": order_data.get("order_number", shopify_order_id),
+        }
+
+        result = await agent.run(
+            f"Process new order #{shopify_order_id} (${float(order_data.get('total_price', 0)):,.2f})",
+            context,
+        )
+        logger.info(
+            "Agent processed order #%s: success=%s, escalated=%s, tokens=%d",
+            shopify_order_id, result.success, result.escalated, result.tokens_used,
+        )
+
+        # Fire attribution events regardless of agent path
+        await _fire_attribution_events(order_data)
+
+    except Exception:
+        logger.exception("Agent failed for order #%s, falling back to procedural", shopify_order_id)
+        # Fall back to procedural (skip persist since we already did it)
+        await _process_order_procedural(order_data)
+
+
+async def _persist_order_and_customer(order_data: dict[str, Any]) -> None:
+    """Persist order and customer to Supabase. Shared by both agent and procedural paths."""
+    shopify_order_id = order_data.get("id")
+    db = _get_async_db()
+
+    # Idempotency check
+    existing = await db.get_order_by_shopify_id(shopify_order_id)
+    if existing:
+        logger.info("Order %s already processed, skipping persist", shopify_order_id)
+        return
+
+    # Extract customer info
+    customer_data = order_data.get("customer", {})
+    shopify_customer_id = customer_data.get("id")
+    customer_email = order_data.get("email", customer_data.get("email", ""))
+    customer_name = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
+
+    # Upsert customer
+    customer_record = None
+    if shopify_customer_id:
+        customer_record = await db.upsert_customer({
+            "shopify_customer_id": shopify_customer_id,
+            "email": customer_email,
+            "name": customer_name or customer_email,
+            "phone": customer_data.get("phone", ""),
+            "accepts_marketing": customer_data.get("accepts_marketing", False),
+            "order_count": customer_data.get("orders_count", 1),
+            "lifetime_value": float(customer_data.get("total_spent", "0")),
+            "first_order_date": datetime.utcnow().isoformat(),
+            "last_order_date": datetime.utcnow().isoformat(),
+        })
+
+        # Update lifecycle stage
+        orders_count = customer_data.get("orders_count", 1)
+        if orders_count >= 3:
+            stage = "advocate"
+        elif orders_count >= 2:
+            stage = "repeat"
+        else:
+            stage = "first_purchase"
+        await db.update_customer_lifecycle(customer_record["id"], stage)
+
+    # Persist order with attribution params
+    total = float(order_data.get("total_price", "0"))
+    subtotal = float(order_data.get("subtotal_price", "0"))
+    tax = float(order_data.get("total_tax", "0"))
+    attribution = extract_attribution(order_data)
+
+    await db.upsert_order({
+        "shopify_order_id": shopify_order_id,
+        "customer_id": customer_record["id"] if customer_record else None,
+        "buyer_email": customer_email,
+        "buyer_name": customer_name,
+        "total": total,
+        "subtotal": subtotal,
+        "tax": tax,
+        "shipping_cost": float(order_data.get("total_shipping_price_set", {}).get("shop_money", {}).get("amount", "0")),
+        "status": "paid",
+        "checkout_token": order_data.get("checkout_token", ""),
+        "created_at": order_data.get("created_at", datetime.utcnow().isoformat()),
+        **{k: v for k, v in attribution.items() if v is not None},
+    })
+
+    # Cancel any pending abandoned cart recovery
+    checkout_token = order_data.get("checkout_token", "")
+    if checkout_token:
+        await db.cancel_cart_recovery(checkout_token)
+
+    # Emit event
+    await event_bus.emit("order.created", {
+        "order": order_data,
+        "customer": customer_record,
+        "shopify_data": order_data,
+    })
+
+
+async def _fire_attribution_events(order_data: dict[str, Any]) -> None:
+    """Fire Meta CAPI and Google offline conversion events."""
+    shopify_order_id = order_data.get("id")
+    customer_data = order_data.get("customer", {})
+    customer_email = order_data.get("email", customer_data.get("email", ""))
+    total = float(order_data.get("total_price", "0"))
+    attribution = extract_attribution(order_data)
+
+    if order_data.get("financial_status") == "paid":
+        try:
+            from src.marketing.meta_capi import MetaConversionsAPI
+            meta = MetaConversionsAPI()
+            if meta.is_configured:
+                await meta.send_purchase_event(
+                    order_data=order_data,
+                    customer_email=customer_email,
+                    customer_phone=customer_data.get("phone", ""),
+                    customer_first_name=customer_data.get("first_name", ""),
+                    customer_last_name=customer_data.get("last_name", ""),
+                )
+        except Exception:
+            logger.exception("Meta CAPI failed for order #%s (non-blocking)", shopify_order_id)
+
+        if attribution.get("gclid"):
+            try:
+                from src.marketing.google_conversions import GoogleOfflineConversions
+                google_conv = GoogleOfflineConversions()
+                if google_conv.is_configured:
+                    await google_conv.send_purchase_conversion(
+                        gclid=attribution["gclid"],
+                        conversion_date_time=order_data.get("created_at", ""),
+                        conversion_value=total,
+                        order_id=str(shopify_order_id),
+                    )
+            except Exception:
+                logger.exception("Google conversion failed for order #%s (non-blocking)", shopify_order_id)
+
+
+async def _process_order_procedural(order_data: dict[str, Any]) -> None:
+    """Procedural order processing (agent fallback). Skips persist (already done)."""
+    shopify_order_id = order_data.get("id")
+    db = _get_async_db()
+    order_record = await db.get_order_by_shopify_id(shopify_order_id)
+    if not order_record:
+        return
+
+    customer_data = order_data.get("customer", {})
+    customer_email = order_data.get("email", customer_data.get("email", ""))
+    customer_name = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
+    total = float(order_data.get("total_price", "0"))
+
+    # Slack alert
+    await _get_slack().send_new_order_alert(
+        order_number=str(order_data.get("order_number", shopify_order_id)),
+        customer_name=customer_name or customer_email,
+        total=total,
+        items=[item.get("title", "Unknown") for item in order_data.get("line_items", [])],
+    )
+
+    # Fraud check + ShipStation + email (same as _process_order_inner)
+    fraud_result = await _get_shipping().check_fraud(order_record)
+    if fraud_result.is_flagged:
+        insurance_note = ""
+        if fraud_result.insurance_gap > 0:
+            insurance_note = f"Carrier cap: ${settings.carrier_insurance_cap:,.2f}. Gap: ${fraud_result.insurance_gap:,.2f}."
+        await _get_slack().send_fraud_alert(
+            receipt_id=shopify_order_id,
+            buyer_name=customer_name or customer_email,
+            total=total,
+            flag_reason=" | ".join(fraud_result.reasons),
+            insurance_note=insurance_note,
+        )
+
+    if not fraud_result.is_flagged and settings.shipstation_api_key:
+        try:
+            ss_result = await _get_shipping().create_shipstation_order({
+                **order_record,
+                "shipping_address": order_data.get("shipping_address", {}),
+                "billing_address": order_data.get("billing_address", {}),
+                "line_items": order_data.get("line_items", []),
+                "order_number": order_data.get("order_number", shopify_order_id),
+            })
+            if ss_result.get("orderId"):
+                await db.update_order_status(
+                    shopify_order_id, order_record.get("status", "paid"),
+                    shipstation_order_id=ss_result["orderId"],
+                )
+        except Exception:
+            logger.exception("ShipStation push failed for order #%s", shopify_order_id)
+
+    if customer_email:
+        shipping_addr = order_data.get("shipping_address", {})
+        addr_parts = [shipping_addr.get(k, "") for k in ("address1", "city", "province", "zip", "country")]
+        _get_email().send_order_confirmation(
+            to_email=customer_email,
+            customer_name=customer_name or customer_email,
+            order_number=str(order_data.get("order_number", shopify_order_id)),
+            line_items=order_data.get("line_items", []),
+            total=total,
+            shipping_address=", ".join(p for p in addr_parts if p),
+        )
 
 
 async def _process_order_inner(order_data: dict[str, Any]) -> None:
