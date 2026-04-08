@@ -79,7 +79,7 @@ class FinanceAgent(BaseAgent):
                 },
                 "required": ["order_id"],
             },
-            func=self._db.get_order_by_shopify_id,
+            func=self._lookup_order_wrapper,
             risk_tier=1,
         )
 
@@ -96,6 +96,9 @@ class FinanceAgent(BaseAgent):
             func=self._post_slack_wrapper,
             risk_tier=1,
         )
+
+    async def _lookup_order_wrapper(self, order_id: int) -> dict | None:
+        return await self._db.get_order_by_shopify_id(order_id)
 
     def _calculate_profit_wrapper(self, order: dict) -> dict:
         result = self._finance.calculate_order_profit(order)

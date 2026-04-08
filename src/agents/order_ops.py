@@ -73,7 +73,7 @@ class OrderOpsAgent(BaseAgent):
                 },
                 "required": ["order_id"],
             },
-            func=self._db.get_order_by_shopify_id,
+            func=self._lookup_order_wrapper,
             risk_tier=1,
         )
 
@@ -204,6 +204,9 @@ class OrderOpsAgent(BaseAgent):
         )
 
     # ── Tool wrappers (adapt existing function signatures) ──
+
+    async def _lookup_order_wrapper(self, order_id: int) -> dict | None:
+        return await self._db.get_order_by_shopify_id(order_id)
 
     async def _check_fraud_wrapper(self, order: dict) -> dict:
         result = await self._shipping.check_fraud(order)

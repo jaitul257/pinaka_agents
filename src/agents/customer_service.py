@@ -114,7 +114,7 @@ class CustomerServiceAgent(BaseAgent):
                 },
                 "required": ["order_id"],
             },
-            func=self._db.get_order_by_shopify_id,
+            func=self._lookup_order_wrapper,
             risk_tier=1,
         )
 
@@ -219,6 +219,9 @@ class CustomerServiceAgent(BaseAgent):
         )
 
     # ── Tool wrappers ──
+
+    async def _lookup_order_wrapper(self, order_id: int) -> dict | None:
+        return await self._db.get_order_by_shopify_id(order_id)
 
     async def _search_products_wrapper(self, query: str, top_k: int = 3) -> list[dict]:
         try:
