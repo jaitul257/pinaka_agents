@@ -1035,6 +1035,24 @@ async def cron_weekly_roas():
     }
 
 
+@app.post("/cron/heartbeat", dependencies=[Depends(verify_cron_secret)])
+async def cron_heartbeat():
+    """Agent awareness heartbeat — runs every 30 min.
+
+    Cheap SQL checks first (stuck orders, unanswered messages, shipping delays).
+    Only invokes Claude when issues are found. Posts alerts to Slack.
+    """
+    from src.agents.heartbeat import Heartbeat
+
+    hb = Heartbeat()
+    try:
+        result = await hb.beat()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("Heartbeat failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/sync-ad-spend", dependencies=[Depends(verify_cron_secret)])
 async def cron_sync_ad_spend():
     """Pull yesterday's ad spend from Meta (and Google when configured).

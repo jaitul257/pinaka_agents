@@ -246,6 +246,15 @@ async def _persist_order_and_customer(order_data: dict[str, Any]) -> None:
         "shopify_data": order_data,
     })
 
+    # Write observation for heartbeat awareness
+    try:
+        from src.agents.observations import observe_new_order
+        total = float(order_data.get("total_price", "0"))
+        customer_name = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
+        await observe_new_order(order_data, customer_name or customer_email, total)
+    except Exception:
+        pass  # Non-critical
+
 
 async def _fire_attribution_events(order_data: dict[str, Any]) -> None:
     """Fire Meta CAPI and Google offline conversion events."""
@@ -452,6 +461,11 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
             insurance_note=insurance_note,
         )
         logger.warning("Order #%s flagged for fraud: %s", shopify_order_id, fraud_result.reasons)
+        try:
+            from src.agents.observations import observe_fraud_flag
+            await observe_fraud_flag(shopify_order_id, fraud_result.reasons, total)
+        except Exception:
+            pass
 
     # Push to ShipStation (skip if flagged for fraud)
     if not fraud_result.is_flagged and settings.shipstation_api_key:
