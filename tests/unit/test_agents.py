@@ -297,7 +297,7 @@ class TestBaseAgent:
         return block
 
     @patch("src.agents.base.anthropic.AsyncAnthropic")
-    @patch("src.agents.audit.AsyncDatabase")
+    @patch("src.agents.audit.Database")
     async def test_simple_text_response(self, mock_audit_db, mock_anthropic):
         """Agent returns text without tool use."""
         client = AsyncMock()
@@ -317,7 +317,7 @@ class TestBaseAgent:
         assert result.tokens_used == 150
 
     @patch("src.agents.base.anthropic.AsyncAnthropic")
-    @patch("src.agents.audit.AsyncDatabase")
+    @patch("src.agents.audit.Database")
     async def test_tool_use_then_end(self, mock_audit_db, mock_anthropic):
         """Agent calls a tool, then returns text."""
         client = AsyncMock()
@@ -355,7 +355,7 @@ class TestBaseAgent:
         assert result.actions_taken[0]["status"] == "executed"
 
     @patch("src.agents.base.anthropic.AsyncAnthropic")
-    @patch("src.agents.audit.AsyncDatabase")
+    @patch("src.agents.audit.Database")
     async def test_policy_blocks_tool(self, mock_audit_db, mock_anthropic):
         """Policy denies a tool call → agent sees error and adapts."""
         client = AsyncMock()
@@ -397,7 +397,7 @@ class TestBaseAgent:
         assert result.actions_taken[0]["status"] == "denied"
 
     @patch("src.agents.base.anthropic.AsyncAnthropic")
-    @patch("src.agents.audit.AsyncDatabase")
+    @patch("src.agents.audit.Database")
     async def test_policy_escalates_tool(self, mock_audit_db, mock_anthropic):
         """Policy escalates a tool call → agent sees escalation, Slack notified."""
         client = AsyncMock()
@@ -431,7 +431,7 @@ class TestBaseAgent:
         assert result.actions_taken[0]["status"] == "escalated"
 
     @patch("src.agents.base.anthropic.AsyncAnthropic")
-    @patch("src.agents.audit.AsyncDatabase")
+    @patch("src.agents.audit.Database")
     async def test_max_turns_exceeded(self, mock_audit_db, mock_anthropic):
         """Agent stops after max_turns with escalation."""
         client = AsyncMock()
@@ -461,7 +461,7 @@ class TestBaseAgent:
         assert "max turns" in result.message.lower()
 
     @patch("src.agents.base.anthropic.AsyncAnthropic")
-    @patch("src.agents.audit.AsyncDatabase")
+    @patch("src.agents.audit.Database")
     async def test_tool_execution_error(self, mock_audit_db, mock_anthropic):
         """Tool raising exception → agent sees is_error and adapts."""
         client = AsyncMock()

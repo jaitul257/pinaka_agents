@@ -3,13 +3,14 @@
 Every agent run logs: what tools were called, what policies fired, whether
 the agent escalated, how many tokens were used, and how long it took.
 
-Stored in Supabase `agent_audit_log` table (migration 007).
+Stored in Supabase `agent_audit_log` table (migration 20260407120000).
 """
 
+import asyncio
 import logging
 from typing import Any
 
-from src.core.database import AsyncDatabase
+from src.core.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class AuditLogger:
     """Log agent runs to the agent_audit_log table."""
 
     def __init__(self):
-        self._db = AsyncDatabase()
+        self._db = Database()
 
     async def log(
         self,
@@ -35,7 +36,7 @@ class AuditLogger:
         try:
             data = {
                 "agent_name": agent_name,
-                "task_summary": task[:500],  # Truncate long tasks
+                "task_summary": task[:500],
                 "tool_calls": tool_calls,
                 "policy_decisions": policy_decisions,
                 "result": result,
@@ -43,12 +44,13 @@ class AuditLogger:
                 "duration_ms": duration_ms,
                 "escalated": escalated,
             }
-            row = await self._db._sync._client.table("agent_audit_log").insert(data).execute()
+            row = await asyncio.to_thread(
+                lambda: self._db._client.table("agent_audit_log").insert(data).execute()
+            )
             if row.data:
                 return str(row.data[0].get("id", ""))
             return None
         except Exception:
-            # Audit logging should never break the agent flow
             logger.exception("Failed to write agent audit log")
             return None
 
@@ -57,10 +59,13 @@ class AuditLogger:
     ) -> list[dict[str, Any]]:
         """Fetch recent audit entries, optionally filtered by agent name."""
         try:
-            query = self._db._sync._client.table("agent_audit_log").select("*")
-            if agent_name:
-                query = query.eq("agent_name", agent_name)
-            result = query.order("created_at", desc=True).limit(limit).execute()
+            def _query():
+                query = self._db._client.table("agent_audit_log").select("*")
+                if agent_name:
+                    query = query.eq("agent_name", agent_name)
+                return query.order("created_at", desc=True).limit(limit).execute()
+
+            result = await asyncio.to_thread(_query)
             return result.data or []
         except Exception:
             logger.exception("Failed to read agent audit log")
@@ -72,12 +77,16 @@ class AuditLogger:
 
         try:
             today = date.today().isoformat()
-            result = (
-                self._db._sync._client.table("agent_audit_log")
-                .select("tokens_used")
-                .gte("created_at", today)
-                .execute()
-            )
+
+            def _query():
+                return (
+                    self._db._client.table("agent_audit_log")
+                    .select("tokens_used")
+                    .gte("created_at", today)
+                    .execute()
+                )
+
+            result = await asyncio.to_thread(_query)
             return sum(int(r.get("tokens_used", 0)) for r in (result.data or []))
         except Exception:
             logger.exception("Failed to sum today's token usage")
