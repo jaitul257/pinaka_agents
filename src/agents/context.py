@@ -31,20 +31,11 @@ class ContextAssembler:
             context["order"] = order
             context["order_total"] = order.get("total")
 
-            # Customer record
+            # Customer record + memory
             buyer_email = order.get("buyer_email")
             if buyer_email:
-                customer = await self._db.get_customer_by_email(buyer_email)
-                if customer:
-                    context["customer"] = customer
-                    context["last_reorder_email_at"] = customer.get("last_reorder_email_at")
-
-                    # Customer's order history
-                    customer_id = customer.get("id")
-                    if customer_id:
-                        orders = await self._db.get_orders_by_customer(customer_id)
-                        context["order_history"] = orders
-                        context["order_count"] = len(orders)
+                customer_context = await self.for_customer(buyer_email)
+                context.update(customer_context)
 
         return context
 
@@ -74,6 +65,28 @@ class ContextAssembler:
             # Lifetime value
             total_spent = sum(float(o.get("total", 0)) for o in orders)
             context["lifetime_value"] = round(total_spent, 2)
+
+        # Past message history (customer memory across agent runs)
+        try:
+            messages = await self._db._sync._client.table("messages") \
+                .select("category, status, created_at, ai_draft") \
+                .eq("customer_email", email) \
+                .order("created_at", desc=True) \
+                .limit(10) \
+                .execute()
+            if messages.data:
+                context["past_interactions"] = [
+                    {
+                        "date": m.get("created_at", "")[:10],
+                        "category": m.get("category", ""),
+                        "status": m.get("status", ""),
+                        "summary": (m.get("ai_draft") or "")[:100],
+                    }
+                    for m in messages.data
+                ]
+                context["interaction_count"] = len(messages.data)
+        except Exception:
+            pass  # Non-critical — customer memory is a nice-to-have
 
         return context
 
@@ -118,6 +131,49 @@ class ContextAssembler:
         shipped_orders = await self._db.get_orders_by_status("shipped")
         context["orders_awaiting_fulfillment"] = len(paid_orders)
         context["orders_in_transit"] = len(shipped_orders)
+
+        return context
+
+    async def for_marketing(self) -> dict[str, Any]:
+        """Marketing context with finance feedback loop.
+
+        Includes daily stats + per-product margin data so the marketing agent
+        can prioritize high-margin products for ad spend.
+        """
+        from datetime import date, timedelta
+        from src.finance.calculator import FinanceCalculator
+
+        context = await self.for_daily_ops()
+        finance = FinanceCalculator()
+
+        # Calculate margins for recent orders → feed into marketing decisions
+        try:
+            today = date.today()
+            month_ago = today - timedelta(days=30)
+
+            # Get recent delivered/paid orders for margin analysis
+            all_orders = []
+            for status in ("paid", "shipped", "delivered"):
+                orders = await self._db.get_orders_by_status(status)
+                all_orders.extend(orders)
+
+            if all_orders:
+                margins = []
+                for order in all_orders[:20]:  # Cap at 20 for token efficiency
+                    profit = finance.calculate_order_profit(order)
+                    margins.append({
+                        "order_id": order.get("shopify_order_id"),
+                        "revenue": profit.revenue,
+                        "net_profit": profit.net_profit,
+                        "margin_pct": profit.margin_pct,
+                    })
+
+                context["product_margins"] = margins
+                avg_margin = sum(m["margin_pct"] for m in margins) / len(margins) if margins else 0
+                context["avg_margin_pct"] = round(avg_margin, 1)
+                context["total_net_profit"] = round(sum(m["net_profit"] for m in margins), 2)
+        except Exception:
+            pass  # Non-critical — marketing agent works without margins too
 
         return context
 

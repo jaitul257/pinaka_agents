@@ -5,7 +5,7 @@ product_inquiry). Always escalates complaints, refund/return requests,
 and custom orders to Slack for founder review.
 """
 
-from src.agents.base import BaseAgent
+from src.agents.base import CONFIDENCE_INSTRUCTIONS, BaseAgent
 from src.agents.tools import ToolRegistry
 from src.core.database import AsyncDatabase
 from src.core.email import EmailSender
@@ -45,7 +45,7 @@ TONE & STYLE:
 When auto-responding:
 1. First draft the response using draft_customer_reply.
 2. Then send it using send_email.
-"""
+""" + CONFIDENCE_INSTRUCTIONS
 
 
 class CustomerServiceAgent(BaseAgent):
@@ -248,13 +248,9 @@ class CustomerServiceAgent(BaseAgent):
 
     async def _post_slack_wrapper(self, message: str) -> dict:
         blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f":speech_balloon: *Customer Service Agent*\n{message}",
-                },
-            }
+            {"type": "header", "text": {"type": "plain_text", "text": ":speech_balloon: Customer Service Agent"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": message[:2900]}},
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Agent: {self.name} | Customer communication_"}]},
         ]
-        await self._slack_notifier.send_blocks(blocks, text=message)
+        await self._slack_notifier.send_blocks(blocks, text=message[:200])
         return {"posted": True}

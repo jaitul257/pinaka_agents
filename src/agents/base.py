@@ -33,6 +33,18 @@ class AgentResult:
     escalated: bool = False
     audit_id: str | None = None
     tokens_used: int = 0
+    confidence: str = "high"  # "high", "medium", "low" — self-reported by the agent
+
+
+CONFIDENCE_INSTRUCTIONS = """
+
+CONFIDENCE RATING (required in your final response):
+End every response with [CONFIDENCE: high], [CONFIDENCE: medium], or [CONFIDENCE: low].
+- HIGH: You completed the task successfully with clear data. No ambiguity.
+- MEDIUM: You completed the task but had to make assumptions or lacked some data.
+- LOW: You are uncertain about your actions or the data was contradictory/missing. When LOW, explain what you're unsure about.
+
+Be concise. Act first, explain only when needed. Do not narrate each step — just do it."""
 
 
 class BaseAgent:
@@ -45,7 +57,7 @@ class BaseAgent:
     name: str = "base"
     system_prompt: str = "You are a helpful assistant."
     max_turns: int = 15
-    max_tokens_per_turn: int = 4096
+    max_tokens_per_turn: int = 1024  # Keep responses concise — agents should act, not explain
 
     def __init__(
         self,
@@ -65,16 +77,37 @@ class BaseAgent:
         """Override in subclasses to register domain-specific tools."""
 
     def _build_prompt(self, task: str, context: dict[str, Any]) -> str:
-        """Build the user prompt from task description and assembled context."""
+        """Build the user prompt from task description and assembled context.
+
+        Trims context to reduce token usage: removes null values, truncates
+        long lists, and caps string fields.
+        """
         parts = [f"## Task\n{task}"]
         if context:
             parts.append("## Context")
             for key, value in context.items():
-                if isinstance(value, (dict, list)):
-                    parts.append(f"### {key}\n```json\n{json.dumps(value, indent=2, default=str)}\n```")
+                trimmed = self._trim_context_value(value)
+                if isinstance(trimmed, (dict, list)):
+                    parts.append(f"### {key}\n```json\n{json.dumps(trimmed, indent=2, default=str)}\n```")
                 else:
-                    parts.append(f"### {key}\n{value}")
+                    parts.append(f"### {key}\n{trimmed}")
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _trim_context_value(value: Any, max_list: int = 10, max_str: int = 500) -> Any:
+        """Remove nulls, truncate lists and strings to keep context lean."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value[:max_str] if len(value) > max_str else value
+        if isinstance(value, list):
+            trimmed = [BaseAgent._trim_context_value(v) for v in value[:max_list]]
+            if len(value) > max_list:
+                trimmed.append(f"... and {len(value) - max_list} more")
+            return trimmed
+        if isinstance(value, dict):
+            return {k: BaseAgent._trim_context_value(v) for k, v in value.items() if v is not None}
+        return value
 
     @staticmethod
     def _extract_text(response) -> str:
@@ -84,6 +117,16 @@ class BaseAgent:
             if hasattr(block, "text"):
                 texts.append(block.text)
         return "\n".join(texts) if texts else ""
+
+    @staticmethod
+    def _extract_confidence(text: str) -> str:
+        """Extract confidence level from agent's response text.
+
+        Looks for [CONFIDENCE: high/medium/low] pattern. Defaults to 'high'.
+        """
+        import re
+        match = re.search(r"\[CONFIDENCE:\s*(high|medium|low)\]", text, re.IGNORECASE)
+        return match.group(1).lower() if match else "high"
 
     async def _escalate_to_slack(
         self,
@@ -161,12 +204,27 @@ class BaseAgent:
 
                 # End turn — Claude is done reasoning
                 if response.stop_reason == "end_turn":
+                    final_text = self._extract_text(response)
+                    confidence = self._extract_confidence(final_text)
+
+                    # Auto-escalate on low confidence
+                    if confidence == "low" and not escalated:
+                        escalated = True
+                        try:
+                            await self._slack.send_blocks([
+                                {"type": "header", "text": {"type": "plain_text", "text": f":warning: Low Confidence — {self.name}"}},
+                                {"type": "section", "text": {"type": "mrkdwn", "text": f"*Agent is not confident in its response.*\n\n{final_text[:500]}"}},
+                            ], text=f"Low confidence from {self.name}")
+                        except Exception:
+                            logger.exception("Failed to send low-confidence escalation")
+
                     result = AgentResult(
                         success=True,
-                        message=self._extract_text(response),
+                        message=final_text,
                         actions_taken=actions_taken,
                         escalated=escalated,
                         tokens_used=total_tokens,
+                        confidence=confidence,
                     )
                     await self._log_audit(task, actions_taken, policy_log, result, start_time)
                     return result

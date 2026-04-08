@@ -5,7 +5,7 @@ Escalates budget changes > $5 or new campaign creation.
 Pulls profit data from finance module to prioritize high-margin products.
 """
 
-from src.agents.base import BaseAgent
+from src.agents.base import CONFIDENCE_INSTRUCTIONS, BaseAgent
 from src.agents.tools import ToolRegistry
 from src.core.database import AsyncDatabase
 from src.core.settings import settings
@@ -37,7 +37,7 @@ FEEDBACK LOOP:
 - Use calculate_profit to understand which products have the best margins.
 - High-margin products should get budget priority.
 - If a product has negative margin, flag it immediately.
-"""
+""" + CONFIDENCE_INSTRUCTIONS
 
 
 class MarketingAgent(BaseAgent):
@@ -45,7 +45,7 @@ class MarketingAgent(BaseAgent):
 
     name = "marketing"
     system_prompt = SYSTEM_PROMPT
-    max_turns = 8
+    max_turns = 5  # ROAS calc + recommendation + post — rarely needs more
 
     def __init__(self):
         self._db = AsyncDatabase()
@@ -135,9 +135,10 @@ class MarketingAgent(BaseAgent):
         }
 
     async def _post_slack_wrapper(self, message: str) -> dict:
-        blocks = [{
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f":chart_with_upwards_trend: *Marketing Agent*\n{message}"},
-        }]
-        await self._slack_notifier.send_blocks(blocks, text=message)
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text", "text": ":chart_with_upwards_trend: Marketing Agent"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": message[:2900]}},
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Agent: {self.name} | Ad performance & budget_"}]},
+        ]
+        await self._slack_notifier.send_blocks(blocks, text=message[:200])
         return {"posted": True}

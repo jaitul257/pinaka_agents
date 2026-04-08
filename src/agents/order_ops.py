@@ -7,7 +7,7 @@ If fraud is flagged or order exceeds insurance cap, escalates to Slack
 instead of proceeding. All actions are logged to the audit trail.
 """
 
-from src.agents.base import BaseAgent
+from src.agents.base import CONFIDENCE_INSTRUCTIONS, BaseAgent
 from src.agents.context import ContextAssembler
 from src.agents.guardrails import PolicyEngine
 from src.agents.tools import ToolRegistry
@@ -35,7 +35,7 @@ IMPORTANT RULES:
 - All bracelets are made-to-order (15 business days). Set expectations accordingly.
 - If any tool returns an error, explain the issue and escalate to Slack for human review.
 - Be concise in your reasoning. State what you're doing and why at each step.
-"""
+""" + CONFIDENCE_INSTRUCTIONS
 
 
 class OrderOpsAgent(BaseAgent):
@@ -234,10 +234,9 @@ class OrderOpsAgent(BaseAgent):
 
     async def _post_slack_wrapper(self, message: str) -> dict:
         blocks = [
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f":robot_face: *Order Ops Agent*\n{message}"},
-            }
+            {"type": "header", "text": {"type": "plain_text", "text": ":package: Order Ops Agent"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": message[:2900]}},
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Agent: {self.name} | Automated processing_"}]},
         ]
-        await self._slack_notifier.send_blocks(blocks, text=message)
+        await self._slack_notifier.send_blocks(blocks, text=message[:200])
         return {"posted": True}

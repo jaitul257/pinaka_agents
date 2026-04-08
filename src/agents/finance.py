@@ -4,7 +4,7 @@ Autonomously produces financial summaries. Flags negative margins,
 unusual order velocity, and ad spend spikes for human review.
 """
 
-from src.agents.base import BaseAgent
+from src.agents.base import CONFIDENCE_INSTRUCTIONS, BaseAgent
 from src.agents.tools import ToolRegistry
 from src.core.database import AsyncDatabase
 from src.core.settings import settings
@@ -34,7 +34,7 @@ RULES:
 - Never recommend pricing changes — escalate to founder.
 - Never disclose financial details outside Slack.
 - Round all dollar amounts to 2 decimal places.
-"""
+""" + CONFIDENCE_INSTRUCTIONS
 
 
 class FinanceAgent(BaseAgent):
@@ -42,7 +42,7 @@ class FinanceAgent(BaseAgent):
 
     name = "finance"
     system_prompt = SYSTEM_PROMPT
-    max_turns = 8
+    max_turns = 5  # Calculate + summarize + post
 
     def __init__(self):
         self._db = AsyncDatabase()
@@ -110,9 +110,10 @@ class FinanceAgent(BaseAgent):
         }
 
     async def _post_slack_wrapper(self, message: str) -> dict:
-        blocks = [{
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f":moneybag: *Finance Agent*\n{message}"},
-        }]
-        await self._slack_notifier.send_blocks(blocks, text=message)
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text", "text": ":moneybag: Finance Agent"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": message[:2900]}},
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Agent: {self.name} | Financial reporting_"}]},
+        ]
+        await self._slack_notifier.send_blocks(blocks, text=message[:200])
         return {"posted": True}

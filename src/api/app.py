@@ -202,6 +202,39 @@ async def health():
     }
 
 
+# ── Storefront Concierge ──
+
+
+@app.post("/api/chat")
+async def concierge_chat(request: Request):
+    """AI concierge chat endpoint for the storefront.
+
+    Accepts: {"message": "...", "history": [{"role": "user", "content": "..."}]}
+    Returns: {"response": "...", "products": [...], "suggested_questions": [...]}
+    """
+    try:
+        body = await request.json()
+        message = body.get("message", "").strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="Message required")
+
+        history = body.get("history", [])
+
+        from src.agents.concierge import StorefrontConcierge
+        concierge = StorefrontConcierge()
+        result = await concierge.chat(message, conversation_history=history)
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Concierge chat failed")
+        return {
+            "response": "I'm sorry, I'm having trouble right now. Please email us at hello@pinakajewellery.com and we'll help you personally.",
+            "products": [],
+            "suggested_questions": [],
+        }
+
+
 # ── Shopify Webhooks ──
 
 @app.post("/webhook/shopify/orders")
