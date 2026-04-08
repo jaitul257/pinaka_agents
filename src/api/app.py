@@ -1053,6 +1053,120 @@ async def cron_heartbeat():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/marketing-snapshot", dependencies=[Depends(verify_cron_secret)])
+async def cron_marketing_snapshot():
+    """Ad performance data collection — runs every 6 hours.
+
+    Pulls current spend, impressions, CTR, CPC from Meta (and Google when ready).
+    Writes an observation but takes NO actions. Zero LLM cost.
+    Only alerts Slack if an anomaly is detected (spend > 2x budget, tracking broken).
+    """
+    from zoneinfo import ZoneInfo
+    from src.core.database import AsyncDatabase
+    from src.marketing.meta_ads import MetaAdsClient, MetaAdsError
+    from src.agents.observations import observe, observe_roas_change
+
+    tz = ZoneInfo(settings.business_timezone)
+    today = datetime.now(tz).date()
+    db = AsyncDatabase()
+    errors = []
+
+    # Pull today's spend so far
+    meta_spend = 0.0
+    meta = MetaAdsClient()
+    if meta.is_configured:
+        try:
+            result = await meta.get_daily_spend(today)
+            meta_spend = result.spend
+        except MetaAdsError as e:
+            errors.append(f"meta: {e}")
+
+    # Get today's revenue from orders
+    today_stats = await db.get_stats_range(today, today)
+    revenue = sum(float(s.get("revenue", 0)) for s in today_stats) if today_stats else 0
+
+    # Calculate intraday ROAS
+    total_spend = meta_spend
+    roas = revenue / total_spend if total_spend > 0 else 0
+
+    # Write observation (always — this is the data collection)
+    await observe(
+        source="cron:marketing_snapshot",
+        category="marketing",
+        severity="info",
+        summary=f"6h snapshot: spend ${total_spend:,.2f}, revenue ${revenue:,.2f}, ROAS {roas:.1f}x",
+        entity_type="metric",
+        entity_id="daily_snapshot",
+        data={"spend": total_spend, "revenue": revenue, "roas": roas, "meta_spend": meta_spend},
+    )
+
+    # Anomaly detection (no LLM — just threshold checks)
+    alerts = []
+    if total_spend > settings.max_daily_ad_budget * 1.5:
+        alerts.append(f"Spend anomaly: ${total_spend:,.2f} exceeds 150% of daily cap (${settings.max_daily_ad_budget})")
+        await observe(
+            source="cron:marketing_snapshot",
+            category="marketing",
+            severity="critical",
+            summary=f"SPEND ALERT: ${total_spend:,.2f} exceeds 150% of ${settings.max_daily_ad_budget} daily cap",
+            entity_type="metric",
+            entity_id="spend_anomaly",
+        )
+
+    if alerts:
+        slack = SlackNotifier()
+        for alert in alerts:
+            await slack.send_blocks([
+                {"type": "header", "text": {"type": "plain_text", "text": ":rotating_light: Marketing Anomaly"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": alert}},
+            ], text=alert)
+
+    return {
+        "status": "ok",
+        "spend": total_spend,
+        "revenue": revenue,
+        "roas": round(roas, 2),
+        "anomalies": len(alerts),
+        "errors": errors,
+    }
+
+
+@app.post("/cron/marketing-weekly", dependencies=[Depends(verify_cron_secret)])
+async def cron_marketing_weekly():
+    """Weekly marketing strategy review — runs Monday 9 AM ET.
+
+    The Marketing Agent analyzes the full week's data: ROAS trends, budget
+    efficiency, creative fatigue signals, seasonal windows, product margins.
+    Posts a structured strategy report to Slack with recommendations.
+    Uses Claude (the only marketing cron that does).
+    """
+    from src.agents.marketing import MarketingAgent
+    from src.agents.context import ContextAssembler
+
+    try:
+        agent = MarketingAgent()
+        context = await ContextAssembler().for_marketing()
+
+        result = await agent.run(
+            "Run the weekly marketing strategy review. Analyze this week's ad performance, "
+            "check for seasonal windows, review product margins, and post a full strategy "
+            "report to Slack with budget recommendations.",
+            context,
+        )
+
+        return {
+            "status": "ok",
+            "success": result.success,
+            "escalated": result.escalated,
+            "confidence": result.confidence,
+            "tokens_used": result.tokens_used,
+            "actions": len(result.actions_taken),
+        }
+    except Exception as e:
+        logger.exception("Weekly marketing review failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/sync-ad-spend", dependencies=[Depends(verify_cron_secret)])
 async def cron_sync_ad_spend():
     """Pull yesterday's ad spend from Meta (and Google when configured).
