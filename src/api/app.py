@@ -83,6 +83,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pinaka Agents", version="0.3.0", lifespan=lifespan)
+
+# CORS for storefront chat widget (pinakajewellery.com → Railway API)
+from starlette.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://pinakajewellery.com",
+        "https://www.pinakajewellery.com",
+        "https://pinaka-jewellery.myshopify.com",
+    ],
+    allow_methods=["POST"],
+    allow_headers=["Content-Type"],
+)
+
 app.include_router(dashboard_router)
 
 

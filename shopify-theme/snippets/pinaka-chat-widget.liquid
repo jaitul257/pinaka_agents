@@ -1,0 +1,310 @@
+<!-- Pinaka AI Concierge Chat Widget -->
+<style>
+  .pinaka-chat-btn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--pinaka-accent, #D4A017);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .pinaka-chat-btn:hover { transform: scale(1.08); box-shadow: 0 6px 24px rgba(0,0,0,0.2); }
+  .pinaka-chat-btn svg { width: 24px; height: 24px; fill: currentColor; }
+
+  .pinaka-chat-panel {
+    position: fixed;
+    bottom: 92px;
+    right: 24px;
+    width: 380px;
+    max-height: 520px;
+    background: #FAF7F2;
+    border-radius: 16px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.15);
+    z-index: 9999;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .pinaka-chat-panel.open { display: flex; }
+
+  .pinaka-chat-header {
+    background: #2C2825;
+    color: #FAF7F2;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pinaka-chat-header__title {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 20px;
+    font-weight: 400;
+  }
+  .pinaka-chat-header__sub {
+    font-size: 11px;
+    color: rgba(250,247,242,0.6);
+    margin-top: 2px;
+  }
+  .pinaka-chat-close {
+    background: none;
+    border: none;
+    color: #FAF7F2;
+    cursor: pointer;
+    font-size: 20px;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .pinaka-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 280px;
+    max-height: 340px;
+  }
+
+  .pinaka-chat-msg {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .pinaka-chat-msg--bot {
+    background: #fff;
+    color: #2C2825;
+    align-self: flex-start;
+    border: 1px solid #E8E2D9;
+  }
+  .pinaka-chat-msg--user {
+    background: #2C2825;
+    color: #FAF7F2;
+    align-self: flex-end;
+  }
+  .pinaka-chat-msg--typing {
+    background: #fff;
+    border: 1px solid #E8E2D9;
+    align-self: flex-start;
+    color: #6B6560;
+    font-style: italic;
+  }
+
+  .pinaka-chat-suggestions {
+    padding: 0 16px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .pinaka-chat-suggestion {
+    background: transparent;
+    border: 1px solid #E8E2D9;
+    border-radius: 20px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: #6B6560;
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .pinaka-chat-suggestion:hover { border-color: #D4A017; color: #D4A017; }
+
+  .pinaka-chat-input-row {
+    display: flex;
+    padding: 12px 16px;
+    border-top: 1px solid #E8E2D9;
+    background: #fff;
+  }
+  .pinaka-chat-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    font-family: 'DM Sans', sans-serif;
+    color: #2C2825;
+    background: transparent;
+  }
+  .pinaka-chat-input::placeholder { color: #B5AFA8; }
+  .pinaka-chat-send {
+    background: none;
+    border: none;
+    color: var(--pinaka-accent, #D4A017);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0 0 0 8px;
+  }
+  .pinaka-chat-send:disabled { color: #ccc; cursor: default; }
+
+  .pinaka-chat-products {
+    padding: 0 16px 8px;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+  }
+  .pinaka-chat-product {
+    flex-shrink: 0;
+    width: 120px;
+    text-decoration: none;
+    color: #2C2825;
+    border: 1px solid #E8E2D9;
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 11px;
+    transition: border-color 0.2s;
+  }
+  .pinaka-chat-product:hover { border-color: #D4A017; }
+  .pinaka-chat-product img { width: 100%; height: 80px; object-fit: cover; }
+  .pinaka-chat-product__info { padding: 6px 8px; }
+  .pinaka-chat-product__title { font-weight: 600; line-height: 1.3; }
+  .pinaka-chat-product__price { color: #6B6560; margin-top: 2px; font-family: 'Geist Mono', monospace; }
+
+  @media (max-width: 480px) {
+    .pinaka-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 84px; }
+  }
+</style>
+
+<!-- Chat toggle button -->
+<button class="pinaka-chat-btn" id="pinakaChatToggle" aria-label="Chat with us">
+  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg>
+</button>
+
+<!-- Chat panel -->
+<div class="pinaka-chat-panel" id="pinakaChatPanel">
+  <div class="pinaka-chat-header">
+    <div>
+      <div class="pinaka-chat-header__title">Pinaka Concierge</div>
+      <div class="pinaka-chat-header__sub">Diamond bracelet specialist</div>
+    </div>
+    <button class="pinaka-chat-close" id="pinakaChatClose">&times;</button>
+  </div>
+  <div class="pinaka-chat-messages" id="pinakaChatMessages">
+    <div class="pinaka-chat-msg pinaka-chat-msg--bot">
+      Welcome to Pinaka Jewellery! I can help you find the perfect diamond tennis bracelet. What brings you in today?
+    </div>
+  </div>
+  <div class="pinaka-chat-suggestions" id="pinakaChatSuggestions">
+    <button class="pinaka-chat-suggestion" data-msg="Show me your diamond bracelets">Browse bracelets</button>
+    <button class="pinaka-chat-suggestion" data-msg="How do I choose the right wrist size?">Sizing help</button>
+    <button class="pinaka-chat-suggestion" data-msg="I need a gift for an anniversary">Gift ideas</button>
+  </div>
+  <div class="pinaka-chat-products" id="pinakaChatProducts" style="display:none;"></div>
+  <div class="pinaka-chat-input-row">
+    <input class="pinaka-chat-input" id="pinakaChatInput" placeholder="Ask me anything..." autocomplete="off">
+    <button class="pinaka-chat-send" id="pinakaChatSend" disabled>&#10148;</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  const API = '{{ shop.metafields.pinaka.chat_api.value | default: "https://pinaka-agents-production-198b5.up.railway.app" }}';
+  const toggle = document.getElementById('pinakaChatToggle');
+  const panel = document.getElementById('pinakaChatPanel');
+  const close = document.getElementById('pinakaChatClose');
+  const msgs = document.getElementById('pinakaChatMessages');
+  const input = document.getElementById('pinakaChatInput');
+  const sendBtn = document.getElementById('pinakaChatSend');
+  const suggestions = document.getElementById('pinakaChatSuggestions');
+  const productsEl = document.getElementById('pinakaChatProducts');
+  let history = [];
+
+  toggle.addEventListener('click', () => {
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) input.focus();
+  });
+  close.addEventListener('click', () => panel.classList.remove('open'));
+
+  input.addEventListener('input', () => {
+    sendBtn.disabled = !input.value.trim();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && input.value.trim()) send();
+  });
+  sendBtn.addEventListener('click', send);
+
+  document.querySelectorAll('.pinaka-chat-suggestion').forEach(btn => {
+    btn.addEventListener('click', () => {
+      input.value = btn.dataset.msg;
+      send();
+    });
+  });
+
+  function addMsg(text, type) {
+    const div = document.createElement('div');
+    div.className = 'pinaka-chat-msg pinaka-chat-msg--' + type;
+    div.textContent = text;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+    return div;
+  }
+
+  function showProducts(products) {
+    if (!products || !products.length) { productsEl.style.display = 'none'; return; }
+    productsEl.innerHTML = products.map(p =>
+      `<a href="${p.url}" class="pinaka-chat-product" target="_blank">
+        ${p.image ? `<img src="${p.image}" alt="${p.title}">` : ''}
+        <div class="pinaka-chat-product__info">
+          <div class="pinaka-chat-product__title">${p.title}</div>
+          <div class="pinaka-chat-product__price">$${Number(p.price).toLocaleString()}</div>
+        </div>
+      </a>`
+    ).join('');
+    productsEl.style.display = 'flex';
+  }
+
+  function showSuggestions(items) {
+    if (!items || !items.length) { suggestions.style.display = 'none'; return; }
+    suggestions.innerHTML = items.map(q =>
+      `<button class="pinaka-chat-suggestion" data-msg="${q}">${q}</button>`
+    ).join('');
+    suggestions.style.display = 'flex';
+    suggestions.querySelectorAll('.pinaka-chat-suggestion').forEach(btn => {
+      btn.addEventListener('click', () => { input.value = btn.dataset.msg; send(); });
+    });
+  }
+
+  async function send() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    sendBtn.disabled = true;
+    suggestions.style.display = 'none';
+
+    addMsg(text, 'user');
+    history.push({ role: 'user', content: text });
+
+    const typing = addMsg('Thinking...', 'typing');
+
+    try {
+      const resp = await fetch(API + '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history: history.slice(-6) })
+      });
+      const data = await resp.json();
+      typing.remove();
+
+      addMsg(data.response, 'bot');
+      history.push({ role: 'assistant', content: data.response });
+
+      showProducts(data.products);
+      showSuggestions(data.suggested_questions);
+    } catch (e) {
+      typing.remove();
+      addMsg('Sorry, something went wrong. Please try again.', 'bot');
+    }
+  }
+})();
+</script>
