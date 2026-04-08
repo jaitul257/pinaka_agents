@@ -310,7 +310,7 @@ async def products_page(dash_token: str | None = Cookie(None), msg: str = ""):
                 {f'<div class="product-tags" style="margin-top:6px;">{tags_html}</div>' if tags_html else ''}
                 <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-family:\'Geist Mono\',monospace;font-size:11px;color:var(--text-muted);">
                     <span>ID: {pid}</span>
-                    {f'<a href="/dashboard/edit/{sku}" style="background:var(--accent);color:#fff;padding:2px 10px;border-radius:4px;text-decoration:none;font-weight:600;">Edit</a>' if sku else ''}
+                    <a href="/dashboard/edit-shopify/{pid}" style="background:var(--accent);color:#fff;padding:2px 10px;border-radius:4px;text-decoration:none;font-weight:600;">Edit</a>
                     <a href="https://{settings.shopify_shop_domain}/admin/products/{pid}" target="_blank" style="color:var(--accent);text-decoration:none;">Edit in Shopify</a>
                     <a href="/dashboard/images" style="color:var(--accent);text-decoration:none;">Images</a>
                     <form method="POST" action="/dashboard/delete-shopify/{pid}" style="display:inline;" onsubmit="return confirm('Delete {title} from Shopify? This cannot be undone.');">
@@ -723,6 +723,43 @@ async def add_product_submit(
 
 # ── Edit Product ──
 
+
+@router.get("/edit-shopify/{product_id}", response_class=HTMLResponse)
+async def edit_product_by_shopify_id(product_id: int, dash_token: str | None = Cookie(None)):
+    """Edit a product by Shopify product ID. Loads from Shopify, saves to local catalog."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    product = await _load_product_from_shopify_by_id(product_id)
+    if not product:
+        return RedirectResponse("/dashboard?msg=Product+not+found+in+Shopify", status_code=303)
+
+    sku = product["sku"]
+
+    # Save to local catalog so shopify_product_id is persisted
+    _get_db().upsert_product(product)
+
+    body = f"""
+        <h1>Edit Product</h1>
+        <div class="gold-divider"></div>
+        {_product_form(f"/dashboard/edit/{sku}", product, button_text="Update Product")}
+        <div class="gold-divider"></div>
+        <div class="card">
+            <h3>Ad Creatives</h3>
+            <p style="font-size: 14px; color: var(--text-muted); margin: 8px 0 16px 0;">
+                Generate 3 Claude-drafted ad copy variants for this product.
+                Drafts appear on the Ad Creatives page for review.
+            </p>
+            <form method="post" action="/dashboard/ad-creatives/generate" style="display:inline;">
+                <input type="hidden" name="sku" value="{sku}">
+                <button type="submit" class="btn btn-primary">Generate Ad Drafts</button>
+            </form>
+            <a href="/dashboard/ad-creatives" class="btn" style="margin-left:8px;">View All Drafts →</a>
+        </div>
+    """
+    return HTMLResponse(_base_html("Edit Product", body, active="products"))
+
+
 @router.get("/edit/{sku}", response_class=HTMLResponse)
 async def edit_product_page(sku: str, dash_token: str | None = Cookie(None)):
     if not _check_auth(dash_token):
@@ -972,12 +1009,67 @@ async def delete_product(sku: str, dash_token: str | None = Cookie(None)):
 
 # ── Shopify Images ──
 
-async def _load_product_from_shopify(sku: str) -> dict | None:
-    """Load a product from Shopify by matching variant SKU. Returns a dict
-    compatible with the edit form (same shape as Supabase product records)."""
+def _shopify_product_to_local(p: dict) -> dict:
+    """Convert a Shopify product dict to local catalog format."""
+    variants = p.get("variants", [])
+    first_sku = variants[0].get("sku", "") if variants else ""
+
+    # Extract unique option values
+    metals = sorted({v["option1"] for v in variants if v.get("option1") and v["option1"] != "Default Title"})
+    sizes = sorted({v["option2"] for v in variants if v.get("option2")})
+    size_prices = {}
+    for v in variants:
+        if v.get("option2"):
+            size_prices[v["option2"]] = float(v.get("price", 0))
+
+    # Use first variant SKU as the product-level SKU
+    sku = first_sku or f"SHOP-{p['id']}"
+
+    body_html = p.get("body_html", "") or ""
+    # Strip basic HTML tags for the story field
+    import re
+    story = re.sub(r"<[^>]+>", " ", body_html).strip()
+    story = re.sub(r"\s+", " ", story)
+
+    return {
+        "sku": sku,
+        "name": p.get("title", ""),
+        "category": p.get("product_type", "Bracelets"),
+        "shopify_product_id": p["id"],
+        "materials": {"metal": metals[0] if metals else "", "total_carat": 3.0, "weight_grams": 12.5, "diamond_type": []},
+        "pricing": {sku: {"cost": 0, "retail": float(variants[0].get("price", 0)) if variants else 0}},
+        "variant_options": {"metals": metals, "sizes": sizes, "size_pricing": size_prices},
+        "story": story,
+        "care_instructions": "",
+        "occasions": [],
+        "tags": [t.strip() for t in p.get("tags", "").split(",") if t.strip()],
+        "certification": None,
+    }
+
+
+async def _load_product_from_shopify_by_id(product_id: int) -> dict | None:
+    """Load a product from Shopify by product ID."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            # Search all products — Shopify doesn't have a "search by variant SKU" endpoint
+            resp = await client.get(
+                _shopify_api(f"products/{product_id}.json"),
+                headers=_shopify_headers(),
+            )
+            if resp.status_code != 200:
+                return None
+            p = resp.json().get("product")
+            if not p:
+                return None
+            return _shopify_product_to_local(p)
+    except Exception:
+        logger.exception("Failed to load product from Shopify ID %s", product_id)
+        return None
+
+
+async def _load_product_from_shopify(sku: str) -> dict | None:
+    """Load a product from Shopify by matching variant SKU."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 _shopify_api("products.json?limit=50"),
                 headers=_shopify_headers(),
@@ -988,29 +1080,7 @@ async def _load_product_from_shopify(sku: str) -> dict | None:
             for p in resp.json().get("products", []):
                 for v in p.get("variants", []):
                     if v.get("sku") == sku:
-                        # Found it — build a local-catalog-compatible dict
-                        variants = p.get("variants", [])
-                        metals = sorted({v2["option1"] for v2 in variants if v2.get("option1")})
-                        sizes = sorted({v2["option2"] for v2 in variants if v2.get("option2")})
-                        size_prices = {}
-                        for v2 in variants:
-                            if v2.get("option2"):
-                                size_prices[v2["option2"]] = float(v2.get("price", 0))
-
-                        return {
-                            "sku": sku,
-                            "name": p.get("title", ""),
-                            "category": p.get("product_type", "Bracelets"),
-                            "shopify_product_id": p["id"],
-                            "materials": {"metal": metals[0] if metals else "", "total_carat": 3.0, "weight_grams": 12.5, "diamond_type": []},
-                            "pricing": {sku: {"cost": 0, "retail": float(variants[0].get("price", 0))}},
-                            "variant_options": {"metals": metals, "sizes": sizes, "size_pricing": size_prices},
-                            "story": p.get("body_html", "").replace("<p>", "").replace("</p>", "\n").strip(),
-                            "care_instructions": "",
-                            "occasions": [],
-                            "tags": [t.strip() for t in p.get("tags", "").split(",") if t.strip()],
-                            "certification": None,
-                        }
+                        return _shopify_product_to_local(p)
         return None
     except Exception:
         logger.exception("Failed to load product from Shopify for SKU %s", sku)
