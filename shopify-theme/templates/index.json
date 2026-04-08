@@ -1,0 +1,205 @@
+/*
+ * ------------------------------------------------------------
+ * IMPORTANT: The contents of this file are auto-generated.
+ *
+ * This file may be updated by the Shopify admin theme editor
+ * or related systems. Please exercise caution as any changes
+ * made to this file may be overwritten.
+ * ------------------------------------------------------------
+ */
+{
+  "sections": {
+    "hero": {
+      "type": "pinaka-hero",
+      "settings": {
+        "heading": "Handcrafted to Adorn.",
+        "subtext": "Diamond tennis bracelets, handset to order in 15 business days.",
+        "button_label": "Shop Bracelets",
+        "button_link": "shopify://collections/all",
+        "color_scheme": "scheme-1"
+      }
+    },
+    "collection": {
+      "type": "featured-collection",
+      "settings": {
+        "collection": "all",
+        "products_to_show": 6,
+        "title": "The Collection",
+        "heading_size": "h1",
+        "columns_desktop": 3,
+        "enable_desktop_slider": false,
+        "full_width": false,
+        "show_view_all": true,
+        "view_all_style": "link",
+        "color_scheme": "scheme-1",
+        "image_ratio": "square",
+        "image_shape": "default",
+        "show_secondary_image": false,
+        "show_vendor": false,
+        "show_rating": false,
+        "columns_mobile": "2",
+        "swipe_on_mobile": false,
+        "padding_top": 24,
+        "padding_bottom": 24
+      }
+    },
+    "craft_timeline": {
+      "type": "pinaka-craft-timeline",
+      "blocks": {
+        "step_1": {
+          "type": "step",
+          "settings": {
+            "step_number": "01",
+            "step_name": "Stone Matching",
+            "step_description": "Diamonds matched for color and brilliance"
+          }
+        },
+        "step_2": {
+          "type": "step",
+          "settings": {
+            "step_number": "02",
+            "step_name": "Gold Forming",
+            "step_description": "Links shaped to your wrist size"
+          }
+        },
+        "step_3": {
+          "type": "step",
+          "settings": {
+            "step_number": "03",
+            "step_name": "Hand Setting",
+            "step_description": "Each stone seated under 10x magnification"
+          }
+        },
+        "step_4": {
+          "type": "step",
+          "settings": {
+            "step_number": "04",
+            "step_name": "Final Polish",
+            "step_description": "Triple polished for maximum brilliance"
+          }
+        },
+        "step_5": {
+          "type": "step",
+          "settings": {
+            "step_number": "05",
+            "step_name": "Dispatch",
+            "step_description": "Inspected, certified, insured, shipped"
+          }
+        }
+      },
+      "block_order": [
+        "step_1",
+        "step_2",
+        "step_3",
+        "step_4",
+        "step_5"
+      ],
+      "settings": {
+        "heading": "How Your Bracelet Is Made",
+        "color_scheme": "scheme-1"
+      }
+    },
+    "trust_badges": {
+      "type": "pinaka-trust-badges",
+      "blocks": {
+        "badge_1": {
+          "type": "badge",
+          "settings": {
+            "icon": "&#9670;",
+            "label": "Handcrafted",
+            "detail": "Every stone set by hand"
+          }
+        },
+        "badge_2": {
+          "type": "badge",
+          "settings": {
+            "icon": "&#9670;",
+            "label": "Ships in 15 Days",
+            "detail": "Made to order, fully insured"
+          }
+        },
+        "badge_3": {
+          "type": "badge",
+          "settings": {
+            "icon": "&#9670;",
+            "label": "Lab-Grown & Natural",
+            "detail": "Certified, conflict-free"
+          }
+        }
+      },
+      "block_order": ["badge_1", "badge_2", "badge_3"],
+      "settings": {
+        "color_scheme": "scheme-1"
+      }
+    },
+    "atelier_ledger": {
+      "type": "pinaka-atelier-ledger",
+      "blocks": {
+        "entry_1": {
+          "type": "entry",
+          "settings": {
+            "date": "Apr 4",
+            "product": "The Classic",
+            "specs": "14K Yellow, 2.0ct, 6.5\"",
+            "status": "Shipped",
+            "city": "New York"
+          }
+        },
+        "entry_2": {
+          "type": "entry",
+          "settings": {
+            "date": "Apr 3",
+            "product": "The Statement",
+            "specs": "18K White, 3.5ct, 7\"",
+            "status": "Shipped",
+            "city": "Los Angeles"
+          }
+        },
+        "entry_3": {
+          "type": "entry",
+          "settings": {
+            "date": "Apr 2",
+            "product": "The Heritage",
+            "specs": "18K Yellow, 5.0ct, 6.5\"",
+            "status": "Final Polish",
+            "city": "Miami"
+          }
+        },
+        "entry_4": {
+          "type": "entry",
+          "settings": {
+            "date": "Apr 1",
+            "product": "The Everyday",
+            "specs": "14K Rose, 1.0ct, 6\"",
+            "status": "Setting",
+            "city": "Chicago"
+          }
+        }
+      },
+      "block_order": ["entry_1", "entry_2", "entry_3", "entry_4"],
+      "settings": {
+        "heading": "Recently Crafted",
+        "subtext": "Every Pinaka bracelet is made to order.",
+        "color_scheme": "scheme-1",
+        "padding_top": 56,
+        "padding_bottom": 56
+      }
+    },
+    "founder_note": {
+      "type": "pinaka-founder-note",
+      "settings": {
+        "quote": "I started Pinaka because I couldn't find a tennis bracelet that was handcrafted at a fair price. Every piece is set by hand, inspected under 10x magnification, and shipped fully insured. Questions? Email me directly.",
+        "name": "Jaitul",
+        "title": "Founder"
+      }
+    }
+  },
+  "order": [
+    "hero",
+    "trust_badges",
+    "collection",
+    "craft_timeline",
+    "atelier_ledger",
+    "founder_note"
+  ]
+}

@@ -1,0 +1,123 @@
+/*
+ * ------------------------------------------------------------
+ * IMPORTANT: The contents of this file are auto-generated.
+ *
+ * This file may be updated by the Shopify admin theme editor
+ * or related systems. Please exercise caution as any changes
+ * made to this file may be overwritten.
+ * ------------------------------------------------------------
+ */
+{
+  "current": {
+    "type_header_font": "cormorant_n4",
+    "heading_scale": 100,
+    "type_body_font": "dm_sans_n4",
+    "body_scale": 105,
+    "page_width": 1400,
+    "spacing_sections": 36,
+    "spacing_grid_horizontal": 24,
+    "spacing_grid_vertical": 24,
+    "color_schemes": {
+      "scheme-1": {
+        "settings": {
+          "background": "#FAF7F2",
+          "background_gradient": "",
+          "text": "#6B6560",
+          "button": "#D4A017",
+          "button_label": "#2C2825",
+          "secondary_button_label": "#2C2825",
+          "shadow": "#2C2825"
+        }
+      },
+      "scheme-2": {
+        "settings": {
+          "background": "#F5F0E8",
+          "background_gradient": "",
+          "text": "#6B6560",
+          "button": "#D4A017",
+          "button_label": "#2C2825",
+          "secondary_button_label": "#2C2825",
+          "shadow": "#2C2825"
+        }
+      },
+      "scheme-3": {
+        "settings": {
+          "background": "#1A1816",
+          "background_gradient": "",
+          "text": "#A39E98",
+          "button": "#E0B032",
+          "button_label": "#1A1816",
+          "secondary_button_label": "#F0EBE3",
+          "shadow": "#000000"
+        }
+      },
+      "scheme-4": {
+        "settings": {
+          "background": "#2C2825",
+          "background_gradient": "",
+          "text": "#F0EBE3",
+          "button": "#D4A017",
+          "button_label": "#2C2825",
+          "secondary_button_label": "#F0EBE3",
+          "shadow": "#000000"
+        }
+      },
+      "scheme-5": {
+        "settings": {
+          "background": "#D4A017",
+          "background_gradient": "",
+          "text": "#2C2825",
+          "button": "#2C2825",
+          "button_label": "#FAF7F2",
+          "secondary_button_label": "#2C2825",
+          "shadow": "#2C2825"
+        }
+      }
+    },
+    "buttons_border_thickness": 0,
+    "buttons_border_opacity": 100,
+    "buttons_radius": 8,
+    "buttons_shadow_opacity": 0,
+    "variant_pills_border_thickness": 1,
+    "variant_pills_border_opacity": 55,
+    "variant_pills_radius": 8,
+    "variant_pills_shadow_opacity": 0,
+    "inputs_border_thickness": 1,
+    "inputs_border_opacity": 40,
+    "inputs_radius": 8,
+    "inputs_shadow_opacity": 0,
+    "card_style": "standard",
+    "card_image_padding": 0,
+    "card_text_alignment": "left",
+    "card_color_scheme": "",
+    "card_border_thickness": 0,
+    "card_corner_radius": 10,
+    "card_shadow_opacity": 5,
+    "card_shadow_vertical_offset": 2,
+    "card_shadow_blur": 10,
+    "collection_card_style": "standard",
+    "collection_card_image_padding": 0,
+    "collection_card_text_alignment": "left",
+    "collection_card_color_scheme": "",
+    "collection_card_border_thickness": 0,
+    "collection_card_corner_radius": 10,
+    "collection_card_shadow_opacity": 0,
+    "media_border_thickness": 0,
+    "media_border_opacity": 5,
+    "media_radius": 10,
+    "media_shadow_opacity": 0,
+    "badge_position": "bottom left",
+    "badge_corner_radius": 40,
+    "sale_badge_color_scheme": "scheme-5",
+    "sold_out_badge_color_scheme": "scheme-3",
+    "predictive_search_enabled": true,
+    "predictive_search_show_vendor": false,
+    "predictive_search_show_price": true,
+    "currency_code_enabled": false,
+    "cart_type": "drawer",
+    "show_vendor": false,
+    "show_cart_note": false,
+    "social_instagram_link": "",
+    "social_pinterest_link": ""
+  }
+}

@@ -1,0 +1,46 @@
+<!-- pinaka-custom.css loaded globally via theme.liquid -->
+
+<div class="page-width pinaka-craft-timeline color-{{ section.settings.color_scheme }}">
+  <div class="pinaka-craft-timeline__label">15-Day Atelier Timeline</div>
+  <h2 class="pinaka-craft-timeline__heading">{{ section.settings.heading }}</h2>
+  <div class="pinaka-craft-timeline__grid">
+    {%- for block in section.blocks -%}
+      <div class="pinaka-craft-timeline__step" {{ block.shopify_attributes }}>
+        <div class="pinaka-craft-timeline__num">{{ block.settings.step_number }}</div>
+        <div class="pinaka-craft-timeline__name">{{ block.settings.step_name }}</div>
+        <div class="pinaka-craft-timeline__desc">{{ block.settings.step_description }}</div>
+      </div>
+    {%- endfor -%}
+  </div>
+</div>
+
+{% schema %}
+{
+  "name": "Craft Timeline",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "How Your Bracelet Is Made" },
+    { "type": "color_scheme", "id": "color_scheme", "label": "Color scheme", "default": "scheme-1" }
+  ],
+  "blocks": [
+    {
+      "type": "step",
+      "name": "Step",
+      "settings": [
+        { "type": "text", "id": "step_number", "label": "Number", "default": "01" },
+        { "type": "text", "id": "step_name", "label": "Name", "default": "Step" },
+        { "type": "textarea", "id": "step_description", "label": "Description" }
+      ]
+    }
+  ],
+  "presets": [{
+    "name": "Craft Timeline",
+    "blocks": [
+      { "type": "step", "settings": { "step_number": "01", "step_name": "Stone Matching", "step_description": "Diamonds matched for color and brilliance" } },
+      { "type": "step", "settings": { "step_number": "02", "step_name": "Gold Forming", "step_description": "Links shaped to your wrist size" } },
+      { "type": "step", "settings": { "step_number": "03", "step_name": "Hand Setting", "step_description": "Each stone seated under 10x magnification" } },
+      { "type": "step", "settings": { "step_number": "04", "step_name": "Final Polish", "step_description": "Triple polished for maximum brilliance" } },
+      { "type": "step", "settings": { "step_number": "05", "step_name": "Dispatch", "step_description": "Inspected, certified, insured, shipped" } }
+    ]
+  }]
+}
+{% endschema %}

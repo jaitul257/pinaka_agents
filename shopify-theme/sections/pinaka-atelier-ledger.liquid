@@ -1,0 +1,198 @@
+<section class="pinaka-ledger color-{{ section.settings.color_scheme }}" style="padding-top: {{ section.settings.padding_top }}px; padding-bottom: {{ section.settings.padding_bottom }}px;">
+  <div class="page-width">
+    <div class="pinaka-ledger__label">Live from the Atelier</div>
+    <h2 class="pinaka-ledger__heading">{{ section.settings.heading }}</h2>
+    {%- if section.settings.subtext != blank -%}
+      <p class="pinaka-ledger__sub">{{ section.settings.subtext }}</p>
+    {%- endif -%}
+    <div class="pinaka-ledger__entries">
+      {%- for block in section.blocks -%}
+        <div class="pinaka-ledger__entry" {{ block.shopify_attributes }}>
+          <span class="pinaka-ledger__date">{{ block.settings.date }}</span>
+          <span class="pinaka-ledger__detail">
+            {{ block.settings.product }}, {{ block.settings.specs }}
+            <span class="pinaka-ledger__tag pinaka-ledger__tag--{{ block.settings.status | downcase | replace: ' ', '-' }}">{{ block.settings.status }}</span>
+          </span>
+          <span class="pinaka-ledger__city">{{ block.settings.city }}</span>
+        </div>
+      {%- endfor -%}
+    </div>
+  </div>
+</section>
+
+{% stylesheet %}
+  .pinaka-ledger__label {
+    font-family: var(--font-data--family, monospace);
+    font-size: 0.625rem;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--color-primary);
+    margin-bottom: 0.5rem;
+  }
+  .pinaka-ledger__heading {
+    font-family: var(--font-heading--family);
+    font-size: 1.75rem;
+    font-weight: 400;
+    margin-bottom: 0.25rem;
+    color: var(--color-foreground-heading);
+  }
+  .pinaka-ledger__sub {
+    font-size: 0.875rem;
+    color: var(--color-foreground);
+    margin-bottom: 1.5rem;
+  }
+  .pinaka-ledger__entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.625rem 0;
+    border-bottom: 1px solid var(--color-border, #F0EBE3);
+    font-size: 0.875rem;
+  }
+  .pinaka-ledger__date {
+    font-family: var(--font-data--family, monospace);
+    font-size: 0.75rem;
+    color: var(--color-foreground);
+    min-width: 3.25rem;
+    opacity: 0.7;
+  }
+  .pinaka-ledger__detail {
+    flex: 1;
+    padding: 0 1rem;
+    color: var(--color-foreground-heading);
+  }
+  .pinaka-ledger__city {
+    font-family: var(--font-data--family, monospace);
+    font-size: 0.75rem;
+    color: var(--color-foreground);
+    text-align: right;
+    opacity: 0.7;
+  }
+  .pinaka-ledger__tag {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-family: var(--font-data--family, monospace);
+    font-size: 0.5625rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: 0.5rem;
+  }
+  .pinaka-ledger__tag--shipped {
+    background: rgba(46, 125, 79, 0.08);
+    color: #2E7D4F;
+  }
+  .pinaka-ledger__tag--polishing,
+  .pinaka-ledger__tag--setting,
+  .pinaka-ledger__tag--final-polish {
+    background: rgba(193, 126, 26, 0.08);
+    color: #C17E1A;
+  }
+  .pinaka-ledger__tag--stone-matching {
+    background: rgba(212, 160, 23, 0.12);
+    color: #D4A017;
+  }
+  @media screen and (max-width: 749px) {
+    .pinaka-ledger__city { display: none; }
+    .pinaka-ledger__entry { font-size: 0.8125rem; }
+  }
+{% endstylesheet %}
+
+{% schema %}
+{
+  "name": "Atelier Ledger",
+  "tag": "section",
+  "class": "pinaka-section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Recently Crafted"
+    },
+    {
+      "type": "text",
+      "id": "subtext",
+      "label": "Subtext",
+      "default": "Every Pinaka bracelet is made to order."
+    },
+    {
+      "type": "color_scheme",
+      "id": "color_scheme",
+      "label": "Color scheme",
+      "default": "scheme-1"
+    },
+    {
+      "type": "range",
+      "id": "padding_top",
+      "min": 0,
+      "max": 100,
+      "step": 4,
+      "unit": "px",
+      "label": "Top padding",
+      "default": 56
+    },
+    {
+      "type": "range",
+      "id": "padding_bottom",
+      "min": 0,
+      "max": 100,
+      "step": 4,
+      "unit": "px",
+      "label": "Bottom padding",
+      "default": 56
+    }
+  ],
+  "blocks": [
+    {
+      "type": "entry",
+      "name": "Ledger Entry",
+      "settings": [
+        {
+          "type": "text",
+          "id": "date",
+          "label": "Date",
+          "default": "Mar 28"
+        },
+        {
+          "type": "text",
+          "id": "product",
+          "label": "Product Name",
+          "default": "The Classic"
+        },
+        {
+          "type": "text",
+          "id": "specs",
+          "label": "Specs",
+          "default": "14K Yellow, 2.0ct, 6.5\""
+        },
+        {
+          "type": "text",
+          "id": "status",
+          "label": "Status",
+          "default": "Shipped"
+        },
+        {
+          "type": "text",
+          "id": "city",
+          "label": "City",
+          "default": "New York"
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "name": "Atelier Ledger",
+      "blocks": [
+        { "type": "entry", "settings": { "date": "Mar 28", "product": "The Classic", "specs": "14K Yellow, 2.0ct, 6.5\"", "status": "Shipped", "city": "New York" } },
+        { "type": "entry", "settings": { "date": "Mar 27", "product": "The Statement", "specs": "18K White, 3.5ct, 7\"", "status": "Shipped", "city": "Los Angeles" } },
+        { "type": "entry", "settings": { "date": "Mar 26", "product": "The Heritage", "specs": "18K Yellow, 5.0ct, 6.5\"", "status": "Final Polish", "city": "Miami" } },
+        { "type": "entry", "settings": { "date": "Mar 25", "product": "The Everyday", "specs": "14K Rose, 1.0ct, 6\"", "status": "Setting", "city": "Chicago" } }
+      ]
+    }
+  ]
+}
+{% endschema %}

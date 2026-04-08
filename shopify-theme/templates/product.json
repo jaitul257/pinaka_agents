@@ -1,0 +1,80 @@
+/*
+ * ------------------------------------------------------------
+ * IMPORTANT: The contents of this file are auto-generated.
+ *
+ * This file may be updated by the Shopify admin theme editor
+ * or related systems. Please exercise caution as any changes
+ * made to this file may be overwritten.
+ * ------------------------------------------------------------
+ */
+{
+  "sections": {
+    "main": {
+      "type": "main-product",
+      "blocks": {
+        "title": {
+          "type": "title",
+          "settings": {}
+        },
+        "price": {
+          "type": "price",
+          "settings": {}
+        },
+        "description": {
+          "type": "description",
+          "settings": {}
+        },
+        "variant_picker": {
+          "type": "variant_picker",
+          "settings": {
+            "picker_type": "button"
+          }
+        },
+        "buy_buttons": {
+          "type": "buy_buttons",
+          "settings": {
+            "show_dynamic_checkout": false,
+            "show_gift_card_recipient": false
+          }
+        },
+        "delivery_info": {
+          "type": "text",
+          "settings": {
+            "text": "Ships in 15 business days · Free insured shipping",
+            "text_style": "uppercase"
+          }
+        },
+        "trust_line": {
+          "type": "text",
+          "settings": {
+            "text": "Free insured shipping · 7-day returns · Lifetime warranty",
+            "text_style": "subtitle"
+          }
+        }
+      },
+      "block_order": [
+        "title",
+        "price",
+        "description",
+        "variant_picker",
+        "buy_buttons",
+        "delivery_info",
+        "trust_line"
+      ],
+      "settings": {
+        "enable_sticky_info": true,
+        "media_size": "medium",
+        "constrain_to_viewport": true,
+        "gallery_layout": "stacked",
+        "mobile_thumbnails": "show",
+        "hide_variants": true,
+        "enable_video_looping": false,
+        "padding_top": 36,
+        "padding_bottom": 16
+      }
+    }
+  },
+  "order": [
+    "main"
+  ]
+}

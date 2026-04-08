@@ -1,0 +1,160 @@
+{% doc %}
+  Mobile sticky "Add to Cart" bar for PDP pages.
+  Shows product name + price + add-to-cart button fixed at the bottom of the viewport.
+  Only renders on product pages. Hidden on desktop (>749px).
+
+  Usage: {% render 'pinaka-sticky-cta' %} in theme.liquid before </body>
+{% enddoc %}
+
+{%- if request.page_type == 'product' -%}
+<div class="pinaka-sticky-cta" id="pinakaStickyCtaBar">
+  <div class="pinaka-sticky-cta__inner">
+    <div class="pinaka-sticky-cta__info">
+      <span class="pinaka-sticky-cta__name">{{ product.title | truncate: 30 }}</span>
+      <span class="pinaka-sticky-cta__price">{{ product.selected_or_first_available_variant.price | money }}</span>
+    </div>
+    <button
+      type="button"
+      class="pinaka-sticky-cta__button"
+      id="pinakaStickyCtaButton"
+      {% unless product.available %}disabled{% endunless %}
+    >
+      {%- if product.available -%}
+        Add to Cart
+      {%- else -%}
+        Sold Out
+      {%- endif -%}
+    </button>
+  </div>
+</div>
+{%- endif -%}
+
+{% stylesheet %}
+  .pinaka-sticky-cta {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 999;
+    background: var(--pinaka-cream, #FAF7F2);
+    border-top: 1px solid var(--pinaka-border, #E8E2D9);
+    padding: 10px 16px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    transform: translateY(100%);
+    transition: transform 0.3s ease;
+    box-shadow: 0 -4px 12px rgba(44, 40, 37, 0.08);
+  }
+
+  .pinaka-sticky-cta--visible {
+    transform: translateY(0);
+  }
+
+  .pinaka-sticky-cta__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 600px;
+    margin: 0 auto;
+    gap: 12px;
+  }
+
+  .pinaka-sticky-cta__info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .pinaka-sticky-cta__name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--pinaka-charcoal, #2C2825);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pinaka-sticky-cta__price {
+    font-family: var(--font-data, 'Geist Mono', monospace);
+    font-size: 14px;
+    color: var(--pinaka-text2, #6B6560);
+  }
+
+  .pinaka-sticky-cta__button {
+    flex-shrink: 0;
+    background: var(--pinaka-accent, #D4A017);
+    color: var(--pinaka-charcoal, #2C2825);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 12px 28px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+  }
+
+  .pinaka-sticky-cta__button:hover {
+    background: var(--pinaka-accent-hover, #B8890F);
+  }
+
+  .pinaka-sticky-cta__button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Only show on mobile */
+  @media (max-width: 749px) {
+    .pinaka-sticky-cta {
+      display: block;
+    }
+  }
+
+  /* Dark mode */
+  body.dark-mode .pinaka-sticky-cta {
+    background: #2C2825;
+    border-top-color: rgba(250, 247, 242, 0.1);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  body.dark-mode .pinaka-sticky-cta__name {
+    color: #FAF7F2;
+  }
+
+  body.dark-mode .pinaka-sticky-cta__price {
+    color: #D4D0CA;
+  }
+{% endstylesheet %}
+
+{% javascript %}
+  // Show sticky CTA when the main Add to Cart button scrolls out of view
+  const stickyBar = document.getElementById('pinakaStickyCtaBar');
+  const stickyButton = document.getElementById('pinakaStickyCtaButton');
+
+  if (stickyBar) {
+    // Find the main add-to-cart button on the page
+    const mainBuyButton = document.querySelector('[name="add"], .product-form__submit, .shopify-payment-button');
+
+    if (mainBuyButton) {
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          stickyBar.classList.toggle('pinaka-sticky-cta--visible', !entry.isIntersecting);
+        },
+        { threshold: 0, rootMargin: '0px' }
+      );
+      observer.observe(mainBuyButton);
+    }
+
+    // Click handler: scroll to the real add-to-cart and click it
+    if (stickyButton) {
+      stickyButton.addEventListener('click', () => {
+        const realButton = document.querySelector('[name="add"], .product-form__submit');
+        if (realButton) {
+          realButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setTimeout(() => realButton.click(), 400);
+        }
+      });
+    }
+  }
+{% endjavascript %}

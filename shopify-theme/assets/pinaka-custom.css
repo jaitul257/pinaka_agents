@@ -1,0 +1,611 @@
+/* Pinaka Jewellery — Custom Design System Overrides for Dawn v3 */
+
+/* ── Global body overrides ── */
+body {
+  -webkit-font-smoothing: antialiased !important;
+  color: #2C2825 !important;
+}
+
+body,
+.color-scheme-1 {
+  background-color: #FAF7F2 !important;
+}
+
+h1,
+h2,
+h3,
+.h1,
+.h2,
+.h3 {
+  font-family: 'Cormorant Garamond', serif !important;
+  color: #2C2825;
+}
+
+/* ── Header text styling to match hero (all pages, all color schemes) ── */
+.header__heading-link,
+.header__heading-link:hover,
+.header__heading-link:focus,
+.header__heading-link .h2,
+.header__heading-link:hover .h2,
+a.header__heading-link.link.link--text,
+.header .header__heading-link {
+  color: #2C2825 !important;
+}
+
+.header__heading-link .h2 {
+  font-size: 2.4rem !important;
+}
+
+@media only screen and (min-width: 750px) {
+  .header__heading-link .h2 {
+    font-size: 2.4rem !important;
+  }
+}
+
+/* Dark mode keeps cream */
+body.dark-mode .header__heading-link,
+body.dark-mode .header__heading-link:hover,
+body.dark-mode .header__heading-link .h2,
+body.dark-mode a.header__heading-link.link.link--text {
+  color: #FAF7F2 !important;
+}
+
+/* Geist Mono loaded via <link> in theme.liquid <head> for better LCP */
+
+:root {
+  --font-data: 'Geist Mono', 'SF Mono', monospace;
+  --pinaka-accent: #D4A017;
+  --pinaka-accent-hover: #B8890F;
+  --pinaka-accent-subtle: rgba(212, 160, 23, 0.12);
+  --pinaka-gold: #C5A55A;
+  --pinaka-charcoal: #2C2825;
+  --pinaka-cream: #FAF7F2;
+  --pinaka-text2: #6B6560;
+  --pinaka-muted: #9E9893;
+  --pinaka-border: #E8E2D9;
+  --pinaka-success: #2E7D4F;
+  --pinaka-warning: #C17E1A;
+}
+
+/* ── Hero section: split layout ── */
+.pinaka-hero {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 48px 48px 56px;
+  display: grid;
+  grid-template-columns: 2fr 3fr;
+  gap: 48px;
+  align-items: center;
+}
+
+.pinaka-hero h1 {
+  font-size: clamp(36px, 3.5vw, 52px);
+  font-weight: 400;
+  line-height: 1.1;
+  margin-bottom: 16px;
+  color: var(--pinaka-charcoal);
+}
+
+.pinaka-hero p {
+  font-size: 17px;
+  color: var(--pinaka-text2);
+  line-height: 1.6;
+  margin-bottom: 28px;
+}
+
+.pinaka-hero .cta {
+  display: inline-block;
+  background: var(--pinaka-accent);
+  color: var(--pinaka-charcoal);
+  font-weight: 600;
+  font-size: 15px;
+  padding: 14px 36px;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.pinaka-hero .cta:hover {
+  background: var(--pinaka-accent-hover);
+}
+
+.pinaka-hero .hero-img {
+  width: 100%;
+  aspect-ratio: 5/4;
+  border-radius: 10px;
+  background: radial-gradient(ellipse at 55% 50%, rgba(197, 165, 90, 0.15) 0%, transparent 55%),
+    linear-gradient(155deg, #F5F0E8, #FFFFFF);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 32px rgba(44, 40, 37, 0.08);
+  overflow: hidden;
+}
+
+.pinaka-hero .hero-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pinaka-hero .hero-placeholder {
+  font-style: italic;
+  font-size: 18px;
+  color: var(--pinaka-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* ── Gold divider ── */
+.pinaka-rule {
+  height: 1px;
+  background: var(--pinaka-gold);
+  opacity: 0.35;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+/* ── Price font override ── */
+.price-item,
+.price {
+  font-family: var(--font-data) !important;
+}
+
+/* ── Craft Timeline ── */
+.pinaka-craft-timeline {
+  padding: 48px clamp(24px, 5vw, 80px);
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.pinaka-craft-timeline__label {
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
+}
+
+.pinaka-craft-timeline__heading {
+  font-size: 2rem;
+  font-weight: 400;
+  margin-bottom: 2rem;
+}
+
+.pinaka-craft-timeline__grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 20px;
+}
+
+.pinaka-craft-timeline__step {
+  text-align: center;
+  padding: 20px 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(44, 40, 37, 0.05);
+}
+
+.pinaka-craft-timeline__num {
+  font-family: var(--font-data);
+  font-size: 10px;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
+}
+
+.pinaka-craft-timeline__name {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.pinaka-craft-timeline__desc {
+  font-size: 11px;
+  color: var(--pinaka-text2);
+  line-height: 1.4;
+}
+
+/* ── Founder Note ── */
+.pinaka-founder-note {
+  background: var(--pinaka-accent-subtle);
+  padding: 56px clamp(24px, 6vw, 112px);
+}
+
+.pinaka-founder-note__inner {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.pinaka-founder-note blockquote {
+  font-size: 20px;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--pinaka-charcoal);
+  max-width: 640px;
+  margin: 0 0 12px 0;
+  padding: 0;
+  border: none;
+}
+
+.pinaka-founder-note .sig {
+  font-style: italic;
+  font-size: 17px;
+  color: var(--pinaka-accent);
+}
+
+/* ── Atelier Ledger ── */
+.pinaka-ledger {
+  padding: 48px 0;
+}
+
+.pinaka-ledger__label {
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
+}
+
+.pinaka-ledger__heading {
+  font-size: 1.75rem;
+  font-weight: 400;
+  margin-bottom: 4px;
+}
+
+.pinaka-ledger__sub {
+  font-size: 14px;
+  color: var(--pinaka-text2);
+  margin-bottom: 24px;
+}
+
+.pinaka-ledger__entry {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--pinaka-border);
+  font-size: 14px;
+}
+
+.pinaka-ledger__date {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--pinaka-muted);
+  min-width: 52px;
+}
+
+.pinaka-ledger__detail {
+  flex: 1;
+  padding: 0 16px;
+}
+
+.pinaka-ledger__city {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--pinaka-muted);
+  text-align: right;
+}
+
+.pinaka-ledger__tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-family: var(--font-data);
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 8px;
+}
+
+.pinaka-ledger__tag--shipped {
+  background: rgba(46, 125, 79, 0.08);
+  color: var(--pinaka-success);
+}
+
+.pinaka-ledger__tag--polishing,
+.pinaka-ledger__tag--setting {
+  background: rgba(193, 126, 26, 0.08);
+  color: var(--pinaka-warning);
+}
+
+/* Dark mode overrides moved to theme-toggle.liquid (single source of truth) */
+
+/* ── Trust Badges (homepage + PDP) ── */
+.pinaka-trust-badges {
+  padding: 40px 0;
+}
+
+.pinaka-trust-badges__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  text-align: center;
+}
+
+.pinaka-trust-badges__item {
+  padding: 20px 12px;
+}
+
+.pinaka-trust-badges__icon {
+  font-size: 20px;
+  color: var(--pinaka-accent);
+  margin-bottom: 8px;
+}
+
+.pinaka-trust-badges__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pinaka-charcoal);
+  margin-bottom: 4px;
+  letter-spacing: 0.02em;
+}
+
+.pinaka-trust-badges__detail {
+  font-size: 11px;
+  color: var(--pinaka-text2);
+  line-height: 1.4;
+}
+
+/* ── PDP Typography (Cormorant Garamond via Google Fonts, not Shopify's Cormorant) ── */
+.product__title h1,
+.product__title .h1 {
+  font-family: 'Cormorant Garamond', serif !important;
+  font-size: 36px !important;
+  font-weight: 400 !important;
+  line-height: 1.15 !important;
+  color: var(--pinaka-charcoal) !important;
+  margin-bottom: 6px !important;
+}
+
+.product__info-wrapper .price-item,
+.product__info-wrapper .price,
+.product__info-wrapper .price__regular .money {
+  font-family: var(--font-data) !important;
+  font-size: 26px !important;
+  font-weight: 500 !important;
+  color: var(--pinaka-charcoal) !important;
+  margin-bottom: 12px !important;
+}
+
+.product__description,
+.product__description .rte,
+.product__description p {
+  font-size: 16px !important;
+  color: var(--pinaka-text2) !important;
+  line-height: 1.6 !important;
+  margin-bottom: 20px !important;
+}
+
+/* PDP delivery info — Geist Mono, gold accent */
+.product__text.caption-with-letter-spacing {
+  font-family: var(--font-data) !important;
+  font-size: 12px !important;
+  color: var(--pinaka-accent) !important;
+  letter-spacing: 0.5px !important;
+}
+
+/* PDP trust line — muted */
+.product__text.subtitle {
+  font-size: 13px !important;
+  color: var(--pinaka-muted) !important;
+}
+
+/* Add to Bag button — gold, 16px, 8px radius */
+.product-form__submit,
+.product-form__submit.button {
+  background: var(--pinaka-accent) !important;
+  color: var(--pinaka-charcoal) !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  border: none !important;
+  padding: 16px !important;
+}
+
+.product-form__submit:hover {
+  background: var(--pinaka-accent-hover) !important;
+}
+
+/* ── PDP Enhancements ── */
+/* Shipping note below buy buttons */
+.pinaka-pdp-shipping {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--pinaka-text2);
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--pinaka-accent-subtle);
+  border-radius: 6px;
+}
+
+.pinaka-pdp-shipping__icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.pinaka-pdp-shipping strong {
+  color: var(--pinaka-charcoal);
+}
+
+/* Product page image aspect ratio */
+.product__media-item img {
+  aspect-ratio: 1/1;
+  object-fit: cover;
+}
+
+/* ── PDP Variant Pill Overrides (matches design-consultation-preview) ── */
+.product-form__input--pill input[type='radio'] + label {
+  background: transparent !important;
+  color: var(--pinaka-charcoal) !important;
+  border: 1px solid var(--pinaka-border) !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  padding: 8px 18px !important;
+  transition: all 0.2s !important;
+}
+
+.product-form__input--pill input[type='radio'] + label:hover {
+  border-color: var(--pinaka-accent) !important;
+}
+
+.product-form__input--pill input[type='radio']:checked + label {
+  background: var(--pinaka-accent-subtle) !important;
+  color: var(--pinaka-charcoal) !important;
+  border-color: var(--pinaka-accent) !important;
+}
+
+.product-form__input--pill .form__label {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: var(--pinaka-text2) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  margin-bottom: 6px !important;
+}
+
+/* ── Dark Mode: PDP variant pills ── */
+body.dark-mode .product-form__input--pill input[type='radio'] + label {
+  color: #FAF7F2 !important;
+  border-color: rgba(250, 247, 242, 0.2) !important;
+}
+
+body.dark-mode .product-form__input--pill input[type='radio']:checked + label {
+  background: rgba(224, 176, 50, 0.15) !important;
+  color: #FAF7F2 !important;
+  border-color: #E0B032 !important;
+}
+
+body.dark-mode .product-form__input--pill .form__label {
+  color: #A39E98 !important;
+}
+
+body.dark-mode .product__title h1,
+body.dark-mode .product__title .h1 {
+  color: #FAF7F2 !important;
+}
+
+body.dark-mode .product__info-wrapper .price-item,
+body.dark-mode .product__info-wrapper .price {
+  color: #FAF7F2 !important;
+}
+
+body.dark-mode .product__description p {
+  color: #A39E98 !important;
+}
+
+/* Dark mode: trust badges */
+body.dark-mode .pinaka-trust-badges__label {
+  color: #FAF7F2 !important;
+}
+
+body.dark-mode .pinaka-trust-badges__detail {
+  color: #A39E98 !important;
+}
+
+/* Dark mode: header same as body bg (uniform), no borders */
+body.dark-mode .header,
+body.dark-mode .section-header {
+  background-color: #1a1815 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+body.dark-mode .header-wrapper {
+  border-bottom: none !important;
+}
+
+body.dark-mode .announcement-bar,
+body.dark-mode .utility-bar {
+  background-color: #1a1815 !important;
+  border: none !important;
+}
+
+/* Dark mode: craft timeline text */
+body.dark-mode .pinaka-craft-timeline__name {
+  color: #FAF7F2 !important;
+}
+
+body.dark-mode .pinaka-craft-timeline__desc {
+  color: #A39E98 !important;
+}
+
+/* Dark mode: ledger text */
+body.dark-mode .pinaka-ledger__detail {
+  color: #FAF7F2 !important;
+}
+
+body.dark-mode .pinaka-ledger__heading {
+  color: #FAF7F2 !important;
+}
+
+body.dark-mode .pinaka-ledger__sub {
+  color: #A39E98 !important;
+}
+
+/* ── Cart Drawer: product title + variant info ── */
+.cart-item__name,
+.cart-item__details a {
+  font-family: 'Cormorant Garamond', serif !important;
+  font-size: 18px !important;
+  font-weight: 400 !important;
+  line-height: 1.3 !important;
+}
+
+.cart-item__details .product-option,
+.cart-item__details dl {
+  font-size: 14px !important;
+  color: var(--pinaka-text2) !important;
+}
+
+body.dark-mode .cart-item__name,
+body.dark-mode .cart-item__details a {
+  color: #FAF7F2 !important;
+}
+
+/* ── Responsive ── */
+@media (max-width: 749px) {
+  .pinaka-hero {
+    grid-template-columns: 1fr;
+    padding: 32px 24px 40px;
+    gap: 24px;
+  }
+
+  .pinaka-hero .hero-img {
+    order: -1;
+    aspect-ratio: 4/3;
+  }
+
+  .pinaka-hero h1 {
+    font-size: 32px;
+  }
+
+  .pinaka-craft-timeline__grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pinaka-founder-note {
+    padding: 40px 24px;
+  }
+
+  .pinaka-ledger__city {
+    display: none;
+  }
+
+  .pinaka-trust-badges__grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+
+  /* Extra bottom padding to clear sticky CTA on PDP */
+  .product {
+    padding-bottom: 80px;
+  }
+}

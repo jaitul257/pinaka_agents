@@ -1,0 +1,202 @@
+<!-- About page — Founder story, brand values, craftsmanship -->
+<!-- pinaka-custom.css loaded globally via theme.liquid -->
+
+<style>
+  .pinaka-about {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 60px 24px 80px;
+  }
+
+  .pinaka-about__label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--pinaka-accent, #D4A017);
+    margin-bottom: 16px;
+  }
+
+  .pinaka-about__title {
+    font-family: 'Cormorant Garamond', serif !important;
+    font-size: 42px;
+    font-weight: 400;
+    line-height: 1.15;
+    color: var(--pinaka-charcoal, #2C2825);
+    margin: 0 0 32px;
+  }
+
+  .pinaka-about__body {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    color: var(--pinaka-charcoal, #2C2825);
+  }
+
+  .pinaka-about__body p {
+    margin: 0 0 24px;
+  }
+
+  .pinaka-about__signature {
+    margin-top: 40px;
+    padding-top: 32px;
+    border-top: 1px solid var(--pinaka-border, #E8E2D9);
+  }
+
+  .pinaka-about__sig-name {
+    font-family: 'Cormorant Garamond', serif !important;
+    font-size: 24px;
+    font-weight: 400;
+    color: var(--pinaka-charcoal, #2C2825);
+    margin: 0 0 4px;
+  }
+
+  .pinaka-about__sig-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--pinaka-muted, #6B6560);
+    letter-spacing: 0.5px;
+  }
+
+  .pinaka-about__values {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    margin: 48px 0;
+  }
+
+  .pinaka-about__value-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--pinaka-charcoal, #2C2825);
+    margin: 0 0 8px;
+  }
+
+  .pinaka-about__value-text {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--pinaka-muted, #6B6560);
+    margin: 0;
+  }
+
+  @media (max-width: 749px) {
+    .pinaka-about { padding: 40px 20px 60px; }
+    .pinaka-about__title { font-size: 32px; }
+    .pinaka-about__values { grid-template-columns: 1fr; gap: 24px; }
+  }
+
+  /* Dark mode */
+  body.dark-mode .pinaka-about__title,
+  body.dark-mode .pinaka-about__body,
+  body.dark-mode .pinaka-about__sig-name,
+  body.dark-mode .pinaka-about__value-title {
+    color: #FAF7F2;
+  }
+  body.dark-mode .pinaka-about__sig-title,
+  body.dark-mode .pinaka-about__value-text {
+    color: rgba(250,247,242,0.6);
+  }
+  body.dark-mode .pinaka-about__signature {
+    border-top-color: rgba(250,247,242,0.15);
+  }
+</style>
+
+<div class="pinaka-about">
+  <div class="pinaka-about__label">{{ section.settings.label }}</div>
+  <h1 class="pinaka-about__title">{{ section.settings.heading }}</h1>
+
+  <div class="pinaka-about__body">
+    {{ section.settings.story }}
+  </div>
+
+  <div class="pinaka-about__values">
+    {% for block in section.blocks %}
+      <div class="pinaka-about__value">
+        <h3 class="pinaka-about__value-title">{{ block.settings.title }}</h3>
+        <p class="pinaka-about__value-text">{{ block.settings.text }}</p>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="pinaka-about__signature">
+    <div class="pinaka-about__sig-name">{{ section.settings.founder_name }}</div>
+    <div class="pinaka-about__sig-title">{{ section.settings.founder_title }}</div>
+  </div>
+</div>
+
+{% schema %}
+{
+  "name": "About Page",
+  "tag": "section",
+  "class": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "label",
+      "label": "Section label",
+      "default": "Our Story"
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Every Bracelet Has a Maker"
+    },
+    {
+      "type": "richtext",
+      "id": "story",
+      "label": "Founder story",
+      "default": "<p>I started Pinaka because I believed something was missing in the jewellery world: a tennis bracelet that was genuinely handcrafted, honestly priced, and made with the kind of care you'd expect from a family jeweler.</p><p>Every Pinaka bracelet begins as raw gold and loose diamonds. Our artisans set each stone by hand, one at a time, under 10x magnification. There are no shortcuts. No mass production. Just quiet, careful work that takes 15 business days from order to dispatch.</p><p>We work directly with our craftspeople, which means no retail markups and no middlemen. The same quality you'd find at a luxury boutique, at a price that reflects the actual cost of materials and skilled labour.</p><p>Each bracelet ships fully insured, in a hand-finished box, with a certificate of authenticity. If you ever have a question, you can email me directly. I read every message.</p>"
+    },
+    {
+      "type": "text",
+      "id": "founder_name",
+      "label": "Founder name",
+      "default": "Jaitul"
+    },
+    {
+      "type": "text",
+      "id": "founder_title",
+      "label": "Founder title",
+      "default": "Founder, Pinaka Jewellery"
+    }
+  ],
+  "blocks": [
+    {
+      "type": "value",
+      "name": "Brand Value",
+      "settings": [
+        {
+          "type": "text",
+          "id": "title",
+          "label": "Title",
+          "default": "Handcrafted"
+        },
+        {
+          "type": "text",
+          "id": "text",
+          "label": "Description",
+          "default": "Each stone set by hand under 10x magnification."
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "name": "About Page",
+      "blocks": [
+        { "type": "value", "settings": { "title": "Handcrafted", "text": "Each stone set by hand, one at a time, under 10x magnification by our master artisans." } },
+        { "type": "value", "settings": { "title": "Direct Pricing", "text": "No retail markups. We work directly with our craftspeople to offer honest, transparent pricing." } },
+        { "type": "value", "settings": { "title": "Fully Insured", "text": "Every bracelet ships with full insurance coverage and tracked delivery to your door." } },
+        { "type": "value", "settings": { "title": "Made to Order", "text": "Your bracelet is crafted fresh, not pulled from a shelf. 15 business days from order to dispatch." } }
+      ]
+    }
+  ]
+}
+{% endschema %}

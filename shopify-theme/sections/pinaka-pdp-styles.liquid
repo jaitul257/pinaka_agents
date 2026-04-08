@@ -1,0 +1,121 @@
+{% comment %}
+  Pinaka PDP typography and styling overrides.
+  Matches design system from design-consultation-preview.
+{% endcomment %}
+
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@300;400;500;600;700&family=Geist+Mono:wght@300;400;500&display=swap">
+
+<style>
+  /* PDP Title — Cormorant Garamond serif, 36px, weight 400 */
+  .product__title h1,
+  .product__title .h1 {
+    font-family: 'Cormorant Garamond', serif !important;
+    font-size: 36px !important;
+    font-weight: 400 !important;
+    line-height: 1.15 !important;
+    color: #2C2825 !important;
+  }
+
+  /* PDP Price — Geist Mono, 26px, weight 500 */
+  .product__info-wrapper .price-item,
+  .product__info-wrapper .price,
+  .product__info-wrapper .price__regular,
+  .product__info-wrapper .price .money {
+    font-family: 'Geist Mono', monospace !important;
+    font-size: 26px !important;
+    font-weight: 500 !important;
+    color: #2C2825 !important;
+  }
+
+  /* Hide .00 cents from price display */
+  .product__info-wrapper .price-item .money {
+    font-variant-numeric: tabular-nums !important;
+  }
+
+  /* PDP Description — DM Sans, 16px */
+  .product__description,
+  .product__description .rte,
+  .product__description p {
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 16px !important;
+    color: #6B6560 !important;
+    line-height: 1.6 !important;
+    margin-bottom: 20px !important;
+  }
+
+  /* Delivery info — Geist Mono, 12px, gold accent */
+  .product__text.caption-with-letter-spacing {
+    font-family: 'Geist Mono', monospace !important;
+    font-size: 12px !important;
+    color: #D4A017 !important;
+    letter-spacing: 0.5px !important;
+  }
+
+  /* Trust line — 13px, muted */
+  .product__text.subtitle {
+    font-size: 13px !important;
+    color: #9E9893 !important;
+  }
+
+  /* Add to Bag button — full width, gold, 16px weight 600, 8px radius */
+  .product-form__submit,
+  .product-form__submit.button {
+    background: #D4A017 !important;
+    color: #2C2825 !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    border: none !important;
+    padding: 16px !important;
+  }
+
+  .product-form__submit:hover {
+    background: #B8890F !important;
+  }
+
+  /* Variant pill buttons — transparent bg, 1px border, 8px 18px padding */
+  .product-form__input--pill input[type='radio'] + label {
+    background: transparent !important;
+    color: #2C2825 !important;
+    border: 1px solid #E8E2D9 !important;
+    border-radius: 8px !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    padding: 8px 18px !important;
+    transition: all 0.2s !important;
+  }
+
+  .product-form__input--pill input[type='radio'] + label:hover {
+    border-color: #D4A017 !important;
+  }
+
+  /* Selected pill — subtle gold tint + gold border */
+  .product-form__input--pill input[type='radio']:checked + label {
+    background: rgba(212, 160, 23, 0.12) !important;
+    color: #2C2825 !important;
+    border-color: #D4A017 !important;
+  }
+
+  /* Option group labels — 12px, weight 600, muted color, uppercase */
+  .product-form__input--pill .form__label {
+    font-family: 'DM Sans', sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #6B6560 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    margin-bottom: 6px !important;
+  }
+</style>
+
+{% schema %}
+{
+  "name": "Pinaka PDP Styles",
+  "settings": [],
+  "presets": [{ "name": "Pinaka PDP Styles" }]
+}
+{% endschema %}

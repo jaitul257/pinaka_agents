@@ -1,0 +1,46 @@
+{
+  "sections": {
+    "about": {
+      "type": "pinaka-about",
+      "blocks": {
+        "value_1": {
+          "type": "value",
+          "settings": {
+            "title": "Handcrafted",
+            "text": "Each stone set by hand, one at a time, under 10x magnification by our master artisans."
+          }
+        },
+        "value_2": {
+          "type": "value",
+          "settings": {
+            "title": "Direct Pricing",
+            "text": "No retail markups. We work directly with our craftspeople to offer honest, transparent pricing."
+          }
+        },
+        "value_3": {
+          "type": "value",
+          "settings": {
+            "title": "Fully Insured",
+            "text": "Every bracelet ships with full insurance coverage and tracked delivery to your door."
+          }
+        },
+        "value_4": {
+          "type": "value",
+          "settings": {
+            "title": "Made to Order",
+            "text": "Your bracelet is crafted fresh, not pulled from a shelf. 15 business days from order to dispatch."
+          }
+        }
+      },
+      "block_order": ["value_1", "value_2", "value_3", "value_4"],
+      "settings": {
+        "label": "Our Story",
+        "heading": "Every Bracelet Has a Maker",
+        "story": "<p>I started Pinaka because I believed something was missing in the jewellery world: a tennis bracelet that was genuinely handcrafted, honestly priced, and made with the kind of care you'd expect from a family jeweler.</p><p>Every Pinaka bracelet begins as raw gold and loose diamonds. Our artisans set each stone by hand, one at a time, under 10x magnification. There are no shortcuts. No mass production. Just quiet, careful work that takes 15 business days from order to dispatch.</p><p>We work directly with our craftspeople, which means no retail markups and no middlemen. The same quality you'd find at a luxury boutique, at a price that reflects the actual cost of materials and skilled labour.</p><p>Each bracelet ships fully insured, in a hand-finished box, with a certificate of authenticity. If you ever have a question, you can email me directly. I read every message.</p>",
+        "founder_name": "Jaitul",
+        "founder_title": "Founder, Pinaka Jewellery"
+      }
+    }
+  },
+  "order": ["about"]
+}
