@@ -256,6 +256,35 @@
     color: #FAF7F2;
     border-color: rgba(250, 247, 242, 0.2);
   }
+
+  /* Scroll-hide: slide out on scroll down, back on scroll up */
+  .theme-toggle-container {
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+  .theme-toggle-container.scroll-hidden {
+    transform: translateY(calc(100% + 30px));
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Mobile: smaller, icon-only (no label) */
+  @media (max-width: 749px) {
+    .theme-toggle-container {
+      bottom: 16px;
+      left: 12px;
+    }
+    .theme-toggle {
+      width: 36px;
+      height: 36px;
+    }
+    .theme-toggle__icon {
+      width: 16px;
+      height: 16px;
+    }
+    .theme-toggle__label {
+      display: none;
+    }
+  }
 {% endstylesheet %}
 
 {% javascript %}
@@ -276,5 +305,18 @@
     themeLabel.textContent = currentTheme.charAt(0).toUpperCase() + currentTheme.slice(1);
     localStorage.setItem('theme', currentTheme);
   });
+
+  // Hide on scroll down, show on scroll up
+  let lastScrollY = window.scrollY;
+  const container = document.getElementById('themeToggleContainer');
+  window.addEventListener('scroll', () => {
+    const currentY = window.scrollY;
+    if (currentY > lastScrollY && currentY > 100) {
+      container.classList.add('scroll-hidden');
+    } else {
+      container.classList.remove('scroll-hidden');
+    }
+    lastScrollY = currentY;
+  }, { passive: true });
 {% endjavascript %}
 

@@ -7,6 +7,8 @@ import base64
 import hmac
 import json
 import logging
+import os
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Cookie, File, Form, Request, UploadFile
@@ -140,6 +142,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
         <a href="/dashboard/add" class="nav-link {"active" if active == "add" else ""}">+ Add Product</a>
         <a href="/dashboard/images" class="nav-link {"active" if active == "images" else ""}">Shopify Images</a>
         <a href="/dashboard/ad-creatives" class="nav-link {"active" if active == "ad-creatives" else ""}">Ad Creatives</a>
+        <a href="/dashboard/pipeline" class="nav-link {"active" if active == "pipeline" else ""}">Pipeline</a>
         <div class="nav-right">
             <a href="/dashboard/logout" class="nav-link">Logout</a>
         </div>
@@ -2058,3 +2061,309 @@ async def ad_creatives_pause(
         "/dashboard/ad-creatives?msg=Archived+from+dashboard.+To+stop+ads+on+Meta,+pause+the+Ad+in+Meta+Ads+Manager",
         status_code=303,
     )
+
+
+# ── Product Pipeline (PDF catalog → Pomelli → Shopify) ──
+
+CATALOG_DIR = Path(__file__).resolve().parent.parent.parent / "catalog"
+CATALOG_JSON = CATALOG_DIR / "catalog.json"
+BASE_IMAGES_DIR = CATALOG_DIR / "base_images"
+POMELLI_DIR = CATALOG_DIR / "pomelli_images"
+
+
+def _load_catalog() -> list[dict]:
+    if not CATALOG_JSON.exists():
+        return []
+    with open(CATALOG_JSON) as f:
+        return json.load(f)
+
+
+def _save_catalog(catalog: list[dict]) -> None:
+    with open(CATALOG_JSON, "w") as f:
+        json.dump(catalog, f, indent=2)
+
+
+@router.get("/pipeline", response_class=HTMLResponse)
+async def pipeline_page(
+    request: Request,
+    msg: str = "",
+    dash_token: str | None = Cookie(None),
+):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    catalog = _load_catalog()
+
+    alert = ""
+    if msg:
+        alert = f'<div class="alert alert-success">{msg}</div>'
+
+    # Stats
+    total = len(catalog)
+    needs_photo = sum(1 for p in catalog if p.get("status") == "needs_photoshoot")
+    ready = sum(1 for p in catalog if p.get("status") == "ready_to_review")
+    published = sum(1 for p in catalog if p.get("status") == "published")
+
+    metrics = f"""
+    <div class="metrics">
+        <div class="metric"><div class="metric-label">Total Products</div><div class="metric-value">{total}</div></div>
+        <div class="metric"><div class="metric-label">Needs Photoshoot</div><div class="metric-value">{needs_photo}</div></div>
+        <div class="metric"><div class="metric-label">Ready to Review</div><div class="metric-value">{ready}</div></div>
+        <div class="metric"><div class="metric-label">Published</div><div class="metric-value">{published}</div></div>
+    </div>
+    """
+
+    # Product cards
+    cards = ""
+    for i, p in enumerate(catalog):
+        sku = p["sku"]
+        status = p.get("status", "needs_photoshoot")
+        pomelli_count = len(p.get("pomelli_images", []))
+
+        # Status badge
+        if status == "published":
+            badge = '<span style="color:var(--success);font-size:12px;font-weight:600;">PUBLISHED</span>'
+        elif status == "ready_to_review":
+            badge = '<span style="color:var(--accent);font-size:12px;font-weight:600;">READY TO REVIEW</span>'
+        else:
+            badge = '<span style="color:var(--text-muted);font-size:12px;font-weight:600;">NEEDS PHOTOSHOOT</span>'
+
+        # Base image as base64
+        img_html = ""
+        img_path = BASE_IMAGES_DIR / p.get("base_image", "")
+        if img_path.exists():
+            img_data = base64.b64encode(img_path.read_bytes()).decode()
+            img_html = f'<img src="data:image/png;base64,{img_data}" style="width:180px;height:auto;border-radius:8px;border:1px solid var(--border);">'
+
+        # Pomelli thumbnails
+        pomelli_html = ""
+        pomelli_dir = POMELLI_DIR / sku
+        if pomelli_dir.exists():
+            for img_file in sorted(pomelli_dir.iterdir()):
+                if img_file.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                    pdata = base64.b64encode(img_file.read_bytes()).decode()
+                    ext = img_file.suffix.lower().replace(".", "")
+                    mime = "jpeg" if ext == "jpg" else ext
+                    pomelli_html += f'<img src="data:image/{mime};base64,{pdata}" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--border);">'
+
+        gem_tag = ""
+        if p.get("gemstone"):
+            gem_tag = f'<span class="tag" style="background:var(--accent-subtle);color:var(--accent);">{p["gemstone"]}</span>'
+
+        cards += f"""
+        <div class="card" style="display:grid;grid-template-columns:180px 1fr;gap:20px;align-items:start;">
+            <div>{img_html}
+                <a href="/dashboard/pipeline/{sku}/download" class="btn btn-sm" style="margin-top:8px;display:block;text-align:center;font-size:11px;">Download for Pomelli</a>
+            </div>
+            <div>
+                <div style="display:flex;justify-content:space-between;align-items:start;">
+                    <div>
+                        <div class="product-name">{sku}</div>
+                        <div class="product-detail">{p.get('style','')} {p.get('line_type','')} Line — {p.get('metal','')} {p.get('karat','')}</div>
+                        <div class="product-detail">{p.get('carats','')} — {p.get('weight_gm','')}g</div>
+                    </div>
+                    <div style="text-align:right;">
+                        {badge}
+                    </div>
+                </div>
+                <div class="product-tags" style="margin-top:8px;">
+                    <span class="tag">{p.get('style','')}</span>
+                    <span class="tag">{p.get('line_type','')} Line</span>
+                    <span class="tag">{p.get('metal','')}</span>
+                    <span class="tag">{p.get('carats','')}</span>
+                    {gem_tag}
+                </div>
+
+                <div style="margin-top:16px;">
+                    <h3>Pomelli Images ({pomelli_count})</h3>
+                    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+                        {pomelli_html if pomelli_html else '<span style="font-size:13px;color:var(--text-muted);">No images yet — download base image, run through Pomelli, then upload here</span>'}
+                    </div>
+                    <form action="/dashboard/pipeline/{sku}/upload" method="post" enctype="multipart/form-data" style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+                        <input type="file" name="images" accept="image/*" multiple style="font-size:13px;">
+                        <button type="submit" class="btn btn-sm btn-primary">Upload</button>
+                    </form>
+                </div>
+
+                {f'''<div style="margin-top:16px;">
+                    <form action="/dashboard/pipeline/{sku}/publish" method="post" style="display:inline;">
+                        <button type="submit" class="btn btn-primary" {"disabled" if pomelli_count == 0 else ""}>Create on Shopify</button>
+                    </form>
+                </div>''' if status != "published" else '<div style="margin-top:12px;font-size:13px;color:var(--success);">Live on Shopify</div>'}
+            </div>
+        </div>
+        """
+
+    body = f"""
+    <h1>Product Pipeline</h1>
+    <p style="color:var(--text-muted);margin:4px 0 24px;">PDF Catalog → Base Image → Pomelli Photoshoot → Shopify</p>
+    {alert}
+    {metrics}
+    <div class="gold-divider"></div>
+    {cards if cards else '<p style="color:var(--text-muted);">No products in catalog. Run the PDF extraction script first.</p>'}
+    """
+    return _base_html("Product Pipeline", body, active="pipeline")
+
+
+@router.get("/pipeline/{sku}/download")
+async def pipeline_download(sku: str, dash_token: str | None = Cookie(None)):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    img_path = BASE_IMAGES_DIR / f"{sku}.png"
+    if not img_path.exists():
+        return RedirectResponse("/dashboard/pipeline?msg=Image+not+found", status_code=303)
+
+    from fastapi.responses import FileResponse
+    return FileResponse(img_path, filename=f"{sku}.png", media_type="image/png")
+
+
+@router.post("/pipeline/{sku}/upload")
+async def pipeline_upload(
+    sku: str,
+    images: list[UploadFile] = File(...),
+    dash_token: str | None = Cookie(None),
+):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    catalog = _load_catalog()
+    product = next((p for p in catalog if p["sku"] == sku), None)
+    if not product:
+        return RedirectResponse("/dashboard/pipeline?msg=Product+not+found", status_code=303)
+
+    # Save uploaded Pomelli images
+    save_dir = POMELLI_DIR / sku
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    for img in images:
+        if not img.filename:
+            continue
+        ext = Path(img.filename).suffix.lower() or ".png"
+        filename = f"{sku}_pomelli_{saved + 1}{ext}"
+        filepath = save_dir / filename
+        content = await img.read()
+        filepath.write_bytes(content)
+
+        if filename not in product.get("pomelli_images", []):
+            product.setdefault("pomelli_images", []).append(filename)
+        saved += 1
+
+    if saved > 0:
+        product["status"] = "ready_to_review"
+        _save_catalog(catalog)
+
+    return RedirectResponse(
+        f"/dashboard/pipeline?msg=Uploaded+{saved}+images+for+{sku}",
+        status_code=303,
+    )
+
+
+@router.post("/pipeline/{sku}/publish")
+async def pipeline_publish(
+    sku: str,
+    dash_token: str | None = Cookie(None),
+):
+    """Create a Shopify product from catalog data + Pomelli images."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    catalog = _load_catalog()
+    product = next((p for p in catalog if p["sku"] == sku), None)
+    if not product:
+        return RedirectResponse("/dashboard/pipeline?msg=Product+not+found", status_code=303)
+
+    # Collect all images (base + pomelli)
+    image_paths = []
+    base_path = BASE_IMAGES_DIR / product.get("base_image", "")
+    if base_path.exists():
+        image_paths.append(base_path)
+
+    pomelli_dir = POMELLI_DIR / sku
+    if pomelli_dir.exists():
+        for img_file in sorted(pomelli_dir.iterdir()):
+            if img_file.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                image_paths.append(img_file)
+
+    if not image_paths:
+        return RedirectResponse("/dashboard/pipeline?msg=No+images+to+upload", status_code=303)
+
+    # Build product title
+    style = product.get("style", "")
+    line_type = product.get("line_type", "Single")
+    metal = product.get("metal", "")
+    carats = product.get("carats", "")
+    gemstone = product.get("gemstone", "")
+
+    if gemstone:
+        title = f"{gemstone} & Diamond Tennis Bracelet — {style} Set {carats}"
+    else:
+        title = f"Diamond Tennis Bracelet — {style} {line_type} Line {carats}"
+
+    # Build description
+    description = (
+        f"<p>Handcrafted {product.get('karat', '14K')} {metal.lower()} {style.lower()} set "
+        f"diamond tennis bracelet. {carats} total carat weight, {product.get('weight_gm', '')}g. "
+        f"Made to order in 15 business days.</p>"
+    )
+
+    # Create on Shopify
+    shopify_token = settings.shopify_access_token
+    shop = settings.shopify_domain or "pinaka-jewellery.myshopify.com"
+
+    # Upload images as base64
+    shopify_images = []
+    for i, img_path in enumerate(image_paths):
+        img_b64 = base64.b64encode(img_path.read_bytes()).decode()
+        shopify_images.append({
+            "attachment": img_b64,
+            "filename": img_path.name,
+            "position": i + 1,
+        })
+
+    payload = {
+        "product": {
+            "title": title,
+            "body_html": description,
+            "vendor": "Pinaka Jewellery",
+            "product_type": "Bracelet",
+            "tags": f"{sku}, {style}, {line_type} Line, {metal}, {product.get('karat', '14K')}, {carats}" + (f", {gemstone}" if gemstone else ""),
+            "status": "draft",
+            "images": shopify_images,
+            "variants": [
+                {
+                    "title": "Default",
+                    "sku": sku,
+                    "inventory_management": None,
+                    "inventory_policy": "continue",
+                }
+            ],
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"https://{shop}/admin/api/2025-01/products.json",
+            headers={
+                "X-Shopify-Access-Token": shopify_token,
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+
+    if resp.status_code in (200, 201):
+        shopify_product = resp.json().get("product", {})
+        product["status"] = "published"
+        product["shopify_product_id"] = shopify_product.get("id")
+        _save_catalog(catalog)
+        return RedirectResponse(
+            f"/dashboard/pipeline?msg={sku}+created+on+Shopify+as+draft!+ID:+{shopify_product.get('id', 'unknown')}",
+            status_code=303,
+        )
+    else:
+        error = resp.text[:200]
+        return RedirectResponse(
+            f"/dashboard/pipeline?msg=Shopify+error:+{error}",
+            status_code=303,
+        )
