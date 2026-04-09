@@ -510,12 +510,19 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
 
         <div class="card">
             <h3>Options</h3>
-            <div style="margin-top:12px; display:flex; gap:24px;">
+            <div style="margin-top:12px; display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
                 <label style="display:flex; align-items:center; gap:8px; font-size:14px; cursor:pointer;">
                     <input type="checkbox" name="embed" value="1" checked> Embed for customer service search
                 </label>
                 <label style="display:flex; align-items:center; gap:8px; font-size:14px; cursor:pointer;">
-                    <input type="checkbox" name="push_shopify" value="1" checked> Create in Shopify (active)
+                    <input type="checkbox" name="push_shopify" value="1" checked> Push to Shopify
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; font-size:14px;">
+                    Status:
+                    <select name="product_status" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+                        <option value="active" {"selected" if p.get("status","") == "active" else ""}>Active</option>
+                        <option value="draft" {"selected" if p.get("status","") != "active" else ""}>Draft</option>
+                    </select>
                 </label>
             </div>
         </div>
@@ -586,6 +593,7 @@ async def add_product_submit(
     cert_color: str = Form(""),
     embed: str = Form(""),
     push_shopify: str = Form(""),
+    product_status: str = Form("active"),
 ):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
@@ -701,7 +709,7 @@ async def add_product_submit(
                     "vendor": "Pinaka Jewellery",
                     "product_type": category,
                     "tags": ", ".join(tags_list),
-                    "status": "active",
+                    "status": product_status,
                     "variants": shopify_variants,
                 }
             }
@@ -831,6 +839,7 @@ async def edit_product_submit(
     cert_color: str = Form(""),
     embed: str = Form(""),
     push_shopify: str = Form(""),
+    product_status: str = Form("draft"),
 ):
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
@@ -932,6 +941,7 @@ async def edit_product_submit(
                         "body_html": f"<p>{story}</p><p><strong>Care:</strong> {care}</p>",
                         "product_type": category,
                         "tags": ", ".join(tags_list),
+                        "status": product_status,
                     }
                 }
 
