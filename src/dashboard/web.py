@@ -2290,12 +2290,8 @@ async def pipeline_publish(
     if not product:
         return RedirectResponse("/dashboard/pipeline?msg=Product+not+found", status_code=303)
 
-    # Collect all images (base + pomelli)
+    # Collect only Pomelli lifestyle images (not the raw catalog base image)
     image_paths = []
-    base_path = BASE_IMAGES_DIR / product.get("base_image", "")
-    if base_path.exists():
-        image_paths.append(base_path)
-
     pomelli_dir = POMELLI_DIR / sku
     if pomelli_dir.exists():
         for img_file in sorted(pomelli_dir.iterdir()):
@@ -2303,7 +2299,7 @@ async def pipeline_publish(
                 image_paths.append(img_file)
 
     if not image_paths:
-        return RedirectResponse("/dashboard/pipeline?msg=No+images+to+upload", status_code=303)
+        return RedirectResponse("/dashboard/pipeline?msg=No+Pomelli+images+found.+Upload+lifestyle+shots+first.", status_code=303)
 
     # Build product title
     style = product.get("style", "")
