@@ -2370,7 +2370,7 @@ async def pipeline_publish(
         "materials": {
             "metal": f"{product.get('karat', '14K')} {metal}",
             "weight_grams": product.get("weight_gm", 0),
-            "total_carat": float(carats.replace("CT", "").split()[0]) if "CT" in carats else 0,
+            "total_carat": sum(float(x) for x in __import__("re").findall(r"[\d.]+(?=CT)", carats)) if "CT" in carats else 0,
         },
         "variant_options": {
             "metals": default_metals,
