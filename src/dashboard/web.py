@@ -2310,7 +2310,7 @@ async def pipeline_publish(
 
     # Create on Shopify
     shopify_token = settings.shopify_access_token
-    shop = settings.shopify_domain or "pinaka-jewellery.myshopify.com"
+    shop = settings.shopify_shop_domain or "pinaka-jewellery.myshopify.com"
 
     # Upload images as base64
     shopify_images = []
