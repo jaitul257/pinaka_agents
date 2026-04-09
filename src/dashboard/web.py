@@ -702,6 +702,7 @@ async def add_product_submit(
                 shopify_variants = [{"title": variant_name, "price": str(retail), "sku": sku, "inventory_management": None}]
                 options_payload = None
 
+            from datetime import datetime, timezone
             shopify_payload = {
                 "product": {
                     "title": name,
@@ -713,6 +714,8 @@ async def add_product_submit(
                     "variants": shopify_variants,
                 }
             }
+            if product_status == "active":
+                shopify_payload["product"]["published_at"] = datetime.now(timezone.utc).isoformat()
             if options_payload:
                 shopify_payload["product"]["options"] = options_payload
 
@@ -934,6 +937,7 @@ async def edit_product_submit(
                 tags_list = list(product_data.get("tags", []))
                 tags_list.append(sku)
 
+                from datetime import datetime, timezone
                 update_payload = {
                     "product": {
                         "id": shopify_id,
@@ -944,6 +948,8 @@ async def edit_product_submit(
                         "status": product_status,
                     }
                 }
+                if product_status == "active":
+                    update_payload["product"]["published_at"] = datetime.now(timezone.utc).isoformat()
 
                 # Include variant updates if options are set
                 if variant_metals and variant_sizes:
