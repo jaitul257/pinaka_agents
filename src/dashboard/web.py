@@ -2338,6 +2338,12 @@ async def pipeline_publish(
             "position": i + 1,
         })
 
+    # Build Metal × Wrist Size variants with default pricing
+    default_metals = ["Yellow Gold", "White Gold", "Rose Gold"]
+    default_sizes = ['6"', '6.5"', '7"', '7.5"']
+    default_size_prices = {s: 0 for s in default_sizes}
+    shopify_variants = _build_shopify_variants(sku, default_metals, default_sizes, default_size_prices)
+
     payload = {
         "product": {
             "title": title,
@@ -2347,16 +2353,32 @@ async def pipeline_publish(
             "tags": f"{sku}, {style}, {line_type} Line, {metal}, {product.get('karat', '14K')}, {carats}" + (f", {gemstone}" if gemstone else ""),
             "status": "draft",
             "images": shopify_images,
-            "variants": [
-                {
-                    "title": "Default",
-                    "sku": sku,
-                    "inventory_management": None,
-                    "inventory_policy": "continue",
-                }
+            "options": [
+                {"name": "Metal"},
+                {"name": "Wrist Size"},
             ],
+            "variants": shopify_variants,
         }
     }
+
+    # Also save to Supabase so edit form has variant options
+    db = _get_db()
+    db.upsert_product({
+        "sku": sku,
+        "name": title,
+        "category": "Bracelets",
+        "materials": {
+            "metal": f"{product.get('karat', '14K')} {metal}",
+            "weight_grams": product.get("weight_gm", 0),
+            "total_carat": float(carats.replace("CT", "").split()[0]) if "CT" in carats else 0,
+        },
+        "variant_options": {
+            "metals": default_metals,
+            "sizes": default_sizes,
+            "size_pricing": default_size_prices,
+        },
+        "tags": [sku, style, f"{line_type} Line", metal],
+    })
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
