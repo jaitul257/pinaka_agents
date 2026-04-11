@@ -139,7 +139,7 @@ class StorefrontConcierge:
                         "id": 1,
                         "method": "tools/call",
                         "params": {
-                            "name": "search_shop_catalog",
+                            "name": "search_catalog",
                             "arguments": {
                                 "query": query,
                                 "context": "Customer browsing the store, looking for jewellery",
@@ -150,31 +150,61 @@ class StorefrontConcierge:
                 )
 
                 if resp.status_code != 200:
+                    logger.warning("MCP search returned HTTP %s", resp.status_code)
                     return []
 
                 data = resp.json()
-                content = data.get("result", {}).get("content", [])
+                result = data.get("result", {})
+                if result.get("isError"):
+                    logger.warning("MCP returned error: %s", result)
+                    return []
+
+                content = result.get("content", [])
                 if not content:
                     return []
 
-                # Parse the text content (JSON string inside MCP response)
                 catalog_data = json.loads(content[0].get("text", "{}"))
                 products = catalog_data.get("products", [])
 
                 return [
                     {
                         "title": p.get("title", ""),
-                        "price": p.get("price_range", {}).get("min", "0"),
+                        "price": self._extract_price(p),
                         "url": p.get("url", ""),
-                        "image": p.get("image_url", ""),
-                        "product_id": p.get("product_id", ""),
-                        "options": p.get("options", []),
+                        "image": self._extract_image(p),
+                        "product_id": p.get("id", ""),
+                        "options": [
+                            opt.get("name", "") for opt in p.get("options", [])
+                        ],
                     }
                     for p in products
                 ]
         except Exception:
             logger.exception("MCP product search failed")
             return []
+
+    @staticmethod
+    def _extract_price(product: dict) -> str:
+        """Extract min price from product. MCP returns amount in cents."""
+        price_range = product.get("price_range", {})
+        min_price = price_range.get("min", {})
+        if isinstance(min_price, dict):
+            amount = min_price.get("amount", 0)
+            try:
+                dollars = float(amount) / 100
+                return f"{dollars:,.0f}"
+            except (ValueError, TypeError):
+                return "0"
+        return str(min_price) if min_price else "0"
+
+    @staticmethod
+    def _extract_image(product: dict) -> str:
+        """Extract primary image URL from product media."""
+        media = product.get("media", [])
+        for m in media:
+            if m.get("type") == "image" and m.get("url"):
+                return m["url"]
+        return ""
 
     @staticmethod
     def _suggest_followups(message: str, products: list) -> list[str]:
