@@ -79,15 +79,16 @@ body.dark-mode a.header__heading-link.link.link--text {
 }
 
 .pinaka-hero h1 {
-  font-size: clamp(36px, 3.5vw, 52px);
+  font-size: clamp(42px, 4vw, 60px);
   font-weight: 400;
   line-height: 1.1;
   margin-bottom: 16px;
   color: var(--pinaka-charcoal);
+  white-space: nowrap;
 }
 
 .pinaka-hero p {
-  font-size: 17px;
+  font-size: 19px;
   color: var(--pinaka-text2);
   line-height: 1.6;
   margin-bottom: 28px;
@@ -111,7 +112,12 @@ body.dark-mode a.header__heading-link.link.link--text {
 
 .pinaka-hero .hero-img {
   width: 100%;
-  aspect-ratio: 5/4;
+  max-width: 368px;
+  aspect-ratio: 9/16;
+  margin-left: auto;
+  margin-right: 88px;
+  margin-top: -24px;
+  justify-self: start;
   border-radius: 10px;
   background: radial-gradient(ellipse at 55% 50%, rgba(197, 165, 90, 0.15) 0%, transparent 55%),
     linear-gradient(155deg, #F5F0E8, #FFFFFF);
@@ -122,10 +128,12 @@ body.dark-mode a.header__heading-link.link.link--text {
   overflow: hidden;
 }
 
-.pinaka-hero .hero-img img {
+.pinaka-hero .hero-img img,
+.pinaka-hero .hero-img video {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
 
 .pinaka-hero .hero-placeholder {
@@ -580,11 +588,14 @@ body.dark-mode .cart-item__details a {
 
   .pinaka-hero .hero-img {
     order: -1;
-    aspect-ratio: 4/3;
+    aspect-ratio: 9/16;
+    max-width: 280px;
+    margin: 0 auto;
   }
 
   .pinaka-hero h1 {
     font-size: 32px;
+    white-space: normal;
   }
 
   .pinaka-craft-timeline__grid {

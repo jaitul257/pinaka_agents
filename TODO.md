@@ -1,10 +1,10 @@
 # TODO — Pinaka Agents
 
-Last updated: 2026-04-07
+Last updated: 2026-04-10
 
-## Phases 1-8.3: COMPLETE
+## Phases 1-8.4: COMPLETE
 
-All core infrastructure + agentic layer shipped and deployed. 243 tests passing. System is live on Railway with 5 autonomous agents, heartbeat awareness, and marketing strategy crons.
+All core infrastructure + agentic layer + product pipeline shipped and deployed. 243 tests passing. System is live on Railway with 5 autonomous agents, heartbeat awareness, marketing strategy crons, product pipeline dashboard, homepage video hero, and concierge chat using Shopify MCP.
 
 ---
 
@@ -115,6 +115,22 @@ All core infrastructure + agentic layer shipped and deployed. 243 tests passing.
 - [x] Marketing strategy: 3-campaign structure, seasonal calendar, 6h data snapshots, Monday weekly review
 - [x] Abandoned cart flow fix: mark_abandoned_carts transition (2026-04-07)
 - [x] 14 active cron jobs on cron-job.org
+
+## Phase 8.4: Product Pipeline + Polish — DONE (2026-04-10)
+
+- [x] PDF catalog extraction — 13 bracelets parsed from `BraceletsbyPinaka.pdf` with metadata
+- [x] `/dashboard/pipeline` page — download base image for Pomelli, upload lifestyle shots, one-click Shopify create
+- [x] Pipeline creates products with Metal × Wrist Size variant matrix (3 × 4 = 12 variants)
+- [x] Carat string parser handles colored diamond format ("White 1.35CT + Blue 1.80CT")
+- [x] Pipeline only uploads Pomelli lifestyle images to Shopify, not raw catalog base images
+- [x] Product status Active/Draft dropdown added to edit form
+- [x] `published_at` auto-set when status flips to active (Shopify requires both for storefront visibility)
+- [x] Hero video on homepage (9:16 portrait, 9/16 aspect container, no cropping)
+- [x] Mobile UX: dark mode toggle + chat button scroll-hide, alignment fix, full-screen chat panel
+- [x] Concierge bugfix: Shopify MCP tool renamed `search_shop_catalog` → `search_catalog`
+- [x] Concierge: better error logging, price parsing (cents→dollars), image extraction from media array
+- [x] Freepik API integration researched and tested (Kling o1, Mystic, Flux Pro, Imagen3)
+- [x] Real photographer vocabulary prompt template for AI product photography
 
 ---
 

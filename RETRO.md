@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-08
+Last updated: 2026-04-10
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,43 @@ Last updated: 2026-04-08
 ---
 
 ## Push Log
+
+### 2026-04-10 — Phase 8.4: Product Pipeline, Hero Video, AI Asset Research, Concierge Bugfix
+
+**What shipped:**
+- **Product pipeline dashboard** (`/dashboard/pipeline`): 13 bracelets extracted from `BraceletsbyPinaka.pdf` with metadata (SKU, style, metal, carats, gemstone). Download base image → Pomelli manually → upload lifestyle shots → one-click create on Shopify as draft with Metal × Wrist Size variant matrix.
+- **Hero video** on pinakajewellery.com homepage: Pomelli-generated 9:16 portrait video (720x1280, 914KB, 8 sec), autoplay/loop/muted/playsinline, aspect-ratio 9/16 container with cream gradient background.
+- **Mobile UX**: Dark mode toggle + chat button now scroll-hide (slide off on scroll down, reappear on scroll up), aligned at same bottom level, chat panel full-screen on mobile.
+- **Abandoned cart fix**: Added `mark_abandoned_carts()` database method + cron transitions "created" → "abandoned" after 60 min. Previously nothing transitioned these states, so recovery cron always saw zero carts.
+- **Concierge bugfix**: Shopify renamed `search_shop_catalog` → `search_catalog` in Storefront MCP. Concierge was silently catching "Tool not found" errors and letting Claude hallucinate that products didn't exist. Fixed tool name, price parsing (cents→dollars), image extraction from nested `media` array.
+- **Dashboard status fix**: Added Active/Draft dropdown to product forms. Previously edit form never sent `status` to Shopify, so ticking "active" had no effect. Also added `published_at` auto-set when status flips to active (Shopify requires BOTH for storefront visibility).
+- **Freepik AI asset research**: Integrated API key, tested Kling o1 (video), Mystic (image), Flux Pro (image). Discovered that real photographer vocabulary (Hasselblad X2D, 120mm macro, f/11, ISO 100, Kodak Portra 400) produces dramatically more realistic results than AI buzzwords (cinematic, ultra-detailed, magnific, 8K).
+
+**What went well:**
+- **PDF extraction** worked on first try with pymupdf — 13 bracelet images + metadata parsed cleanly.
+- **Freepik Flux Pro + anti-AI vocab** produced near-indistinguishable-from-real product photography. The research-backed prompt template (camera body + lens + aperture + ISO + film stock) was a massive quality unlock vs. earlier Mystic attempts.
+- **Concierge bug detection**: Tested MCP endpoint directly once symptoms appeared, found `tools/list` endpoint, discovered renamed tool in under 5 min. Silent exception handler now logs warnings on isError/non-200.
+- **Hero video layout iteration** was fast once we committed to 9:16 aspect ratio container (matches portrait source video, zero cropping).
+
+**What was painful:**
+- **Shopify section render cache is brutal**. After 4+ theme pushes with fresh content, the `etag: page_cache` kept serving stale HTML. Even pushing `<h1>TEST CACHE BUST</h1>` to the section file didn't flush it. Only `shopify theme push` from INSIDE the `shopify-theme/` directory worked — pushing from the repo root silently no-op'd.
+- **Shopify product visibility has two flags**: `status: active` alone is not enough. Need `published_at` ALSO set. Found by checking Shopify API product response — `status: active` but `published_at: null` means the product is not live on the storefront.
+- **Freepik free trial rate limit**: Hit after 30 successful tasks (6/13 bracelets completed). Error message doesn't warn before cutoff. Need paid plan to continue.
+- **Shopify CLI `--only` flag silently no-ops** when run from wrong directory. No error, push "succeeds", but files don't update. Learned to always `cd shopify-theme/` before push.
+- **AI image generation buzzword trap**: First Mystic attempts with "cinematic/ultra-detailed/8K/magnific" looked fake. Research showed these tokens are tagged on AI training data as stylized, so the model associates them with the AI look. Stripping buzzwords + adding real gear names was the fix.
+- **Pipeline status regression**: Initial pipeline publish created products as draft with single "Default" variant at $0. User couldn't edit prices because variant_options wasn't in Supabase, so edit form had no metals/sizes checked. Fixed by making pipeline publish create full Metal × Wrist Size matrix.
+- **Carat string parser**: Naive `float(carats.replace("CT", ""))` broke on colored diamond format "White 1.35CT + Blue 1.80CT". Fixed with regex that extracts all numbers before "CT" and sums them.
+
+**Lessons learned:**
+- **AI realism is about vocabulary, not settings.** Mystic maxed out with "magnific_sharpy + 4k + creative_detailing 50" produced worse realism than Flux Pro with plain prompts using real camera/lens/ISO/film stock names. Training data caption patterns matter more than resolution knobs.
+- **Shopify active ≠ published.** Always set `published_at` when flipping status to active on products. Otherwise the product exists but isn't on the storefront.
+- **Shopify MCP tools are implicitly versioned.** Tool names can change with no notice. Silent exception handlers hide these failures for weeks. Every MCP call should log warnings on error responses, not just catch Exception and return [].
+- **Shopify CDN page cache doesn't bust on theme push alone** — requires template/settings_data.json edits OR Theme Editor Save click in admin OR time. Section file changes alone don't invalidate the page render cache.
+- **Run `shopify theme push` from inside `shopify-theme/`.** Don't run from repo root with `cd shopify-theme &&` inline — the `--only` flag path resolution is different and can silently no-op.
+- **PDF image extraction is underrated.** pymupdf parsed 13 images + structured metadata in 30 seconds. No OCR, no manual cataloging.
+- **Pomelli is manual, but the 90% around it can be automated.** Pipeline = catalog extraction + manual Pomelli step + upload back + Shopify create. User does 3 min per product instead of 30.
+
+---
 
 ### 2026-04-08 — Phase 8.1-8.3: Agent Upgrades, Awareness, Marketing Strategy
 

@@ -167,6 +167,7 @@ Only ask the user if the variable is not set on Railway or needs to be created f
 | 8.1 | Agent upgrades: confidence scoring, cross-agent feedback loop (finance → marketing), customer memory (past interactions), token optimization (51% reduction), Slack Block Kit, storefront AI concierge chat widget |
 | 8.2 | Agent awareness: observations table, heartbeat monitor (30-min cron, cheap SQL checks, Claude only when issues found), observation writers in webhooks |
 | 8.3 | Marketing strategy: 3-campaign funnel (Prospecting/Retargeting/Retention), seasonal calendar (6 windows), margin-driven budget, 6h data snapshots, Monday 9AM weekly strategy review |
+| 8.4 | Product pipeline dashboard (PDF extraction → Pomelli → Shopify with variant matrix), hero video on homepage, mobile UX scroll-hide, abandoned cart flow fix (mark_abandoned_carts transition), concierge MCP bugfix (search_shop_catalog → search_catalog), product status/published_at fix, Freepik AI asset research (Flux Pro + real photographer vocab) |
 
 ## Shopify Theme Development
 
@@ -184,12 +185,39 @@ shopify theme push --store pinaka-jewellery --theme 159721455874 \
 ```
 
 ### Key rules
+- **Always run `shopify theme push` from INSIDE `shopify-theme/` directory.** Running from repo root with `cd shopify-theme && ...` inline can silently no-op the `--only` file paths. Learned from a 30-minute debug session on 2026-04-10.
 - **Always push `config/settings_data.json`** alongside any theme changes to force immediate CDN recompilation. Without it, changes take 15-30+ minutes to propagate.
+- **Section render cache is sticky.** Even pushing `<h1>TEST CACHE BUST</h1>` to a section file can be served stale for minutes. If pushes don't appear live: (1) edit `templates/index.json` content, (2) edit `settings_data.json` by 1 byte, (3) have user click Save in Shopify admin Theme Editor.
 - **Always use `--nodelete`** with `--only` flag. Without it, Shopify deletes all remote files not matching the filter.
 - **Shopify's `cormorant_n4` is "Cormorant", not "Cormorant Garamond".** Different typeface. We load Cormorant Garamond from Google Fonts and override with `font-family: 'Cormorant Garamond', serif !important`.
 - **Use CSS variables** from `pinaka-custom.css` (`--pinaka-accent`, `--pinaka-charcoal`, etc.) not hardcoded hex in section files.
 - **Dark mode requires explicit overrides** for every custom section. Dawn only handles its own components.
 - **Design reference:** `file:///private/tmp/design-consultation-preview-1775112210.html` — the source of truth for fonts, sizes, colors, spacing.
+
+### Product visibility (CRITICAL)
+Shopify requires BOTH fields set for a product to appear on the storefront:
+- `status: active` — means the product is not archived/draft
+- `published_at` set to a timestamp — means it's published to the Online Store sales channel
+
+**Setting `status` alone is NOT enough.** A product with `status: active, published_at: null` will NOT appear on pinakajewellery.com. The dashboard edit flow auto-sets `published_at` when status flips to active. Pipeline publish creates as draft (intentional — review before going live).
+
+### Shopify Storefront MCP
+- Endpoint: `https://pinaka-jewellery.myshopify.com/api/mcp`
+- Tools are implicitly versioned — names can change without notice. As of 2026-04-10:
+  - `search_catalog` (NOT `search_shop_catalog` — renamed)
+  - `get_cart`, `update_cart`
+  - `search_shop_policies_and_faqs`
+  - `get_product_details`
+- **Always log warnings on MCP errors.** Silent exception handlers hid a product search failure for weeks until a customer tested the concierge. Check `result.isError` and `result.content[0].text` for "Tool not found" messages.
+- Response format for search_catalog: `price_range.min` is now `{"amount": 510000, "currency": "USD"}` (amount in cents). `media` array replaces flat `image_url` field.
+
+### AI Image Generation (Freepik)
+- API key: `FREEPIK_API_KEY` on Railway
+- **Best realism: Flux Pro v1.1** (`/v1/ai/text-to-image/flux-pro-v1-1`) — the 2026 winner. Use this for product photography.
+- **Video: Kling o1 Pro** (`/v1/ai/image-to-video/kling-o1-pro`) — ~$1.12 per 10-sec video, supports `first_frame` base64 input
+- **AVOID these AI-buzzword triggers in prompts:** cinematic, ultra-detailed, hyper-realistic, 8K, masterpiece, stunning, magnific, magnificent, dramatic lighting, volumetric lighting, vibrant colors, perfect, flawless, pristine, photorealistic (ironically), sharp focus, beautiful, luxurious
+- **USE real photography vocabulary:** Hasselblad X2D 100C, Canon EOS R5, Phase One IQ4, Nikon Z9, 100mm/105mm/120mm macro lens, f/8-f/11, ISO 100, 1/160s, tripod mounted, Profoto D2 octabox, Kodak Portra 400, Fuji Pro 400H, unretouched raw file, editorial catalog reference shot
+- Free trial caps at ~30 successful calls. Paid plan required for production use.
 
 ### Font stack (from design system)
 | Use | Font | Size | Weight |
