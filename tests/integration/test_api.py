@@ -744,3 +744,317 @@ def test_cron_sync_google_merchant_success(mock_db_cls, client, cron_headers):
         data = response.json()
         assert data["module"] == "google_merchant"
         assert data["items_synced"] == 1
+
+
+# ── Virtual Try-On ──
+
+def _make_test_image_b64():
+    """Create a tiny valid JPEG as base64 for testing."""
+    from PIL import Image
+    import io, base64
+    img = Image.new("RGB", (100, 100), (200, 180, 160))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def test_try_on_missing_wrist_image(client):
+    """Should return 400 when wrist_image is missing."""
+    response = client.post("/api/try-on", json={"product_handle": "test-bracelet"})
+    assert response.status_code == 400
+    assert "wrist_image" in response.json()["detail"]
+
+
+def test_try_on_missing_product_handle(client):
+    """Should return 400 when product_handle is missing."""
+    response = client.post("/api/try-on", json={"wrist_image": "abc123"})
+    assert response.status_code == 400
+    assert "product_handle" in response.json()["detail"]
+
+
+def test_try_on_empty_body(client):
+    """Should return 400 when body is empty."""
+    response = client.post("/api/try-on", json={})
+    assert response.status_code == 400
+
+
+def test_try_on_image_too_large(client):
+    """Should return 400 when image exceeds 10MB."""
+    huge_b64 = "A" * 14_000_000  # ~10.5MB decoded
+    response = client.post("/api/try-on", json={
+        "wrist_image": huge_b64,
+        "product_handle": "test-bracelet",
+    })
+    assert response.status_code == 400
+    assert "too large" in response.json()["detail"]
+
+
+@patch("src.api.app.httpx.AsyncClient")
+def test_try_on_product_not_found(mock_httpx_cls, client):
+    """Should return error when product handle doesn't match any Shopify product."""
+    mock_client = AsyncMock()
+    mock_httpx_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"products": []}
+    mock_client.get.return_value = mock_response
+
+    b64 = _make_test_image_b64()
+    response = client.post("/api/try-on", json={
+        "wrist_image": b64,
+        "product_handle": "nonexistent-product",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "error"
+    assert "not found" in data["message"].lower()
+
+
+@patch("src.api.app.settings")
+@patch("src.api.app.httpx.AsyncClient")
+def test_try_on_freepik_not_configured(mock_httpx_cls, mock_settings, client):
+    """Should return error when FREEPIK_API_KEY is not set."""
+    mock_client = AsyncMock()
+    mock_httpx_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    # Shopify returns a product
+    mock_shopify_resp = MagicMock()
+    mock_shopify_resp.json.return_value = {"products": [{
+        "title": "Diamond Tennis Bracelet",
+        "images": [{"src": "https://cdn.shopify.com/test.jpg"}],
+    }]}
+    mock_client.get.return_value = mock_shopify_resp
+
+    mock_settings.shopify_shop_domain = "test.myshopify.com"
+    mock_settings.shopify_access_token = "test-token"
+    mock_settings.freepik_api_key = ""  # Not configured
+
+    b64 = _make_test_image_b64()
+    response = client.post("/api/try-on", json={
+        "wrist_image": b64,
+        "product_handle": "diamond-tennis-bracelet",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "error"
+    assert "not configured" in data["message"].lower()
+
+
+@patch("src.api.app.settings")
+@patch("src.api.app.httpx.AsyncClient")
+def test_try_on_freepik_submit_fails(mock_httpx_cls, mock_settings, client):
+    """Should return error when Freepik API rejects the request."""
+    mock_client = AsyncMock()
+    mock_httpx_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    # Shopify returns a product
+    mock_shopify_resp = MagicMock()
+    mock_shopify_resp.json.return_value = {"products": [{
+        "title": "Diamond Tennis Bracelet",
+        "images": [{"src": "https://cdn.shopify.com/test.jpg"}],
+    }]}
+
+    # Freepik returns 400
+    mock_freepik_resp = MagicMock()
+    mock_freepik_resp.status_code = 400
+    mock_freepik_resp.text = "Bad request"
+
+    mock_client.get.return_value = mock_shopify_resp
+    mock_client.post.return_value = mock_freepik_resp
+
+    mock_settings.shopify_shop_domain = "test.myshopify.com"
+    mock_settings.shopify_access_token = "test-token"
+    mock_settings.freepik_api_key = "test-freepik-key"
+
+    b64 = _make_test_image_b64()
+    response = client.post("/api/try-on", json={
+        "wrist_image": b64,
+        "product_handle": "diamond-tennis-bracelet",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "error"
+    assert "failed" in data["message"].lower()
+
+
+@patch("src.api.app.asyncio.sleep", new_callable=AsyncMock)
+@patch("src.api.app.settings")
+@patch("src.api.app.httpx.AsyncClient")
+def test_try_on_success(mock_httpx_cls, mock_settings, mock_sleep, client):
+    """Full success path: Shopify lookup → mask → Freepik submit → poll → result."""
+    mock_client = AsyncMock()
+    mock_httpx_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    # Shopify returns a product
+    mock_shopify_resp = MagicMock()
+    mock_shopify_resp.json.return_value = {"products": [{
+        "title": "Diamond Tennis Bracelet - Lab Grown",
+        "images": [{"src": "https://cdn.shopify.com/bracelet.jpg"}],
+    }]}
+
+    # Freepik submit returns task_id
+    mock_freepik_submit = MagicMock()
+    mock_freepik_submit.status_code = 200
+    mock_freepik_submit.json.return_value = {
+        "data": {"task_id": "test-task-123", "status": "CREATED", "generated": []}
+    }
+
+    # Freepik poll returns COMPLETED
+    mock_freepik_poll = MagicMock()
+    mock_freepik_poll.json.return_value = {
+        "data": {"task_id": "test-task-123", "status": "COMPLETED",
+                 "generated": ["https://cdn-freepik.com/result.jpg"]}
+    }
+
+    mock_client.get.side_effect = [mock_shopify_resp, mock_freepik_poll]
+    mock_client.post.return_value = mock_freepik_submit
+
+    mock_settings.shopify_shop_domain = "test.myshopify.com"
+    mock_settings.shopify_access_token = "test-token"
+    mock_settings.freepik_api_key = "test-freepik-key"
+
+    b64 = _make_test_image_b64()
+    response = client.post("/api/try-on", json={
+        "wrist_image": b64,
+        "product_handle": "diamond-tennis-bracelet-lab-grown",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["result_url"] == "https://cdn-freepik.com/result.jpg"
+    assert "Diamond Tennis Bracelet" in data["product_title"]
+
+
+@patch("src.api.app.asyncio.sleep", new_callable=AsyncMock)
+@patch("src.api.app.settings")
+@patch("src.api.app.httpx.AsyncClient")
+def test_try_on_timeout(mock_httpx_cls, mock_settings, mock_sleep, client):
+    """Should return timeout error when Freepik never completes within 60s."""
+    mock_client = AsyncMock()
+    mock_httpx_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    mock_shopify_resp = MagicMock()
+    mock_shopify_resp.json.return_value = {"products": [{
+        "title": "Diamond Tennis Bracelet",
+        "images": [],
+    }]}
+
+    mock_freepik_submit = MagicMock()
+    mock_freepik_submit.status_code = 200
+    mock_freepik_submit.json.return_value = {
+        "data": {"task_id": "stuck-task", "status": "CREATED", "generated": []}
+    }
+
+    # Poll always returns IN_PROGRESS
+    mock_freepik_poll = MagicMock()
+    mock_freepik_poll.json.return_value = {
+        "data": {"task_id": "stuck-task", "status": "IN_PROGRESS", "generated": []}
+    }
+
+    mock_client.get.side_effect = [mock_shopify_resp] + [mock_freepik_poll] * 12
+    mock_client.post.return_value = mock_freepik_submit
+
+    mock_settings.shopify_shop_domain = "test.myshopify.com"
+    mock_settings.shopify_access_token = "test-token"
+    mock_settings.freepik_api_key = "test-freepik-key"
+
+    b64 = _make_test_image_b64()
+    response = client.post("/api/try-on", json={
+        "wrist_image": b64,
+        "product_handle": "test-bracelet",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "error"
+    assert "timed out" in data["message"].lower()
+
+
+@patch("src.api.app.asyncio.sleep", new_callable=AsyncMock)
+@patch("src.api.app.settings")
+@patch("src.api.app.httpx.AsyncClient")
+def test_try_on_freepik_generation_failed(mock_httpx_cls, mock_settings, mock_sleep, client):
+    """Should return error when Freepik reports FAILED status."""
+    mock_client = AsyncMock()
+    mock_httpx_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    mock_shopify_resp = MagicMock()
+    mock_shopify_resp.json.return_value = {"products": [{
+        "title": "Diamond Tennis Bracelet",
+        "images": [],
+    }]}
+
+    mock_freepik_submit = MagicMock()
+    mock_freepik_submit.status_code = 200
+    mock_freepik_submit.json.return_value = {
+        "data": {"task_id": "fail-task", "status": "CREATED", "generated": []}
+    }
+
+    mock_freepik_poll = MagicMock()
+    mock_freepik_poll.json.return_value = {
+        "data": {"task_id": "fail-task", "status": "FAILED", "generated": []}
+    }
+
+    mock_client.get.side_effect = [mock_shopify_resp, mock_freepik_poll]
+    mock_client.post.return_value = mock_freepik_submit
+
+    mock_settings.shopify_shop_domain = "test.myshopify.com"
+    mock_settings.shopify_access_token = "test-token"
+    mock_settings.freepik_api_key = "test-freepik-key"
+
+    b64 = _make_test_image_b64()
+    response = client.post("/api/try-on", json={
+        "wrist_image": b64,
+        "product_handle": "test-bracelet",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "error"
+    assert "failed" in data["message"].lower()
+
+
+def test_try_on_data_uri_prefix_stripped(client):
+    """Should handle data:image/jpeg;base64, prefix correctly."""
+    b64 = _make_test_image_b64()
+    data_uri = f"data:image/jpeg;base64,{b64}"
+
+    # This will fail at Shopify lookup (no mock) but should NOT fail at base64 parsing
+    response = client.post("/api/try-on", json={
+        "wrist_image": data_uri,
+        "product_handle": "test-bracelet",
+    })
+    # Should get past validation (200 with error, not 400)
+    assert response.status_code == 200
+    data = response.json()
+    # It'll fail at Shopify lookup since we didn't mock it, but that's fine —
+    # the point is it didn't fail at base64 decoding
+    assert data["status"] == "error"
+
+
+def test_generate_wrist_mask():
+    """Mask should be valid base64 PNG with correct dimensions."""
+    import base64, io
+    from PIL import Image
+    from src.api.app import _generate_wrist_mask
+
+    mask_b64 = _generate_wrist_mask(200, 400)
+    raw = base64.b64decode(mask_b64)
+    img = Image.open(io.BytesIO(raw))
+    assert img.size == (200, 400)
+
+    # Check that center band is white (pixel at center)
+    px = img.getpixel((100, 200))
+    assert px == (255, 255, 255)
+
+    # Check that top is black
+    px_top = img.getpixel((100, 10))
+    assert px_top == (0, 0, 0)
+
+    # Check that bottom is black
+    px_bottom = img.getpixel((100, 390))
+    assert px_bottom == (0, 0, 0)
