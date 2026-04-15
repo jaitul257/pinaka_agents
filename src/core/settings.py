@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # ── Sentry ──
     sentry_dsn: str = ""
 
+    # ── Freepik ──
+    freepik_api_key: str = ""
+
     # ── Meta (Conversions API) ──
     meta_pixel_id: str = ""
     meta_capi_access_token: str = ""

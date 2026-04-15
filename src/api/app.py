@@ -1,5 +1,6 @@
 """FastAPI application — routes for health, cron endpoints, webhooks, and Slack interactivity."""
 
+import base64
 import hashlib
 import hmac
 import json
@@ -247,6 +248,157 @@ async def concierge_chat(request: Request):
             "products": [],
             "suggested_questions": [],
         }
+
+
+# ── Virtual Try-On ──
+
+
+def _generate_wrist_mask(width: int, height: int) -> str:
+    """Generate a black mask with white band at center (wrist area heuristic)."""
+    from PIL import Image, ImageDraw
+    import io
+
+    mask = Image.new("RGB", (width, height), (0, 0, 0))
+    draw = ImageDraw.Draw(mask)
+    band_top = int(height * 0.35)
+    band_bottom = int(height * 0.65)
+    draw.rectangle([(0, band_top), (width, band_bottom)], fill=(255, 255, 255))
+    buf = io.BytesIO()
+    mask.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+@app.post("/api/try-on")
+async def virtual_try_on(request: Request):
+    """Virtual try-on: composite a bracelet onto a customer's wrist photo.
+
+    Accepts: {"wrist_image": "base64...", "product_handle": "diamond-tennis-bracelet-lab-grown"}
+    Returns: {"status": "success", "result_url": "...", "product_title": "..."}
+    """
+    try:
+        body = await request.json()
+        wrist_b64 = body.get("wrist_image", "").strip()
+        product_handle = body.get("product_handle", "").strip()
+
+        if not wrist_b64:
+            raise HTTPException(status_code=400, detail="wrist_image required")
+        if not product_handle:
+            raise HTTPException(status_code=400, detail="product_handle required")
+
+        # Strip data URI prefix if present
+        if "," in wrist_b64 and wrist_b64.startswith("data:"):
+            wrist_b64 = wrist_b64.split(",", 1)[1]
+
+        # Validate size (base64 ~1.33x raw, so 13.3M chars ≈ 10MB)
+        if len(wrist_b64) > 13_300_000:
+            raise HTTPException(status_code=400, detail="Image too large (max 10MB)")
+
+        # Look up product from Shopify
+        shop = settings.shopify_shop_domain or "pinaka-jewellery.myshopify.com"
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"https://{shop}/admin/api/2025-01/products.json",
+                params={"handle": product_handle, "limit": 1, "fields": "title,images"},
+                headers={"X-Shopify-Access-Token": settings.shopify_access_token},
+            )
+        products = resp.json().get("products", [])
+        if not products:
+            return {"status": "error", "message": "Product not found"}
+
+        product_title = products[0].get("title", "Diamond Tennis Bracelet")
+        product_image = ""
+        images = products[0].get("images", [])
+        if images:
+            product_image = images[0].get("src", "")
+
+        # Decode image to get dimensions for mask
+        import io
+        from PIL import Image
+
+        raw_bytes = base64.b64decode(wrist_b64)
+        img = Image.open(io.BytesIO(raw_bytes))
+        w, h = img.size
+
+        # Generate mask (white band at center where wrist likely is)
+        mask_b64 = _generate_wrist_mask(w, h)
+
+        # Build prompt with real photographer vocabulary
+        prompt = (
+            f"Place a {product_title} around the wrist in this photograph. "
+            f"The bracelet drapes naturally against the skin with soft shadows "
+            f"matching the existing light source in the photo. Preserve the original "
+            f"skin tone, ambient light color temperature, and depth of field. "
+            f"The bracelet sits flat against the wrist, not floating above the skin. "
+            f"Straight-out-of-camera look, no post-processing glow or artificial sparkle."
+        )
+
+        # Call Freepik Ideogram Image Edit
+        if not settings.freepik_api_key:
+            logger.error("FREEPIK_API_KEY not configured")
+            return {"status": "error", "message": "Try-on service not configured"}
+
+        freepik_headers = {
+            "x-freepik-api-key": settings.freepik_api_key,
+            "Content-Type": "application/json",
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.freepik.com/v1/ai/ideogram-image-edit",
+                headers=freepik_headers,
+                json={
+                    "image": wrist_b64,
+                    "mask": mask_b64,
+                    "prompt": prompt,
+                    "rendering_speed": "DEFAULT",
+                    "style_type": "REALISTIC",
+                    "magic_prompt": "ON",
+                },
+            )
+
+        if resp.status_code != 200:
+            logger.error("Freepik submit failed: %s %s", resp.status_code, resp.text[:300])
+            return {"status": "error", "message": "Failed to start try-on generation"}
+
+        task_id = resp.json().get("data", {}).get("task_id")
+        if not task_id:
+            return {"status": "error", "message": "No task ID returned"}
+
+        # Poll for completion (max 60 seconds)
+        import asyncio
+
+        result_url = None
+        for _ in range(12):
+            await asyncio.sleep(5)
+            async with httpx.AsyncClient(timeout=10) as client:
+                poll = await client.get(
+                    f"https://api.freepik.com/v1/ai/ideogram-image-edit/{task_id}",
+                    headers={"x-freepik-api-key": settings.freepik_api_key},
+                )
+            data = poll.json().get("data", {})
+            status = data.get("status", "")
+            if status == "COMPLETED" and data.get("generated"):
+                result_url = data["generated"][0]
+                break
+            if status == "FAILED":
+                logger.error("Freepik try-on failed for task %s", task_id)
+                return {"status": "error", "message": "Generation failed. Try a different photo."}
+
+        if not result_url:
+            return {"status": "error", "message": "Generation timed out. Please try again."}
+
+        return {
+            "status": "success",
+            "result_url": result_url,
+            "product_title": product_title,
+            "product_image": product_image,
+        }
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Virtual try-on failed")
+        return {"status": "error", "message": "Something went wrong. Please try again."}
 
 
 # ── Shopify Webhooks ──
