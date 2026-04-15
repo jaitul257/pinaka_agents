@@ -1,13 +1,16 @@
 """FastAPI application — routes for health, cron endpoints, webhooks, and Slack interactivity."""
 
+import asyncio
 import base64
 import hashlib
 import hmac
+import io
 import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 
+import httpx
 import sentry_sdk
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 
@@ -256,7 +259,6 @@ async def concierge_chat(request: Request):
 def _generate_wrist_mask(width: int, height: int) -> str:
     """Generate a black mask with white band at center (wrist area heuristic)."""
     from PIL import Image, ImageDraw
-    import io
 
     mask = Image.new("RGB", (width, height), (0, 0, 0))
     draw = ImageDraw.Draw(mask)
@@ -312,7 +314,6 @@ async def virtual_try_on(request: Request):
             product_image = images[0].get("src", "")
 
         # Decode image to get dimensions for mask
-        import io
         from PIL import Image
 
         raw_bytes = base64.b64decode(wrist_b64)
@@ -365,8 +366,6 @@ async def virtual_try_on(request: Request):
             return {"status": "error", "message": "No task ID returned"}
 
         # Poll for completion (max 60 seconds)
-        import asyncio
-
         result_url = None
         for _ in range(12):
             await asyncio.sleep(5)
