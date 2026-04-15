@@ -137,18 +137,25 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 ## Next Up
 
 ### High Priority (blockers / revenue)
-- [ ] **Add Meta Ad Account payment method** — blocks all ad serving. URL: https://business.facebook.com/billing_hub/accounts/details/?asset_id=27080581041558231
-- [ ] **Flip Meta Campaign + Ad Set to ACTIVE** — after payment method added
-- [ ] **More products** — only 1 active product (Diamond Tennis Bracelet). Need 3-6 for collection grid.
-- [ ] **Full checkout flow test** — end-to-end: add to cart → checkout → payment → order webhook → agent processing
+- [x] ~~Add Meta Ad Account payment method~~ — done 2026-04-12
+- [x] ~~Flip Meta Campaign + Ad Set to ACTIVE~~ — done 2026-04-12, paused for review
+- [x] ~~Full checkout flow test~~ — done 2026-04-13, webhook → agent → audit all verified
+- [x] ~~Meta CAPI token refresh~~ — regenerated 2026-04-13, old token was invalidated
+- [ ] **Verify `pinakajewellery.com` domain in Meta Business Settings** — https://business.facebook.com/settings/owned-domains → add domain → add DNS TXT record in Cloudflare → verify. Unverified domain reduces ad reach.
+- [ ] **Set Meta attribution to 7-day click + 1-day view** — Ads Manager → Ad Set → Settings → Attribution. API blocked this change.
+- [ ] **Set per-size pricing on pipeline products** — 7 Shopify products from pipeline have $0 prices. Edit each in dashboard, set prices, save with Push to Shopify.
+- [ ] **More products from catalog** — 7 remaining bracelets need Pomelli photos → upload → publish via pipeline (AB0027, AB0025B, AB0024A, AB0029A, AB0025AB, AB0029AE, AB0025BR)
+- [ ] **Unpause Meta Campaign when ready** — Campaign ID: 120244523278190359. Both ads (A + B) ready, targeting + destination + spend cap all fixed.
 - [ ] **Product photography** — studio shots on cream linen with directional light
 
 ### Medium Priority (improvements)
-- [ ] Google Ads developer token approval (in review, 2-15 business days from 2026-04-04)
+- [ ] Google Ads developer token approval (in review since 2026-04-04)
 - [ ] Google Ads OAuth2 setup (after token approved)
 - [ ] Review request automation (post-delivery email, 7-14 days after delivery)
 - [ ] Slide-in cart drawer for mobile
 - [ ] Closed-loop Meta insights feedback into ad creative generation
+- [ ] 3-campaign structure (Prospecting/Retargeting/Retention) — currently single campaign, marketing strategy calls for 3
+- [ ] Additional ad creatives — Meta recommends 3-5 per ad set, currently 2
 
 ### Low Priority (tech debt)
 - [ ] `apply_budget_change` Slack button: auto-change Meta/Google budgets (intentional defer)
