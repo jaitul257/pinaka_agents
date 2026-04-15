@@ -1037,24 +1037,77 @@ def test_try_on_data_uri_prefix_stripped(client):
 
 
 def test_generate_wrist_mask():
-    """Mask should be valid base64 PNG with correct dimensions."""
+    """Mask should be valid base64 PNG with narrow band at 42-54% height."""
     import base64, io
     from PIL import Image
     from src.api.app import _generate_wrist_mask
 
-    mask_b64 = _generate_wrist_mask(200, 400)
+    mask_b64 = _generate_wrist_mask(200, 1000)
     raw = base64.b64decode(mask_b64)
     img = Image.open(io.BytesIO(raw))
-    assert img.size == (200, 400)
+    assert img.size == (200, 1000)
 
-    # Check that center band is white (pixel at center)
-    px = img.getpixel((100, 200))
-    assert px == (255, 255, 255)
+    # Center of band (48%) should be white
+    px_center = img.getpixel((100, 480))
+    assert px_center == (255, 255, 255)
 
-    # Check that top is black
-    px_top = img.getpixel((100, 10))
-    assert px_top == (0, 0, 0)
+    # Top of band (42%) should be white
+    px_band_top = img.getpixel((100, 425))
+    assert px_band_top == (255, 255, 255)
 
-    # Check that bottom is black
-    px_bottom = img.getpixel((100, 390))
-    assert px_bottom == (0, 0, 0)
+    # Just above band (40%) should be black
+    px_above = img.getpixel((100, 400))
+    assert px_above == (0, 0, 0)
+
+    # Just below band (56%) should be black
+    px_below = img.getpixel((100, 560))
+    assert px_below == (0, 0, 0)
+
+    # Very top and bottom are black
+    assert img.getpixel((100, 10)) == (0, 0, 0)
+    assert img.getpixel((100, 990)) == (0, 0, 0)
+
+
+def test_build_tryon_prompt_white_gold_bezel():
+    """White gold bezel bracelet prompt should mention bezel and white gold."""
+    from src.api.app import _build_tryon_prompt
+    prompt = _build_tryon_prompt("Diamond Tennis Bracelet — Bezel Single Line 2.01CT")
+    assert "polished white gold" in prompt
+    assert "bezel cup settings" in prompt
+    assert "single continuous row" in prompt
+    assert "white round brilliant" in prompt
+
+
+def test_build_tryon_prompt_yellow_gold():
+    """Yellow gold bracelet prompt should mention warm yellow gold."""
+    from src.api.app import _build_tryon_prompt
+    prompt = _build_tryon_prompt("Diamond Tennis Bracelet — Bezel Single Line 0.83CT Yellow Gold")
+    assert "warm yellow gold" in prompt
+
+
+def test_build_tryon_prompt_blue_diamond():
+    """Blue diamond bracelet prompt should mention alternating blue diamonds."""
+    from src.api.app import _build_tryon_prompt
+    prompt = _build_tryon_prompt("Blue Diamond & Diamond Tennis Bracelet — Bezel Set")
+    assert "alternating white and blue" in prompt
+
+
+def test_build_tryon_prompt_double_line():
+    """Double line bracelet prompt should mention two parallel rows."""
+    from src.api.app import _build_tryon_prompt
+    prompt = _build_tryon_prompt("Diamond Tennis Bracelet — Bezel Double Line 1.85CT")
+    assert "two parallel rows" in prompt
+
+
+def test_build_tryon_prompt_classic_prong():
+    """Classic bracelet prompt should mention four-prong settings."""
+    from src.api.app import _build_tryon_prompt
+    prompt = _build_tryon_prompt("Diamond Tennis Bracelet — Classic Single Line")
+    assert "four-prong settings" in prompt
+
+
+def test_build_tryon_prompt_u_prong():
+    """U-Prong bracelet prompt should mention U-shaped prong settings."""
+    from src.api.app import _build_tryon_prompt
+    prompt = _build_tryon_prompt("Diamond Tennis Bracelet — U-Prong Single Line 3.04CT")
+    assert "U-shaped prong" in prompt

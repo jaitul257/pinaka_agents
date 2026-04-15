@@ -257,17 +257,70 @@ async def concierge_chat(request: Request):
 
 
 def _generate_wrist_mask(width: int, height: int) -> str:
-    """Generate a black mask with white band at center (wrist area heuristic)."""
+    """Generate a black mask with narrow white band at wrist position.
+
+    Band is 12% of image height, positioned at 42-54% (wrists sit
+    slightly above center in typical portrait wrist photos).
+    """
     from PIL import Image, ImageDraw
 
     mask = Image.new("RGB", (width, height), (0, 0, 0))
     draw = ImageDraw.Draw(mask)
-    band_top = int(height * 0.35)
-    band_bottom = int(height * 0.65)
+    band_top = int(height * 0.42)
+    band_bottom = int(height * 0.54)
     draw.rectangle([(0, band_top), (width, band_bottom)], fill=(255, 255, 255))
     buf = io.BytesIO()
     mask.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
+
+
+def _build_tryon_prompt(product_title: str) -> str:
+    """Build a bracelet-specific try-on prompt from the product title.
+
+    Detects metal color, setting style, diamond color, and line type
+    from the title to generate an accurate bracelet description.
+    """
+    t = product_title.lower()
+
+    # Metal
+    if "yellow gold" in t:
+        metal = "warm yellow gold"
+    elif "rose gold" in t:
+        metal = "rose gold"
+    else:
+        metal = "polished white gold"
+
+    # Setting style
+    if "bezel" in t:
+        setting = "round bezel cup settings"
+    elif "u-prong" in t:
+        setting = "U-shaped prong settings"
+    elif "classic" in t:
+        setting = "four-prong settings"
+    else:
+        setting = "prong settings"
+
+    # Diamond color
+    if "blue diamond" in t:
+        stones = "alternating white and blue colored diamonds"
+    elif "green diamond" in t:
+        stones = "alternating white and green colored diamonds"
+    elif "pink diamond" in t:
+        stones = "alternating white and pink colored diamonds"
+    else:
+        stones = "uniform white round brilliant cut diamonds"
+
+    # Line type
+    line = "two parallel rows" if "double" in t else "a single continuous row"
+
+    return (
+        f"Replace the masked area with a diamond tennis bracelet circling the wrist. "
+        f"The bracelet has {line} of {stones} individually set in {metal} "
+        f"{setting}, total width 3mm. It forms a complete loop around the wrist "
+        f"at the narrowest point, sitting flat against skin. Single catchlight per "
+        f"diamond facet. Soft contact shadow where metal meets skin. "
+        f"Preserve everything outside the mask exactly."
+    )
 
 
 @app.post("/api/try-on")
@@ -323,15 +376,8 @@ async def virtual_try_on(request: Request):
         # Generate mask (white band at center where wrist likely is)
         mask_b64 = _generate_wrist_mask(w, h)
 
-        # Build prompt with real photographer vocabulary
-        prompt = (
-            f"Place a {product_title} around the wrist in this photograph. "
-            f"The bracelet drapes naturally against the skin with soft shadows "
-            f"matching the existing light source in the photo. Preserve the original "
-            f"skin tone, ambient light color temperature, and depth of field. "
-            f"The bracelet sits flat against the wrist, not floating above the skin. "
-            f"Straight-out-of-camera look, no post-processing glow or artificial sparkle."
-        )
+        # Build prompt with product-specific bracelet description
+        prompt = _build_tryon_prompt(product_title)
 
         # Call Freepik Ideogram Image Edit
         if not settings.freepik_api_key:
