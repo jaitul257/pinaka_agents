@@ -866,6 +866,31 @@ class Database:
         )
         return result.count or 0
 
+    # ── Post-Purchase Attribution ──
+
+    def insert_attribution(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Insert a post-purchase survey response. Raises on UNIQUE violation (duplicate submit)."""
+        result = (
+            self._client.table("post_purchase_attribution")
+            .insert(row)
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def get_attribution_range(
+        self, start_date: date, end_date: date
+    ) -> list[dict[str, Any]]:
+        """Return all attribution responses between dates (inclusive)."""
+        result = (
+            self._client.table("post_purchase_attribution")
+            .select("*")
+            .gte("created_at", start_date.isoformat())
+            .lte("created_at", end_date.isoformat())
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return result.data or []
+
 
 class AsyncDatabase:
     """Async wrapper around Database. Delegates all calls via asyncio.to_thread().

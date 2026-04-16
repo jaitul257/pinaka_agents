@@ -68,3 +68,35 @@ def test_roas_empty_stats():
     result = tracker.calculate_roas([], window_days=7)
     assert result.roas == 0.0
     assert result.recommendation == "pause"
+
+
+def test_mer_matches_roas_at_current_stage():
+    """MER currently equals ROAS (total rev / total spend). Will diverge later."""
+    tracker = _make_tracker()
+    stats = [
+        {"ad_spend_google": 10.0, "ad_spend_meta": 10.0, "revenue": 80.0},
+    ]
+    mer_result = tracker.calculate_mer(stats, window_days=7)
+    roas_result = tracker.calculate_roas(stats, window_days=7)
+    assert mer_result.mer == 4.0
+    assert mer_result.mer == roas_result.mer
+    assert mer_result.total_revenue == 80.0
+    assert mer_result.total_ad_spend == 20.0
+
+
+def test_mer_zero_spend():
+    """MER is 0 when no ad spend, even with revenue (avoid divide-by-zero)."""
+    tracker = _make_tracker()
+    stats = [{"ad_spend_google": 0, "ad_spend_meta": 0, "revenue": 1000.0}]
+    result = tracker.calculate_mer(stats, window_days=7)
+    assert result.mer == 0.0
+    assert result.total_revenue == 1000.0
+
+
+def test_roas_result_includes_mer_field():
+    """ROASResult now carries an MER field alongside ROAS."""
+    tracker = _make_tracker()
+    stats = [{"ad_spend_google": 10.0, "ad_spend_meta": 10.0, "revenue": 80.0}]
+    result = tracker.calculate_roas(stats, window_days=7)
+    assert hasattr(result, "mer")
+    assert result.mer == 4.0

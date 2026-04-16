@@ -446,6 +446,181 @@ async def virtual_try_on(request: Request):
         return {"status": "error", "message": "Something went wrong. Please try again."}
 
 
+# ── Pixel Event Relay (CAPI backstop for client-side events) ──
+
+ALLOWED_PIXEL_EVENTS = {"ViewContent", "AddToCart", "InitiateCheckout"}
+
+
+@app.post("/api/pixel/event")
+async def pixel_event_relay(request: Request):
+    """Relay a conversion event from the storefront to Meta CAPI server-side.
+
+    Paired with the browser pixel (same event_id) for deduplication. Use when
+    Shopify's native pixel is blocked or when we need signal Shopify doesn't
+    capture (e.g. concierge-driven product views). Does NOT replace Shopify's
+    native Meta channel — this is redundancy + custom events.
+
+    Accepts JSON: {event_name, event_id, product_id?, value?, content_ids?,
+    currency?, customer_email?, fbp?, fbc?, source_url?}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    event_name = str(body.get("event_name", "")).strip()
+    event_id = str(body.get("event_id", "")).strip()
+    if event_name not in ALLOWED_PIXEL_EVENTS:
+        raise HTTPException(status_code=400, detail=f"event_name must be one of {sorted(ALLOWED_PIXEL_EVENTS)}")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="event_id required for browser/server dedup")
+
+    try:
+        value = float(body.get("value", 0))
+    except (TypeError, ValueError):
+        value = 0.0
+
+    from src.marketing.meta_capi import MetaConversionsAPI
+    capi = MetaConversionsAPI()
+    if not capi.is_configured:
+        return {"status": "skipped", "reason": "CAPI not configured"}
+
+    client_ip = request.client.host if request.client else ""
+    user_agent = request.headers.get("user-agent", "")[:500]
+    customer_email = (body.get("customer_email") or "").strip().lower()
+    fbp = (body.get("fbp") or "").strip()
+    fbc = (body.get("fbc") or "").strip()
+    source_url = (body.get("source_url") or "").strip()[:500]
+
+    sent = False
+    if event_name == "ViewContent":
+        sent = await capi.send_view_content(
+            product_id=str(body.get("product_id", "")),
+            value=value, event_id=event_id,
+            currency=body.get("currency", "USD"),
+            customer_email=customer_email,
+            client_ip=client_ip, user_agent=user_agent,
+            fbp=fbp, fbc=fbc, source_url=source_url,
+        )
+    elif event_name == "AddToCart":
+        sent = await capi.send_add_to_cart(
+            product_id=str(body.get("product_id", "")),
+            value=value, event_id=event_id,
+            quantity=int(body.get("quantity", 1) or 1),
+            currency=body.get("currency", "USD"),
+            customer_email=customer_email,
+            client_ip=client_ip, user_agent=user_agent,
+            fbp=fbp, fbc=fbc, source_url=source_url,
+        )
+    elif event_name == "InitiateCheckout":
+        raw_ids = body.get("content_ids") or []
+        content_ids = [str(c) for c in raw_ids if c] if isinstance(raw_ids, list) else []
+        sent = await capi.send_initiate_checkout(
+            content_ids=content_ids,
+            value=value, event_id=event_id,
+            currency=body.get("currency", "USD"),
+            customer_email=customer_email,
+            client_ip=client_ip, user_agent=user_agent,
+            fbp=fbp, fbc=fbc, source_url=source_url,
+        )
+
+    return {"status": "sent" if sent else "failed", "event_name": event_name, "event_id": event_id}
+
+
+# ── Post-Purchase Attribution Survey ──
+
+ALLOWED_ATTRIBUTION_CHANNELS = {
+    "instagram", "tiktok", "pinterest", "google_search",
+    "meta_ads", "podcast", "friend", "press", "other",
+}
+
+ALLOWED_PURCHASE_REASONS = {
+    "gift", "self_purchase", "anniversary", "milestone", "engagement", "other",
+}
+
+
+@app.post("/api/attribution/submit")
+async def submit_attribution(request: Request):
+    """Collect 'how did you hear about us' from the Shopify thank-you page.
+
+    Accepts JSON: {shopify_order_id, customer_email?, channel_primary, channel_detail?,
+    purchase_reason?, purchase_reason_detail?}
+
+    Returns 200 on success or if already recorded (idempotent on refresh).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    shopify_order_id = str(body.get("shopify_order_id", "")).strip()
+    channel_primary = str(body.get("channel_primary", "")).strip().lower()
+
+    if not shopify_order_id:
+        raise HTTPException(status_code=400, detail="shopify_order_id required")
+    if channel_primary not in ALLOWED_ATTRIBUTION_CHANNELS:
+        raise HTTPException(status_code=400, detail="invalid channel_primary")
+
+    reason = (body.get("purchase_reason") or "").strip().lower() or None
+    if reason and reason not in ALLOWED_PURCHASE_REASONS:
+        reason = "other"
+
+    db = AsyncDatabase()
+
+    # Validate the order exists (cheap spam filter — fake IDs won't match)
+    try:
+        order_id_int = int(shopify_order_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="order not found")
+
+    order = await db.get_order_by_shopify_id(order_id_int)
+    if not order:
+        raise HTTPException(status_code=404, detail="order not found")
+
+    row = {
+        "shopify_order_id": shopify_order_id,
+        "customer_email": (body.get("customer_email") or order.get("buyer_email") or "").strip().lower() or None,
+        "channel_primary": channel_primary,
+        "channel_detail": (body.get("channel_detail") or "").strip()[:500] or None,
+        "purchase_reason": reason,
+        "purchase_reason_detail": (body.get("purchase_reason_detail") or "").strip()[:500] or None,
+        "submitted_via": "thankyou_page",
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent", "")[:500] or None,
+        "raw_response": body,
+    }
+
+    try:
+        await db.insert_attribution(row)
+    except Exception as exc:
+        # UNIQUE (shopify_order_id, submitted_via) → already recorded. Treat as success.
+        if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
+            return {"status": "already_recorded"}
+        logger.exception("Failed to insert attribution for order %s", shopify_order_id)
+        raise HTTPException(status_code=500, detail="Could not record response")
+
+    try:
+        from src.agents.observations import observe
+        await observe(
+            source="survey:post_purchase",
+            category="marketing",
+            severity="info",
+            summary=f"Buyer on order #{shopify_order_id} said heard via {channel_primary}"
+                    + (f" ({row['channel_detail']})" if row["channel_detail"] else ""),
+            entity_type="order",
+            entity_id=shopify_order_id,
+            data={
+                "channel_primary": channel_primary,
+                "channel_detail": row["channel_detail"],
+                "purchase_reason": reason,
+            },
+        )
+    except Exception:
+        pass  # Observation failure non-fatal
+
+    return {"status": "ok"}
+
+
 # ── Shopify Webhooks ──
 
 @app.post("/webhook/shopify/orders")
@@ -1372,6 +1547,30 @@ async def cron_marketing_weekly():
         }
     except Exception as e:
         logger.exception("Weekly marketing review failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/attribution-synthesize", dependencies=[Depends(verify_cron_secret)])
+async def cron_attribution_synthesize():
+    """Weekly post-purchase survey synthesizer — runs Monday 9:30 AM ET.
+
+    Aggregates the last 7 days of post_purchase_attribution responses, clusters
+    free-text details via Claude, and posts a ground-truth attribution report
+    to Slack. This overrides Meta/GA4 last-click for budget reallocation.
+    """
+    from src.marketing.attribution_synth import AttributionSynthesizer
+
+    try:
+        synth = AttributionSynthesizer()
+        result = await synth.run_weekly_report(window_days=7)
+        return {
+            "status": "ok",
+            "total_responses": result.total_responses,
+            "channels": result.channel_counts,
+            "observations": len(result.ai_observations),
+        }
+    except Exception as e:
+        logger.exception("Attribution synthesizer failed")
         return {"status": "error", "error": str(e)}
 
 

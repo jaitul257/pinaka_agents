@@ -1451,5 +1451,24 @@
         "default": "scheme-1"
       }
     ]
+  },
+  {
+    "name": "Analytics",
+    "settings": [
+      {
+        "type": "header",
+        "content": "Microsoft Clarity"
+      },
+      {
+        "type": "paragraph",
+        "content": "Free session recording + heatmaps. Sign up at clarity.microsoft.com, create a project, paste the ID below."
+      },
+      {
+        "type": "text",
+        "id": "clarity_project_id",
+        "label": "Clarity project ID",
+        "info": "From clarity.microsoft.com (leave blank to disable)"
+      }
+    ]
   }
 ]

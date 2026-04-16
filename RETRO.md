@@ -11,6 +11,37 @@ Last updated: 2026-04-16
 
 ## Push Log
 
+### 2026-04-16: Phase 9.0 — Measurement Foundation (marketing agent upgrade)
+
+**What shipped:**
+- **Post-purchase attribution survey** (native, $0/mo): new `post_purchase_attribution` table + `/api/attribution/submit` endpoint + Shopify thank-you page HTML widget (Cormorant/cream styled) + `/cron/attribution-synthesize` that clusters free-text via Claude and posts weekly Slack report Monday 9:30 AM ET.
+- **CAPI event enrichment**: `send_view_content`, `send_add_to_cart`, `send_initiate_checkout` helpers; enriched Purchase event with `fbp/fbc/num_items/order_id/source_url`; new `/api/pixel/event` relay so storefront can fire server-side events.
+- **MER metric**: `calculate_mer()` in ads.py; weekly Slack report leads with MER over ROAS ("the honest one").
+- **Microsoft Clarity integration**: conditional script tag in theme.liquid gated on new theme setting (free session recording, zero cost).
+- **Marketing agent prompt rewrite**: measurement-first rule (MER > platform ROAS > post-purchase survey), retargeting-heavy allocation flip (47/40/13 from prospecting-heavy), ATC optimization + 28d click baked in as defaults.
+- **37 new tests** (263 → 300, all passing). Migration applied to Supabase, cron-job.org entry created (jobId 7494627), theme pushed live.
+
+**What went well:**
+- Low-budget stack held — $0/mo operational cost vs. estimated $144+/mo for Fairing + Klaviyo + Motion. All built on existing SendGrid, Supabase, Anthropic.
+- Research-first approach (3 parallel agents on Mejuri / Lukson / DTC landscape) surfaced the real unlock (ATC optimization at low event volume) before writing any code.
+- `supabase db push` applied the migration cleanly on first try after the 2026-04-05 `migration repair` lesson stuck.
+- All units shipped with tests that caught the MER field default mismatch and CAPI signature changes before merge.
+
+**What was painful:**
+- **Meta blocks optimization + attribution edits on published ad sets.** Script got two back-to-back rejections: "Can't Make Edits to Published Ad Set" and "Attribution Window Update Is No Longer Supported." The only path to switch is creating a new ad set, which doubles effective budget during overlap. Script was demoted from --apply to inspection-only.
+- **Lukson (lukson.co) is not a peer.** Founder named them as a reference but they're an Indian fast-fashion lab-grown play ($50-180 AOV, 19% permanent "sale" anchor, JK Star backing) — a full order of magnitude below Pinaka. Research time would have been better spent on Vrai, Catbird, Aurate, Mateo.
+- **Shopify Order Status Page Additional Scripts has NO Admin API.** Spent effort confirming there's no CLI path for Basic-plan stores short of scaffolding a full Node/Shopify app extension (Checkout UI Extension with `purchase.thank-you.block.render` target) — which is 30-60 min + permanent Node-in-Python-repo. 30-second admin paste won on tradeoff.
+- Shopify theme `settings_schema.json` rejects blank `default` on text inputs now. Replaced with `info` field.
+
+**Lessons learned:**
+- **Meta's "edit" surface shrinks quarterly.** After a couple of years, basically every meaningful Ad Set field gets locked to creation-time only. Always check `shopify theme push --dry-run`-equivalent for Meta (i.e. a dry-run inspection script) before attempting write operations on live ad infrastructure. The pattern: read → compare → write with fallback on "immutable field" errors.
+- **MER > ROAS at 1-2 orders/week.** Platform ROAS is noise at our event volume. The weekly Slack report change (MER first, ROAS second, with a "healthy DTC target 3-5x" explainer) resets the founder's mental model for budget decisions. Don't trust what you can't measure independently.
+- **Native > SaaS at our stage.** Fairing costs $99/mo for a post-purchase survey. We shipped the same capability in a 120-line HTML snippet + a migration + a cron. Default to native whenever the data is ours and the tool is a thin CRUD layer.
+- **Retargeting 47% vs Prospecting 40% is counterintuitive but correct for $5K AOV.** Industry defaults push 60%+ prospecting. At 1-2 orders/week with a 30-day consideration window, every cold-only dollar without warm follow-up is wasted.
+- **Document-it-yourself > paste-it-somewhere for Shopify CLI.** When a step like "paste to admin" has no API and no CLI path, the winning design is: check the snippet into the repo (`shopify-theme/order-status-additional-scripts.html`) with clear paste instructions at the top. Version-controlled, reviewable, survives account handoffs.
+
+---
+
 ### 2026-04-12 — 2026-04-16: Meta Ads Launch, Checkout Flow, Crafting Bug, Cleanup
 
 **What shipped:**

@@ -1,6 +1,6 @@
 # TODO — Pinaka Agents
 
-Last updated: 2026-04-10
+Last updated: 2026-04-16
 
 ## Phases 1-8.4: COMPLETE
 
@@ -136,6 +136,24 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 
 ## Next Up
 
+## Phase 9.0: Measurement Foundation — DONE (2026-04-16)
+
+- [x] `post_purchase_attribution` migration applied to Supabase
+- [x] `POST /api/attribution/submit` endpoint + order validation + observation writer
+- [x] Shopify thank-you page survey widget (`shopify-theme/order-status-additional-scripts.html`)
+- [x] `POST /cron/attribution-synthesize` + AttributionSynthesizer (Claude-clustered free-text)
+- [x] Cron-job.org entry created (Mon 9:30 AM ET, jobId 7494627)
+- [x] CAPI enriched: ViewContent/AddToCart/InitiateCheckout helpers + `/api/pixel/event` relay + Purchase event enrichment (fbp/fbc/num_items/order_id/source_url)
+- [x] MER metric + MERResult dataclass; weekly Slack report leads with MER
+- [x] Microsoft Clarity script in theme.liquid (conditional on new `clarity_project_id` setting) — theme pushed live
+- [x] Marketing Agent prompt rewritten: measurement-first, retargeting-heavy (47/40/13), ATC + 28d defaults
+- [x] 37 new tests (263 → 300 passing)
+
+**Pending human (3 clicks):**
+- [ ] **Paste Shopify thank-you survey widget** — Shopify admin → Settings → Checkout → "Order status page" → Additional scripts. Copy from `shopify-theme/order-status-additional-scripts.html`. No API exists on Basic plan.
+- [ ] **Sign up Microsoft Clarity** (free) — https://clarity.microsoft.com → create project → paste ID via Theme customize → Analytics → Clarity project ID.
+- [ ] **Decide on ATC ad set switch** — Meta blocks optimization edits on published ad sets. Current `Pinaka — US Purchase — Auto` optimizes for PURCHASE (stuck in learning at 1-2 orders/week). To switch: create new ATC ad set + pause old (doubles spend during overlap). Call when ready.
+
 ### High Priority (blockers / revenue)
 - [x] ~~Add Meta Ad Account payment method~~ — done 2026-04-12
 - [x] ~~Flip Meta Campaign + Ad Set to ACTIVE~~ — done 2026-04-12, paused for review
@@ -145,12 +163,31 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] ~~Crafting update cron fix~~ — removed broken Claude draft, bounded query window, test orders cancelled. Done 2026-04-16.
 - [x] ~~Remove "Free Lifetime Care"~~ — stripped from all modules, tests, theme. Done 2026-04-16.
 - [ ] **Verify `pinakajewellery.com` domain in Meta Business Settings** — https://business.facebook.com/settings/owned-domains → add domain → add DNS TXT record in Cloudflare → verify
-- [ ] **Set Meta attribution to 7-day click + 1-day view** — Ads Manager → Ad Set → Settings → Attribution
 - [ ] **Set per-size pricing on pipeline products** — products from pipeline have $0 prices
 - [ ] **More products from catalog** — remaining bracelets need Pomelli photos → upload → publish
 - [ ] **Unpause Meta Campaign when ready** — Campaign ID: 120244523278190359. Ads A + B ready, all fixes applied.
 - [ ] **Evaluate iAugment virtual try-on app** — https://apps.shopify.com/iaugment-virtual-try-on (free tier, 100 try-ons, bracelet support). AI-based try-on was abandoned — not realistic enough.
 - [ ] **Product photography** — studio shots on cream linen with directional light
+
+### Phase 9.1 — Creative Intelligence (next up)
+- [ ] Per-variant CTR + fatigue detection (flag if CTR ↓30% WoW → auto-draft replacement)
+- [ ] Daily Meta Ad Library scraper (Vrai, Catbird, Mejuri, Aurate, Mateo) → Slack digest
+- [ ] Founder-UGC brief generator (3 phone-shot prompts/week in Slack)
+- [ ] `ad_creative_metrics` table + per-creative ROAS breakdown
+
+### Phase 9.2 — Lifecycle Orchestration (after 9.1)
+- [ ] Welcome-educational flow (5 emails, no discount — 4Cs + atelier story)
+- [ ] Browse-abandon flow (2h delay, "still thinking?" + 4Cs PDF)
+- [ ] Cart-abandon flow (1h delay, "call Jaitul" CTA at $4.9K)
+- [ ] Post-purchase 6-email arc (shipping → unboxing → care → anniversary → referral → custom inquiry)
+- [ ] Anniversary capture at checkout + year-out trigger
+- [ ] All on SendGrid (skip Klaviyo until volume justifies $45+/mo)
+
+### Phase 9.3 — Content & Retention Engine (after 9.2)
+- [ ] Weekly long-tail SEO journal post (agent drafts, founder edits/ships)
+- [ ] Pinterest tag + 3 pins/week
+- [ ] "Piece of the quarter" email to past buyers
+- [ ] `/dashboard/brief` — daily AI brief page (MER, creatives, competitor moves, SEO target, anomalies)
 
 ### Medium Priority (improvements)
 - [ ] Google Ads developer token approval (in review since 2026-04-04)

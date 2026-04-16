@@ -31,6 +31,23 @@ class ROASResult:
     recommendation: str
     recommended_budget: float
     current_budget: float
+    mer: float = 0.0  # Marketing Efficiency Ratio — see calculate_mer docstring
+
+
+@dataclass
+class MERResult:
+    """Marketing Efficiency Ratio — the 'honest' ratio at low event volume.
+
+    MER = (total store revenue) / (total marketing spend). Unlike ROAS, MER
+    isn't confused by platform attribution noise, iOS signal loss, or the
+    7/28-day click-window gap. At 1-2 orders/week with a 14-45-day
+    consideration cycle, MER is the only number that doesn't lie.
+    """
+
+    window_days: int
+    total_revenue: float
+    total_ad_spend: float
+    mer: float
 
 
 class AdsTracker:
@@ -43,7 +60,7 @@ class AdsTracker:
     def calculate_roas(
         self, daily_stats: list[dict[str, Any]], window_days: int | None = None
     ) -> ROASResult:
-        """Calculate ROAS from daily_stats records over a rolling window."""
+        """Calculate ROAS + MER from daily_stats records over a rolling window."""
         window = window_days or settings.roas_window_days
 
         total_spend = sum(
@@ -53,6 +70,10 @@ class AdsTracker:
         total_revenue = sum(float(s.get("revenue", 0)) for s in daily_stats)
 
         roas = total_revenue / total_spend if total_spend > 0 else 0.0
+        # MER = same calc at our stage (all revenue / all marketing spend).
+        # Separate field so we can diverge later (e.g. include email revenue,
+        # subtract non-marketing cost, etc.) without touching callers.
+        mer = roas
 
         current_budget = settings.max_daily_ad_budget
         recommendation, new_budget = self._budget_recommendation(roas, current_budget)
@@ -62,9 +83,32 @@ class AdsTracker:
             total_ad_spend=round(total_spend, 2),
             total_revenue=round(total_revenue, 2),
             roas=round(roas, 2),
+            mer=round(mer, 2),
             recommendation=recommendation,
             recommended_budget=round(new_budget, 2),
             current_budget=current_budget,
+        )
+
+    def calculate_mer(
+        self, daily_stats: list[dict[str, Any]], window_days: int | None = None
+    ) -> MERResult:
+        """Marketing Efficiency Ratio: total revenue / total ad spend.
+
+        Prefer over platform ROAS for budget decisions at low event volume.
+        A healthy DTC MER is 3x-5x at our AOV. Below 2x = something's leaking.
+        """
+        window = window_days or settings.roas_window_days
+        total_spend = sum(
+            float(s.get("ad_spend_google", 0)) + float(s.get("ad_spend_meta", 0))
+            for s in daily_stats
+        )
+        total_revenue = sum(float(s.get("revenue", 0)) for s in daily_stats)
+        mer = total_revenue / total_spend if total_spend > 0 else 0.0
+        return MERResult(
+            window_days=window,
+            total_revenue=round(total_revenue, 2),
+            total_ad_spend=round(total_spend, 2),
+            mer=round(mer, 2),
         )
 
     def _budget_recommendation(
@@ -125,7 +169,8 @@ class AdsTracker:
             {
                 "type": "section",
                 "fields": [
-                    {"type": "mrkdwn", "text": f"*ROAS:* {result.roas}x"},
+                    {"type": "mrkdwn", "text": f"*MER:* {result.mer}x  _(the honest one)_"},
+                    {"type": "mrkdwn", "text": f"*Platform ROAS:* {result.roas}x"},
                     {"type": "mrkdwn", "text": f"*Window:* {result.window_days} days"},
                     {"type": "mrkdwn", "text": f"*Ad Spend:* ${result.total_ad_spend:,.2f}"},
                     {"type": "mrkdwn", "text": f"*Revenue:* ${result.total_revenue:,.2f}"},
@@ -135,6 +180,14 @@ class AdsTracker:
             {
                 "type": "section",
                 "text": {"type": "mrkdwn", "text": f"*Recommendation:* {action_text}"},
+            },
+            {
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": "_MER = total revenue / total ad spend. Healthy DTC target: 3-5x. "
+                            "Below 2x = something's leaking._",
+                }],
             },
         ]
 
