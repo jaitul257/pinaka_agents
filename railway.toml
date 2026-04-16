@@ -4,6 +4,8 @@ builder = "nixpacks"
 [deploy]
 startCommand = "uvicorn src.api.app:app --host 0.0.0.0 --port ${PORT:-8000}"
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+# Startup pre-warms ChromaDB (79MB ONNX model download + ~30s embedding of products).
+# 30s cut it too close — deploys failed on attempt 2 with ~2s left. 90s gives headroom.
+healthcheckTimeout = 90
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
