@@ -140,12 +140,16 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] ~~Add Meta Ad Account payment method~~ — done 2026-04-12
 - [x] ~~Flip Meta Campaign + Ad Set to ACTIVE~~ — done 2026-04-12, paused for review
 - [x] ~~Full checkout flow test~~ — done 2026-04-13, webhook → agent → audit all verified
-- [x] ~~Meta CAPI token refresh~~ — regenerated 2026-04-13, old token was invalidated
-- [ ] **Verify `pinakajewellery.com` domain in Meta Business Settings** — https://business.facebook.com/settings/owned-domains → add domain → add DNS TXT record in Cloudflare → verify. Unverified domain reduces ad reach.
-- [ ] **Set Meta attribution to 7-day click + 1-day view** — Ads Manager → Ad Set → Settings → Attribution. API blocked this change.
-- [ ] **Set per-size pricing on pipeline products** — 7 Shopify products from pipeline have $0 prices. Edit each in dashboard, set prices, save with Push to Shopify.
-- [ ] **More products from catalog** — 7 remaining bracelets need Pomelli photos → upload → publish via pipeline (AB0027, AB0025B, AB0024A, AB0029A, AB0025AB, AB0029AE, AB0025BR)
-- [ ] **Unpause Meta Campaign when ready** — Campaign ID: 120244523278190359. Both ads (A + B) ready, targeting + destination + spend cap all fixed.
+- [x] ~~Meta CAPI token refresh~~ — regenerated 2026-04-13
+- [x] ~~Meta Ads audit~~ — fixed spend cap, destination type, interest targeting, pixel linking, Variant B URL. Done 2026-04-13.
+- [x] ~~Crafting update cron fix~~ — removed broken Claude draft, bounded query window, test orders cancelled. Done 2026-04-16.
+- [x] ~~Remove "Free Lifetime Care"~~ — stripped from all modules, tests, theme. Done 2026-04-16.
+- [ ] **Verify `pinakajewellery.com` domain in Meta Business Settings** — https://business.facebook.com/settings/owned-domains → add domain → add DNS TXT record in Cloudflare → verify
+- [ ] **Set Meta attribution to 7-day click + 1-day view** — Ads Manager → Ad Set → Settings → Attribution
+- [ ] **Set per-size pricing on pipeline products** — products from pipeline have $0 prices
+- [ ] **More products from catalog** — remaining bracelets need Pomelli photos → upload → publish
+- [ ] **Unpause Meta Campaign when ready** — Campaign ID: 120244523278190359. Ads A + B ready, all fixes applied.
+- [ ] **Evaluate iAugment virtual try-on app** — https://apps.shopify.com/iaugment-virtual-try-on (free tier, 100 try-ons, bracelet support). AI-based try-on was abandoned — not realistic enough.
 - [ ] **Product photography** — studio shots on cream linen with directional light
 
 ### Medium Priority (improvements)
@@ -154,7 +158,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] Review request automation (post-delivery email, 7-14 days after delivery)
 - [ ] Slide-in cart drawer for mobile
 - [ ] Closed-loop Meta insights feedback into ad creative generation
-- [ ] 3-campaign structure (Prospecting/Retargeting/Retention) — currently single campaign, marketing strategy calls for 3
+- [ ] 3-campaign structure (Prospecting/Retargeting/Retention) — currently single campaign
 - [ ] Additional ad creatives — Meta recommends 3-5 per ad set, currently 2
 
 ### Low Priority (tech debt)

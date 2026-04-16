@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-10
+Last updated: 2026-04-16
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,38 @@ Last updated: 2026-04-10
 ---
 
 ## Push Log
+
+### 2026-04-12 — 2026-04-16: Meta Ads Launch, Checkout Flow, Crafting Bug, Cleanup
+
+**What shipped:**
+- **Meta Ads live**: Campaign + Ad Set activated, pixel linked to ad account, Ad Variant A created and serving impressions. Ad Variant B fixed (old creative had 404 landing page URL, recreated with correct URL + SHOP_NOW CTA).
+- **Meta Ads audit**: Fixed spend cap ($0 → removed), destination type (UNDEFINED → WEBSITE), added interest targeting (Jewelry + Luxury goods with Advantage+ audience), verified domain flagged as missing.
+- **Full checkout flow test**: Test order → webhook fired → Order Ops Agent processed (success, 3 Claude calls, 11K tokens) → audit log written. Meta CAPI token was expired, regenerated.
+- **Crafting update cron fix**: Was calling Claude with empty customer_message causing confused Slack posts. Replaced with templated email body. DB query now bounded (3-day window) so old/cancelled orders don't re-trigger. Test orders marked cancelled in Supabase.
+- **Virtual try-on (attempted + reverted)**: Built Freepik Ideogram-based try-on (upload wrist → AI composites bracelet). Worked technically but AI-generated bracelet didn't match actual products. Removed from live site. User will evaluate iAugment Shopify app (free tier) instead.
+- **"Free Lifetime Care" removed**: Stripped from all modules — listings generator, brand DNA, ad generator, dashboard, trust badges, tests. Website now shows 3 trust badges instead of 4.
+
+**What went well:**
+- Checkout flow test verified the complete pipeline: webhook → agent → audit in 14 seconds. Confidence that real orders will process correctly.
+- Meta Ads audit caught 7 issues in one systematic pass. Interest targeting + destination type + spend cap all fixed via API in minutes.
+- Crafting update fix was clean — removing the Claude call (unnecessary for templated emails) was simpler and more reliable than trying to fix the prompt.
+
+**What was painful:**
+- **Freepik IP blocking on Railway.** Free trial rate limit exhaustion caused Railway's IP to be blocked with 403 "suspicious activity." Even after upgrading to paid plan ($20/mo), the block persisted. Required `railway redeploy` to get a new IP. Block returned on next auto-deploy. Fragile.
+- **AI try-on quality.** Three rounds of iteration: (1) wrong bracelet + wrong placement, (2) better placement but still generic AI bracelet, (3) product-specific prompts improved but user judged it "not realistic." AI inpainting cannot reliably reproduce the exact product — it always "interprets" rather than "overlays."
+- **OpenAI billing limit.** Attempted to switch to OpenAI gpt-image-1 for try-on. Hit `billing_hard_limit_reached` immediately. Both Freepik and OpenAI were blocked simultaneously.
+- **Meta pixel not linked to ad account.** Pixel existed in Business Portfolio but wasn't shared with the ad account. API couldn't share it (required business admin role). Needed manual action in Business Settings UI.
+- **Shopify product `test: true` flag suppresses webhooks.** First test order with `test: True` didn't fire the orders/create webhook. Had to create a second order without the flag.
+
+**Lessons learned:**
+- **AI image editing cannot replace AR overlay for try-on.** AI generates its interpretation of a bracelet, not your actual product. For try-on, use AR overlay (Camweara, iAugment) which warps your real product image onto the wrist. AI is for creative generation (stories, ads), not product fidelity.
+- **Freepik IP blocks are persistent.** Once Railway's IP is blocked, it stays blocked across auto-deploys. Only `railway redeploy` (which provisions a new instance) sometimes gets a new IP. Not reliable for production. Consider routing Freepik calls through a proxy or Cloudflare Worker if using it server-side.
+- **Don't use `test: True` for webhook testing.** Shopify suppresses webhooks for test orders. Use regular Admin API orders with `financial_status: paid` and cancel them after.
+- **Crafting updates don't need AI drafting.** Templated emails are more reliable and cheaper than Claude-drafted content for routine lifecycle messages. Save AI for responses that require reasoning (customer inquiries, complaints).
+- **Always check both `status` and `published_at` and now also `pixel linking` before expecting Meta ads to work.** Meta has many independent prerequisites that all need to be green: payment method, campaign active, ad set active, pixel linked to ad account, domain verified, creative format compatible with placements.
+- **Systematic audits catch more than ad-hoc fixes.** The Meta Ads audit (account health → campaign → ad set → ads → pixel → page → domain) found 7 issues in one pass. Would have taken days to discover them individually.
+
+---
 
 ### 2026-04-10 — Phase 8.4: Product Pipeline, Hero Video, AI Asset Research, Concierge Bugfix
 
