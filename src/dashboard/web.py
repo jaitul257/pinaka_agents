@@ -467,7 +467,7 @@ def _product_form(action: str, product: dict | None = None, button_text: str = "
                 </div>
                 <div class="form-group">
                     <label>Care Instructions</label>
-                    <textarea name="care" rows="3">{p.get("care_instructions", "Clean gently with warm soapy water and a soft brush. Store in the provided jewelry box when not worn. Bring it to us anytime for complimentary professional cleaning — that's our Free Lifetime Care promise.")}</textarea>
+                    <textarea name="care" rows="3">{p.get("care_instructions", "Clean gently with warm soapy water and a soft brush. Store in the provided jewelry box when not worn.")}</textarea>
                 </div>
                 <div class="form-grid">
                     <div class="form-group">

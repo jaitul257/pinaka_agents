@@ -21,7 +21,7 @@ def sample_variant():
         variant_label="A",
         headline="Handcrafted in 14K",
         primary_text="Lab-grown diamonds. Ships in 15 business days.",
-        description="Free Lifetime Care",
+        description="Shipped insured",
         cta="SHOP_NOW",
         image_url="https://cdn.shopify.com/a.jpg",
     )

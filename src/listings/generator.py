@@ -24,7 +24,6 @@ Rules:
 - Never reveal cost, margin, or supplier information
 - Always name the specific occasion when possible (anniversary, graduation, engagement)
 - Sign off descriptions with a personal touch about handcrafted quality
-- Include "Free Lifetime Care" in every description
 - Focus the first 160 characters on what makes this piece special (SEO meta description)
 - Made-to-order: mention "Ships in 10-15 business days" for handcrafted pieces
 

@@ -132,7 +132,7 @@ Example:
     "variant_label": "A",
     "headline": "Handcrafted in 14K gold",
     "primary_text": "Lab-grown diamonds. Shipped insured in 15 business days.",
-    "description": "Free Lifetime Care",
+    "description": "Shipped insured",
     "cta": "SHOP_NOW"
   }}
 ]

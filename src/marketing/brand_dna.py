@@ -79,7 +79,6 @@ _BANNED_WORDS_BASELINE = [
 _REQUIRED_PHRASES_BASELINE = [
     # From listings/generator.py + DESIGN.md Trust Signals:
     "Ships in 15 business days",
-    "Free Lifetime Care",
 ]
 
 # DESIGN.md Anti-Patterns section heading marker

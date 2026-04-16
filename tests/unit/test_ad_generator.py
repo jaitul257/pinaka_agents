@@ -100,7 +100,7 @@ def test_validate_variant_passes_clean(sample_dna):
     errors = _validate_variant(
         {
             "headline": "Handcrafted in 14K Gold",
-            "primary_text": "Lab-grown diamonds. Ships in 15 business days. Free Lifetime Care.",
+            "primary_text": "Lab-grown diamonds. Ships in 15 business days.",
             "description": "Limited pieces.",
             "cta": "SHOP_NOW",
         },
