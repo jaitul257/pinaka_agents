@@ -1,0 +1,23 @@
+# Post-purchase attribution survey. Renders on the Shopify thank-you page
+# (purchase.thank-you.block.render). Buyers tell us where they actually heard
+# of Pinaka so we can override noisy Meta/GA4 last-click attribution.
+#
+# Deploys via `shopify app deploy`. After deploy, merchant enables the block
+# in Admin → Settings → Checkout → Customize → "Thank you" → Add block.
+
+api_version = "2026-01"
+
+[[extensions]]
+name = "Post-Purchase Survey"
+handle = "thankyou-survey"
+type = "ui_extension"
+uid = "c335490e-0615-97ae-f32b-248d6d733856e5e22334"
+
+[[extensions.targeting]]
+module = "./src/Survey.jsx"
+target = "purchase.thank-you.block.render"
+
+[extensions.capabilities]
+api_access = true
+# Required for fetch() to our Railway API.
+network_access = true

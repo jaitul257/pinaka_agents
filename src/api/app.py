@@ -88,7 +88,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Pinaka Agents", version="0.3.0", lifespan=lifespan)
 
-# CORS for storefront chat widget (pinakajewellery.com → Railway API)
+# CORS for storefront chat widget (pinakajewellery.com) + Shopify Checkout UI Extensions
+# (thank-you page survey) which run in a sandboxed iframe with shop.app / shopifycs.com origin.
 from starlette.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
@@ -96,8 +97,10 @@ app.add_middleware(
         "https://pinakajewellery.com",
         "https://www.pinakajewellery.com",
         "https://pinaka-jewellery.myshopify.com",
+        "https://shop.app",
     ],
-    allow_methods=["POST"],
+    allow_origin_regex=r"https://([a-zA-Z0-9-]+\.)*shopifycs\.com|https://([a-zA-Z0-9-]+\.)*shopifycdn\.com|https://([a-zA-Z0-9-]+\.)*shopify\.com",
+    allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
 

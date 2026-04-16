@@ -1,0 +1,15 @@
+{
+  "name": "pinaka-agents",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pinaka Agents — Shopify extensions only. Python app lives in src/.",
+  "scripts": {
+    "dev": "shopify app dev",
+    "build": "shopify app build",
+    "deploy": "shopify app deploy",
+    "info": "shopify app info"
+  },
+  "workspaces": [
+    "extensions/*"
+  ]
+}
