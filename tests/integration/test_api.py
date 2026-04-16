@@ -146,11 +146,11 @@ def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, mock_slack
 
 # ── Cron: Crafting Updates ──
 
-@patch("src.api.app.MessageClassifier")
 @patch("src.api.app.SlackNotifier")
 @patch("src.api.app.AsyncDatabase")
-def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, mock_class_cls, client, cron_headers):
-    """Crafting update cron should send Slack reviews for eligible orders."""
+def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, client, cron_headers):
+    """Crafting update cron should send Slack reviews using templated body
+    (no Claude drafting)."""
     mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_orders_needing_crafting_update.return_value = [
@@ -158,13 +158,11 @@ def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, mock_class_cls, clie
             "shopify_order_id": 5001,
             "total": 2850.0,
             "created_at": "2026-03-26T10:00:00",
+            "buyer_email": "jane@example.com",
+            "buyer_name": "Jane Doe",
             "customers": {"name": "Jane Doe", "email": "jane@example.com", "lifecycle_stage": "first_purchase"},
         }
     ]
-
-    mock_classifier = MagicMock()
-    mock_class_cls.return_value = mock_classifier
-    mock_classifier.draft_response = AsyncMock(return_value="Your bracelet is being handcrafted...")
 
     mock_slack = AsyncMock()
     mock_slack_cls.return_value = mock_slack
@@ -172,7 +170,65 @@ def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, mock_class_cls, clie
     response = client.post("/cron/crafting-updates", headers=cron_headers)
     assert response.status_code == 200
     assert response.json()["sent"] == 1
+
+    # Verify Slack was called with a templated (not AI-drafted) body
     mock_slack.send_crafting_update_review.assert_called_once()
+    call_kwargs = mock_slack.send_crafting_update_review.call_args.kwargs
+    assert "handcraft process" in call_kwargs["email_body"]
+    assert call_kwargs["customer_email"] == "jane@example.com"
+
+
+@patch("src.api.app.SlackNotifier")
+@patch("src.api.app.AsyncDatabase")
+def test_cron_crafting_updates_skips_order_without_email(mock_db_cls, mock_slack_cls, client, cron_headers):
+    """Order without customer email should be skipped, not crash."""
+    mock_db = AsyncMock()
+    mock_db_cls.return_value = mock_db
+    mock_db.get_orders_needing_crafting_update.return_value = [
+        {
+            "shopify_order_id": 5002,
+            "total": 3000.0,
+            "created_at": "2026-03-26T10:00:00",
+            "customers": None,  # No customer record
+            "buyer_email": "",
+        }
+    ]
+
+    mock_slack = AsyncMock()
+    mock_slack_cls.return_value = mock_slack
+
+    response = client.post("/cron/crafting-updates", headers=cron_headers)
+    assert response.status_code == 200
+    assert response.json()["sent"] == 0
+    mock_slack.send_crafting_update_review.assert_not_called()
+
+
+@patch("src.api.app.SlackNotifier")
+@patch("src.api.app.AsyncDatabase")
+def test_cron_crafting_updates_no_claude_call(mock_db_cls, mock_slack_cls, client, cron_headers):
+    """Regression test: ensure MessageClassifier.draft_response is NOT called
+    for crafting updates (previously caused confused Slack messages)."""
+    mock_db = AsyncMock()
+    mock_db_cls.return_value = mock_db
+    mock_db.get_orders_needing_crafting_update.return_value = [
+        {
+            "shopify_order_id": 5003,
+            "total": 4500.0,
+            "created_at": "2026-03-26T10:00:00",
+            "buyer_email": "buyer@example.com",
+            "buyer_name": "Buyer Name",
+            "customers": {"name": "Buyer Name", "email": "buyer@example.com"},
+        }
+    ]
+
+    mock_slack = AsyncMock()
+    mock_slack_cls.return_value = mock_slack
+
+    with patch("src.api.app.MessageClassifier") as mock_classifier_cls:
+        response = client.post("/cron/crafting-updates", headers=cron_headers)
+        assert response.status_code == 200
+        # MessageClassifier should NOT be instantiated for crafting updates
+        mock_classifier_cls.assert_not_called()
 
 
 # ── Cron: Abandoned Carts ──

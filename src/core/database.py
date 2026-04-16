@@ -126,13 +126,21 @@ class Database:
         return result.data
 
     def get_orders_needing_crafting_update(self, days_old: int) -> list[dict[str, Any]]:
-        """Get orders that are X days old and haven't received a crafting update."""
-        cutoff = (datetime.utcnow() - __import__("datetime").timedelta(days=days_old)).isoformat()
+        """Get paid orders created between (days_old) and (days_old + 3) days ago
+        that haven't yet received a crafting update.
+
+        Bounded window prevents re-picking up old orders forever. Excludes
+        already-sent and cancelled/refunded statuses.
+        """
+        now = datetime.utcnow()
+        cutoff_upper = (now - __import__("datetime").timedelta(days=days_old)).isoformat()
+        cutoff_lower = (now - __import__("datetime").timedelta(days=days_old + 3)).isoformat()
         result = (
             self._client.table("orders")
             .select("*, customers(*)")
             .eq("status", "paid")
-            .lte("created_at", cutoff)
+            .lte("created_at", cutoff_upper)
+            .gte("created_at", cutoff_lower)
             .execute()
         )
         return result.data

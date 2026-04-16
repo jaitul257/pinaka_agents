@@ -876,21 +876,24 @@ async def cron_check_deliveries():
 
 @app.post("/cron/crafting-updates", dependencies=[Depends(verify_cron_secret)])
 async def cron_crafting_updates():
-    """Check for orders needing crafting update emails (Day 2-3 post-order)."""
+    """Check for orders needing crafting update emails (Day 2-3 post-order).
+
+    Uses a SendGrid template (no Claude drafting needed). Posts to Slack
+    for approval before sending.
+    """
     db = AsyncDatabase()
     slack = SlackNotifier()
-    classifier = MessageClassifier()
     sent = 0
 
     orders = await db.get_orders_needing_crafting_update(settings.crafting_update_delay_days)
 
     for order in orders:
         customer = order.get("customers") or {}
-        if not customer:
+        customer_email = customer.get("email") or order.get("buyer_email", "")
+        if not customer_email:
             continue
 
-        customer_name = customer.get("name") or customer.get("email", "Customer")
-        customer_email = customer.get("email", "")
+        customer_name = customer.get("name") or order.get("buyer_name") or customer_email
         order_created = order.get("created_at", "")
 
         days_since = 0
@@ -901,30 +904,21 @@ async def cron_crafting_updates():
             except (ValueError, TypeError):
                 pass
 
-        # Get first line item name for context
-        product_name = "your order"
-
-        draft = await classifier.draft_response(
-            customer_message="",
-            category="crafting_update",
-            order_context=(
-                f"Order #{order.get('shopify_order_id')}, "
-                f"${float(order.get('total', 0)):,.2f}, "
-                f"placed {days_since} days ago"
-            ),
-            customer_context=(
-                f"Name: {customer_name}, "
-                f"Lifecycle: {customer.get('lifecycle_stage', 'unknown')}"
-            ),
+        # Use templated email body (not AI-drafted)
+        email_body = (
+            f"Good news — we've started crafting your bracelet. "
+            f"Day {days_since} of our 15-business-day handcraft process. "
+            f"Each diamond is being hand-set under 10x magnification. "
+            f"We'll share another update when your piece moves to final polishing."
         )
 
         await slack.send_crafting_update_review(
             order_number=str(order.get("shopify_order_id", "")),
             customer_name=customer_name,
             customer_email=customer_email,
-            product_name=product_name,
+            product_name="your order",
             days_since_order=days_since,
-            email_body=draft,
+            email_body=email_body,
             order_id=order.get("shopify_order_id"),
         )
         sent += 1
