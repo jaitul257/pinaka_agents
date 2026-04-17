@@ -1,10 +1,26 @@
 # TODO — Pinaka Agents
 
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 
 ## Phases 1-8.4: COMPLETE
 
 All core infrastructure + agentic layer + product pipeline shipped and deployed. 243 tests passing. System is live on Railway with 5 autonomous agents, heartbeat awareness, marketing strategy crons, product pipeline dashboard, homepage video hero, and concierge chat using Shopify MCP.
+
+## Phase 9-12: SHIPPED
+
+- **Phase 9 (measurement + creative intel + lifecycle + retention)** — DONE
+- **Phase 10 (customer intelligence: RFM, VOC, unified profile)** — DONE 2026-04-16
+- **Phase 11 (bidirectional Shopify↔Supabase sync)** — DONE 2026-04-16
+- **Phase 11.5 (Meta ad + Shopify blog reverse-sync)** — DONE 2026-04-17 (route fix landed same day)
+- **Phase 12 (agent ownership: tiered approval, KPIs, dashboards, retros, feedback loop)** — DONE 2026-04-17, 448 tests passing
+
+## Phase 12 follow-ups (v2 work that builds on 12)
+
+- [ ] Wire `capture_edit()` into Slack modal submissions — today, edits in Slack aren't captured. Need a view_submission handler that stores `{original, edited}` to approval_feedback. Low volume today makes this nice-to-have, but it's the input that powers 12.5's learning loop.
+- [ ] Inject `founder_style_for(agent, trigger)` into ContextAssembler prompts. Scaffolded but not wired — once 10+ edits accumulate per trigger and the Sunday cron rolls them, agents should auto-use the style guidance.
+- [ ] Promote/demote AUTO actions based on 30d flag_rate. Add a cron that reviews `auto_flag_rate_30d()` and either logs "this should go back to REVIEW" (>10% flag) or "this REVIEW action is ready for AUTO" (<5% edits when captured).
+- [ ] Fix backfilled Shopify products failing Pydantic Product schema at startup (spams logs). Either: make Product schema fields optional for Shopify-sourced rows, or skip ChromaDB embedding for rows without full metadata.
+- [ ] Clean up root directory (`.gitignore` for catalog/stories, freepik-tests, *.mp4 at root, supabase/.temp).
 
 ---
 

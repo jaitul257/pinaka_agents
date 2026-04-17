@@ -1,6 +1,6 @@
 # Retrospective — Pinaka Agents
 
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 
 ## How to Use This File
 - **Read this before starting any new work.** It captures what happened, what worked, what didn't, and what to do differently.
@@ -10,6 +10,36 @@ Last updated: 2026-04-16
 ---
 
 ## Push Log
+
+### 2026-04-17: Phase 12 — Agent Ownership Layer + reverse-sync route fix
+
+**What shipped:**
+- **Route fix (commit 8a0d5ff):** b741a97 built `/cron/reconcile-meta-ads` and `/cron/reconcile-seo-publish` modules + tests but forgot to add `@app.post` handlers in `src/api/app.py`. Both endpoints 404'd despite a successful deploy. Added the two handlers next to the existing reconcile crons. Routes verified live (422 auth error → real route).
+- **Phase 12.1 tiered approval** (`src/agents/approval_tiers.py`): every action classified into AUTO/REVIEW/ESCALATE. 10 mechanical actions (welcome series 1-5, crafting updates, care guides, review request 90d, reorder 180d/365d) now auto-send. Unknown types default to REVIEW (safe side). Crafting-update cron converted from Slack approval to direct send + auto_sent_actions log.
+- **Phase 12.2 per-agent dashboards** (`/dashboard/agents` + `/dashboard/agents/{name}`): one card per agent with KPI + 7d runs + escalations. Detail page has 30-day KPI sparkline, recent audit runs, recent auto-sent actions with "Flag" buttons for founder oversight.
+- **Phase 12.3 agent-owned KPIs** (`src/agents/kpis.py` + `/cron/compute-agent-kpis` daily 4 AM ET, jobId 7495533): marketing=MER, retention=repeat_rate_90d, customer_service=median_resolution_hours, finance=net_margin_pct, order_ops=on_time_ship_rate. trend_7d / trend_30d for WoW and MoM comparisons.
+- **Phase 12.4 weekly retros** (`src/agents/retros.py` + `/cron/weekly-agent-retros` Mon 8 AM ET, jobId 7495534): each agent writes a Claude-authored 2-para self-review from its audit log + KPI trend + auto-sent volume. Combined Slack post with "needs from founder" callouts.
+- **Phase 12.5 approval feedback loop** (`src/agents/feedback_loop.py` + `/cron/roll-founder-style` Sun 11 PM ET, jobId 7495535): stores founder edits in approval_feedback. Once 10+ edits accumulate per (agent, trigger), Claude summarizes editing patterns into a "founder_style" rule that ContextAssembler can inject into future prompts.
+- **Migration** 20260417030000: agent_kpis, agent_retros, approval_feedback, auto_sent_actions.
+- **448 tests passing** (+6 for tier classification, 1 updated for the new crafting path).
+
+**What went well:**
+- **"Route existed in commit message, missing in code" caught with a single curl probe** — checking 4 reconcile cron endpoints in parallel showed `reconcile-products` returning 422 while the two new ones 404'd, immediately pinpointing the bug as route registration (not imports, not deploy, not secrets).
+- **Conservative AUTO set** was the right call: 10 actions that are fully templated (no Claude drafting) or pre-vetted (SendGrid welcome templates). Zero risk of Claude drifting off-script for items that shouldn't need approval.
+- **Trust graduation is measurable:** `auto_flag_rate_30d()` gives a concrete signal for promoting a REVIEW action to AUTO. After 30d of data, any REVIEW action with <5% edit rate is a candidate.
+- **Per-agent dashboards reused existing styles** — no new CSS, just the `.metric`, `.card`, `.tag` primitives. Feature shipped in a single file edit.
+
+**What was painful:**
+- **Forgot route wiring on commit b741a97.** Built modules + tests, the tests passed, the import smoke test passed, but `@app.post` decorators only take effect if the file containing them is imported at route-registration time — and I never added them. Lesson: **wire routes FIRST, handler body second**. A route that imports cleanly but isn't registered fails silently.
+- **Backfilled products still fail Pydantic Product schema on startup** — they have partial metadata (just total_carat, no metal/weight/diamond_type). Caught by try/except so not fatal, but pollutes logs on every deploy. Unresolved.
+- **Big git status at commit time** — 30+ untracked files (catalog/stories, freepik-tests, shopify videos) from prior sessions. Had to `git reset` and manually add only Phase 12 files. `.gitignore` needs tightening.
+
+**Lessons learned:**
+- **Wire routes first, handler body second.** @app.post decorators don't self-announce when missing.
+- **Ownership is the cure for Slack fatigue.** Every agent having a KPI + a dashboard + a retro = founder reviews the agent, not individual actions. The data-driven path to widening AUTO (low flag_rate → promote) means the system gets more autonomous over time without a manual config change.
+- **cron-job.org PUT /jobs occasionally returns an empty line on timeout** then succeeds on retry. Safe to retry idempotently (creates a duplicate registration, but cron runs both which is harmless for idempotent crons).
+
+---
 
 ### 2026-04-16 (night): Phase 10 — Customer Intelligence Layer
 
