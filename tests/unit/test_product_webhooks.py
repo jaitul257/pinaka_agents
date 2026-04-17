@@ -37,12 +37,15 @@ def test_translator_handles_full_payload():
     assert row["sku"] == "DTB-LBG-7-14YKG"  # first variant's SKU wins
     assert row["name"] == sp["title"]
     assert row["shopify_product_id"] == 81112236290
-    assert row["handle"] == "diamond-tennis-bracelet-yellow-gold"
-    assert row["status"] == "active"
+    # handle + status live outside our schema — kept on Shopify side only
+    assert "handle" not in row
+    assert "status" not in row
     assert len(row["images"]) == 2
     assert row["tags"] == ["diamond", "tennis", "yellow-gold", "milestone"]
-    assert row["carats"] == "3CT"
+    assert row["materials"]["total_carat"] == "3CT"
     assert len(row["variant_options"]) == 2
+    # status is surfaced on each variant row so we retain the info
+    assert row["variant_options"][0]["shopify_status"] == "active"
 
 
 def test_translator_handles_missing_sku():
@@ -55,7 +58,8 @@ def test_translator_handles_missing_sku():
 def test_translator_defaults_status_to_draft():
     sp = {"id": 1, "title": "T", "variants": [{"sku": "X"}]}
     row = _shopify_product_to_supabase_row(sp)
-    assert row["status"] == "draft"
+    # Status lives on variant_options[].shopify_status in our schema
+    assert row["variant_options"][0]["shopify_status"] == "draft"
 
 
 def test_translator_handles_empty_images_and_tags():

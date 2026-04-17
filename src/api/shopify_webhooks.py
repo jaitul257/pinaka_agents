@@ -559,22 +559,25 @@ def _shopify_product_to_supabase_row(sp: dict[str, Any]) -> dict[str, Any]:
     images = sp.get("images") or []
     image_urls = [img.get("src", "") for img in images if isinstance(img, dict) and img.get("src")]
 
-    # Parse carats from title (e.g. "Diamond Tennis — 7ct Lab Grown" → "7ct")
+    # Parse carats from title (e.g. "Diamond Tennis — 7ct Lab Grown" → "7ct").
+    # Stored under `materials.total_carat` rather than a top-level column — the
+    # products schema treats materials as a JSONB bag for this kind of metadata.
     import re
     title = sp.get("title", "") or ""
     carat_match = re.search(r"([\d.]+)\s*CT", title, re.IGNORECASE)
     carats = carat_match.group(0) if carat_match else ""
 
+    # Schema: products table does NOT have `handle` or `status` columns.
+    # Translator sticks to the columns that exist. Handle lives on Shopify;
+    # status is implied by presence/absence of shopify_product_id.
     return {
         "sku": sku,
         "name": title,
         "shopify_product_id": sp.get("id"),
-        "handle": sp.get("handle"),
         "category": sp.get("product_type") or "jewelry",
-        "status": sp.get("status") or "draft",
         "images": image_urls,
         "tags": [t.strip() for t in (sp.get("tags") or "").split(",") if t.strip()],
-        "carats": carats,
+        "materials": {"total_carat": carats} if carats else {},
         "variant_options": [
             {
                 "id": v.get("id"),
@@ -583,6 +586,7 @@ def _shopify_product_to_supabase_row(sp: dict[str, Any]) -> dict[str, Any]:
                 "price": v.get("price"),
                 "option1": v.get("option1"),
                 "option2": v.get("option2"),
+                "shopify_status": sp.get("status") or "draft",
             }
             for v in variants
         ],
