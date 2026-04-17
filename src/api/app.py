@@ -1116,12 +1116,16 @@ async def cron_check_deliveries():
 async def cron_crafting_updates():
     """Check for orders needing crafting update emails (Day 2-3 post-order).
 
-    Uses a SendGrid template (no Claude drafting needed). Posts to Slack
-    for approval before sending.
+    AUTO-tier (Phase 12): copy is fully templated, no Claude, and reversible
+    (we can always email a correction). Sends directly, logs to
+    auto_sent_actions for founder review at /dashboard/agents/order_ops.
     """
+    from src.agents.approval_tiers import log_auto_sent
+
     db = AsyncDatabase()
-    slack = SlackNotifier()
+    email_sender = EmailSender()
     sent = 0
+    failed = 0
 
     orders = await db.get_orders_needing_crafting_update(settings.crafting_update_delay_days)
 
@@ -1133,6 +1137,8 @@ async def cron_crafting_updates():
 
         customer_name = customer.get("name") or order.get("buyer_name") or customer_email
         order_created = order.get("created_at", "")
+        order_id = order.get("shopify_order_id")
+        order_number = str(order_id or "")
 
         days_since = 0
         if order_created:
@@ -1142,7 +1148,6 @@ async def cron_crafting_updates():
             except (ValueError, TypeError):
                 pass
 
-        # Use templated email body (not AI-drafted)
         email_body = (
             f"Good news — we've started crafting your bracelet. "
             f"Day {days_since} of our 15-business-day handcraft process. "
@@ -1150,18 +1155,43 @@ async def cron_crafting_updates():
             f"We'll share another update when your piece moves to final polishing."
         )
 
-        await slack.send_crafting_update_review(
-            order_number=str(order.get("shopify_order_id", "")),
-            customer_name=customer_name,
-            customer_email=customer_email,
-            product_name="your order",
-            days_since_order=days_since,
-            email_body=email_body,
-            order_id=order.get("shopify_order_id"),
-        )
+        try:
+            ok = await asyncio.to_thread(
+                email_sender.send_crafting_update,
+                customer_email, customer_name, order_number, email_body,
+            )
+        except Exception:
+            logger.exception("crafting_update send failed for order %s", order_number)
+            failed += 1
+            continue
+
+        if not ok:
+            failed += 1
+            continue
+
+        try:
+            await db.update_order_status(int(order_id), "crafting_update_sent")
+        except Exception:
+            logger.exception("crafting_update: status update failed for %s", order_id)
+
+        try:
+            await log_auto_sent(
+                agent_name="order_ops",
+                action_type="crafting_update_email",
+                entity_type="order",
+                entity_id=order_number,
+                payload={
+                    "email": customer_email,
+                    "days_since_order": days_since,
+                    "body": email_body,
+                },
+            )
+        except Exception:
+            logger.exception("auto_sent log failed for crafting update %s", order_number)
+
         sent += 1
 
-    return {"status": "ok", "module": "crafting_updates", "sent": sent}
+    return {"status": "ok", "module": "crafting_updates", "sent": sent, "failed": failed}
 
 
 @app.post("/cron/abandoned-carts", dependencies=[Depends(verify_cron_secret)])
@@ -1894,6 +1924,54 @@ async def cron_reconcile_meta_ads():
         return {"status": "ok", **result}
     except Exception as e:
         logger.exception("reconcile-meta-ads cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/compute-agent-kpis", dependencies=[Depends(verify_cron_secret)])
+async def cron_compute_agent_kpis():
+    """Compute each agent's north-star KPI and store in agent_kpis.
+
+    Runs daily at 4 AM ET (before the 5 AM customer reconcile so dashboards
+    have fresh numbers by the time founder checks them).
+    """
+    from src.agents.kpis import compute_all
+    try:
+        results = await compute_all()
+        return {"status": "ok", "results": results}
+    except Exception as e:
+        logger.exception("compute-agent-kpis cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/weekly-agent-retros", dependencies=[Depends(verify_cron_secret)])
+async def cron_weekly_agent_retros():
+    """Each agent writes a 2-para self-review of the last week.
+
+    Monday 8 AM ET. Saves to agent_retros and posts a combined summary
+    to Slack. Founder reads 5 retros instead of reviewing 100 actions.
+    """
+    from src.agents.retros import generate_weekly_retros
+    try:
+        results = await generate_weekly_retros()
+        return {"status": "ok", "agents_reviewed": len(results)}
+    except Exception as e:
+        logger.exception("weekly-agent-retros cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/roll-founder-style", dependencies=[Depends(verify_cron_secret)])
+async def cron_roll_founder_style():
+    """Summarize founder edits from approval_feedback into per-agent style guidance.
+
+    Sundays 11 PM ET. For any trigger with 10+ un-incorporated edits, Claude
+    summarizes the editing pattern and appends to that agent's prompt context.
+    """
+    from src.agents.feedback_loop import roll_founder_style
+    try:
+        results = await roll_founder_style()
+        return {"status": "ok", **results}
+    except Exception as e:
+        logger.exception("roll-founder-style cron failed")
         return {"status": "error", "error": str(e)}
 
 

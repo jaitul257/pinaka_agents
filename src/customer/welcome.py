@@ -56,6 +56,17 @@ class WelcomeSeriesEngine:
                 try:
                     await self._db.mark_welcome_step_sent(int(customer_id), step)
                     sent += 1
+                    try:
+                        from src.agents.approval_tiers import log_auto_sent
+                        await log_auto_sent(
+                            agent_name="retention",
+                            action_type=f"lifecycle_welcome_{step}",
+                            entity_type="customer",
+                            entity_id=str(customer_id),
+                            payload={"email": email_addr, "step": step},
+                        )
+                    except Exception:
+                        logger.exception("auto_sent log failed for welcome step %d", step)
                 except Exception:
                     logger.exception("Failed to mark welcome step for %s/%d",
                                      customer_id, step)

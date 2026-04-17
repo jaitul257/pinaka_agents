@@ -144,6 +144,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
         <a href="/dashboard/images" class="nav-link {"active" if active == "images" else ""}">Shopify Images</a>
         <a href="/dashboard/ad-creatives" class="nav-link {"active" if active == "ad-creatives" else ""}">Ad Creatives</a>
         <a href="/dashboard/pipeline" class="nav-link {"active" if active == "pipeline" else ""}">Pipeline</a>
+        <a href="/dashboard/agents" class="nav-link {"active" if active == "agents" else ""}">Agents</a>
         <div class="nav-right">
             <a href="/dashboard/logout" class="nav-link">Logout</a>
         </div>
@@ -2898,3 +2899,329 @@ async def pipeline_publish(
             f"/dashboard/pipeline?msg=Shopify+error:+{error}",
             status_code=303,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 12 — Agent ownership dashboards
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _trend_badge(pct: float | None) -> str:
+    if pct is None:
+        return '<span class="tag" style="color: var(--text-muted)">no data</span>'
+    color = "var(--success)" if pct >= 0 else "var(--error)"
+    sign = "+" if pct >= 0 else ""
+    return f'<span class="tag" style="color: {color}">{sign}{pct:.1f}%</span>'
+
+
+def _agent_card_html(agent_name: str, kpi: dict | None, actions_7d: int, escalated_7d: int) -> str:
+    kpi_block = "<div class='metric-value' style='color: var(--text-muted)'>—</div>"
+    kpi_label = "No KPI yet"
+    trend_html = ""
+    if kpi:
+        kpi_label = kpi.get("kpi_name", "").replace("_", " ").upper()
+        value = kpi.get("value", 0)
+        kpi_block = f"<div class='metric-value'>{value}</div>"
+        trend_html = f"<div style='margin-top:6px'>{_trend_badge(kpi.get('trend_7d'))} <span class='tag' style='color:var(--text-muted)'>7d</span></div>"
+
+    return f"""
+    <a href="/dashboard/agents/{agent_name}" style="text-decoration: none; color: inherit;">
+    <div class="card" style="cursor: pointer;">
+        <div class="card-header">
+            <h2 style="font-size: 22px; text-transform: capitalize;">{agent_name.replace('_', ' ')}</h2>
+            <div class="tag">{actions_7d} runs · {escalated_7d} escalated (7d)</div>
+        </div>
+        <div class="metric-label">{kpi_label}</div>
+        {kpi_block}
+        {trend_html}
+    </div>
+    </a>
+    """
+
+
+@router.get("/agents", response_class=HTMLResponse)
+async def agents_index_page(dash_token: str | None = Cookie(None)):
+    """Overview of all 5 agents — each with its KPI + 7-day activity."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.agents.kpis import AGENT_KPI_MAP, latest_kpi
+    from src.agents.retros import latest_retros
+    from src.agents.approval_tiers import recent_auto_sent
+    from src.agents.audit import AuditLogger
+
+    agent_names = list(AGENT_KPI_MAP.keys())
+    audit = AuditLogger()
+
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    cards_html = ""
+    for name in agent_names:
+        kpi = await latest_kpi(name)
+        # Count last 7d runs
+        runs = await audit.get_recent(agent_name=name, limit=200)
+        recent_runs = [r for r in runs if r.get("created_at", "") >= since]
+        total_runs = len(recent_runs)
+        escalated = sum(1 for r in recent_runs if r.get("escalated"))
+        cards_html += _agent_card_html(name, kpi, total_runs, escalated)
+
+    retros = await latest_retros(limit_per_agent=1)
+    retros_html = ""
+    if retros:
+        items = []
+        for r in retros:
+            kpi_snap = r.get("kpi_snapshot") or {}
+            kpi_str = ""
+            if kpi_snap.get("value") is not None:
+                kpi_str = f" · <span style='font-family:Geist Mono,monospace'>{kpi_snap.get('kpi_name')}={kpi_snap.get('value')}</span>"
+            needs_html = ""
+            if r.get("needs_from_founder"):
+                needs_html = f"<div style='margin-top:10px;padding:10px;background:var(--surface-raised);border-left:3px solid var(--accent);font-size:13px'><b>Needs from you:</b> {r['needs_from_founder']}</div>"
+            items.append(f"""
+            <div class="card" style="margin-bottom: 12px;">
+                <div class="card-header">
+                    <h3 style="text-transform: capitalize;">{r['agent_name'].replace('_', ' ')}{kpi_str}</h3>
+                    <span class="tag">week of {r.get('week_start', '')}</span>
+                </div>
+                <div style="white-space: pre-line; font-size: 14px; line-height: 1.6; color: var(--text-primary);">{r['summary_text']}</div>
+                {needs_html}
+            </div>
+            """)
+        retros_html = "<h2 style='margin: 32px 0 16px'>Last week's retros</h2>" + "".join(items)
+
+    auto_recent = await recent_auto_sent(limit=20)
+    auto_html = ""
+    if auto_recent:
+        rows_html = "".join(
+            f"""<tr>
+                <td style='padding:10px;font-size:13px;color:var(--text-muted)'>{r.get('created_at', '')[:10]}</td>
+                <td style='padding:10px;font-size:13px'><span class='tag'>{r.get('agent_name')}</span></td>
+                <td style='padding:10px;font-size:13px'>{r.get('action_type')}</td>
+                <td style='padding:10px;font-size:13px'>{r.get('entity_type') or ''} {r.get('entity_id') or ''}</td>
+                <td style='padding:10px;text-align:right'>{'<span class="tag" style="color:var(--error)">flagged</span>' if r.get('flagged') else '<span class="tag" style="color:var(--success)">ok</span>'}</td>
+            </tr>"""
+            for r in auto_recent
+        )
+        auto_html = f"""
+        <h2 style='margin: 32px 0 16px'>Recent auto-sent actions</h2>
+        <div class="card" style="padding: 0;">
+            <table style="width:100%;border-collapse:collapse">
+                <thead>
+                    <tr style="background: var(--surface-raised);">
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Date</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Agent</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Action</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Entity</th>
+                        <th style='padding:10px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html}</tbody>
+            </table>
+        </div>
+        """
+
+    body = f"""
+    <h1>Agent ownership</h1>
+    <p style="margin: 6px 0 24px; color: var(--text-muted); font-size: 14px">
+        Each agent owns one north-star KPI and a slice of operations. Click an agent to see its full activity.
+    </p>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;">
+        {cards_html}
+    </div>
+    {retros_html}
+    {auto_html}
+    """
+    return HTMLResponse(_base_html("Agents", body, active="agents"))
+
+
+@router.get("/agents/{agent_name}", response_class=HTMLResponse)
+async def agent_detail_page(agent_name: str, dash_token: str | None = Cookie(None)):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.agents.kpis import AGENT_KPI_MAP, kpi_history, latest_kpi
+    from src.agents.retros import latest_retros
+    from src.agents.approval_tiers import recent_auto_sent
+    from src.agents.audit import AuditLogger
+
+    if agent_name not in AGENT_KPI_MAP:
+        return HTMLResponse(_base_html("Agent not found",
+            f'<div class="alert alert-error">Unknown agent: {agent_name}</div>'
+            '<a class="btn" href="/dashboard/agents">← Back to agents</a>',
+            active="agents"))
+
+    kpi = await latest_kpi(agent_name)
+    history = await kpi_history(agent_name, days=30)
+    audit = AuditLogger()
+    recent_runs = await audit.get_recent(agent_name=agent_name, limit=25)
+    auto_recent = await recent_auto_sent(limit=25, agent_name=agent_name)
+    retros = [r for r in await latest_retros(limit_per_agent=3) if r.get("agent_name") == agent_name]
+
+    # KPI header
+    kpi_header = ""
+    if kpi:
+        trend = kpi.get("trend_7d")
+        trend30 = kpi.get("trend_30d")
+        kpi_header = f"""
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">{kpi.get('kpi_name', '').replace('_', ' ').upper()}</div>
+                <div class="metric-value">{kpi.get('value')}</div>
+                <div style="margin-top:6px">{_trend_badge(trend)} <span class='tag' style='color:var(--text-muted)'>7d</span></div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">30d trend</div>
+                <div class="metric-value" style="font-size:22px">{_trend_badge(trend30)}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Runs (25 most recent)</div>
+                <div class="metric-value">{len(recent_runs)}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Auto-sent actions</div>
+                <div class="metric-value">{len(auto_recent)}</div>
+            </div>
+        </div>
+        """
+    else:
+        kpi_header = '<div class="alert" style="background:var(--surface-raised);color:var(--text-muted)">No KPI computed yet. Run /cron/compute-agent-kpis.</div>'
+
+    # Sparkline
+    spark_html = ""
+    if history:
+        values = [float(h.get("value") or 0) for h in history]
+        mx = max(values) if values else 1
+        mn = min(values) if values else 0
+        rng = mx - mn if mx > mn else 1
+        pts = []
+        for i, v in enumerate(values):
+            x = i * (300 / max(len(values) - 1, 1))
+            y = 60 - ((v - mn) / rng * 50 + 5)
+            pts.append(f"{x:.1f},{y:.1f}")
+        spark_html = f"""
+        <div class="card">
+            <h3>KPI trend (30 days)</h3>
+            <svg width="300" height="70" style="margin-top:12px">
+                <polyline points="{' '.join(pts)}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+            </svg>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+                min {mn:.2f} · max {mx:.2f}
+            </div>
+        </div>
+        """
+
+    # Recent runs
+    runs_html = ""
+    if recent_runs:
+        rows = []
+        for r in recent_runs[:15]:
+            result_tag = f"<span class='tag' style='color:var(--success)'>{r.get('result')}</span>" if r.get('result') == "success" else f"<span class='tag' style='color:var(--error)'>{r.get('result')}</span>"
+            esc = "<span class='tag' style='color:var(--accent)'>escalated</span>" if r.get('escalated') else ""
+            rows.append(f"""
+            <tr>
+                <td style='padding:10px;font-size:12px;color:var(--text-muted)'>{str(r.get('created_at', ''))[:16]}</td>
+                <td style='padding:10px;font-size:13px'>{(r.get('task_summary') or '')[:80]}</td>
+                <td style='padding:10px;text-align:right'>{result_tag} {esc}</td>
+            </tr>
+            """)
+        runs_html = f"""
+        <h2 style='margin: 32px 0 16px'>Recent runs</h2>
+        <div class="card" style="padding: 0;">
+            <table style="width:100%;border-collapse:collapse">
+                <thead>
+                    <tr style="background: var(--surface-raised);">
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>When</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Task</th>
+                        <th style='padding:10px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Result</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </div>
+        """
+
+    # Retros
+    retros_html = ""
+    if retros:
+        items = []
+        for r in retros:
+            needs_html = f"<div style='margin-top:10px;padding:10px;background:var(--surface-raised);border-left:3px solid var(--accent);font-size:13px'><b>Needs from you:</b> {r.get('needs_from_founder')}</div>" if r.get("needs_from_founder") else ""
+            items.append(f"""
+            <div class="card" style="margin-bottom: 12px;">
+                <div class="card-header">
+                    <h3>Week of {r.get('week_start')}</h3>
+                </div>
+                <div style="white-space: pre-line; font-size: 14px; line-height: 1.6; color: var(--text-primary);">{r.get('summary_text')}</div>
+                {needs_html}
+            </div>
+            """)
+        retros_html = "<h2 style='margin: 32px 0 16px'>Retros</h2>" + "".join(items)
+
+    # Auto-sent actions
+    auto_html = ""
+    if auto_recent:
+        rows = []
+        for r in auto_recent[:15]:
+            flagged = r.get("flagged")
+            status = '<span class="tag" style="color:var(--error)">flagged</span>' if flagged else '<span class="tag" style="color:var(--success)">ok</span>'
+            flag_form = ""
+            if not flagged:
+                flag_form = f"""
+                <form method="post" action="/dashboard/agents/{agent_name}/flag/{r['id']}" style="display:inline;margin-left:8px">
+                    <input type="hidden" name="reason" value="Flagged from dashboard">
+                    <button class="btn btn-sm btn-danger" type="submit">Flag</button>
+                </form>
+                """
+            rows.append(f"""
+            <tr>
+                <td style='padding:10px;font-size:12px;color:var(--text-muted)'>{str(r.get('created_at', ''))[:16]}</td>
+                <td style='padding:10px;font-size:13px'>{r.get('action_type')}</td>
+                <td style='padding:10px;font-size:13px'>{r.get('entity_type') or ''} {r.get('entity_id') or ''}</td>
+                <td style='padding:10px;text-align:right'>{status}{flag_form}</td>
+            </tr>
+            """)
+        auto_html = f"""
+        <h2 style='margin: 32px 0 16px'>Auto-sent actions</h2>
+        <div class="card" style="padding: 0;">
+            <table style="width:100%;border-collapse:collapse">
+                <thead>
+                    <tr style="background: var(--surface-raised);">
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>When</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Action</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Entity</th>
+                        <th style='padding:10px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </div>
+        """
+
+    body = f"""
+    <div style="margin-bottom: 8px;">
+        <a href="/dashboard/agents" style="font-size: 13px; color: var(--text-muted); text-decoration: none;">← All agents</a>
+    </div>
+    <h1 style="text-transform: capitalize;">{agent_name.replace('_', ' ')} agent</h1>
+    <p style="color: var(--text-muted); margin: 4px 0 24px; font-size: 14px">
+        Ownership metric: <b>{AGENT_KPI_MAP[agent_name]['kpi_name']}</b>
+    </p>
+    {kpi_header}
+    {spark_html}
+    {retros_html}
+    {runs_html}
+    {auto_html}
+    """
+    return HTMLResponse(_base_html(f"Agent: {agent_name}", body, active="agents"))
+
+
+@router.post("/agents/{agent_name}/flag/{action_id}")
+async def agent_flag_action(
+    agent_name: str, action_id: int,
+    reason: str = Form(""), dash_token: str | None = Cookie(None),
+):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+    from src.agents.approval_tiers import flag_auto_sent
+    await flag_auto_sent(action_id, reason or "flagged from dashboard")
+    return RedirectResponse(f"/dashboard/agents/{agent_name}", status_code=303)

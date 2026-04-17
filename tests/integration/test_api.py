@@ -146,11 +146,12 @@ def test_cron_reconcile_skips_existing(mock_db_cls, mock_shopify_cls, mock_slack
 
 # ── Cron: Crafting Updates ──
 
-@patch("src.api.app.SlackNotifier")
+@patch("src.agents.approval_tiers.log_auto_sent", new_callable=AsyncMock)
+@patch("src.api.app.EmailSender")
 @patch("src.api.app.AsyncDatabase")
-def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, client, cron_headers):
-    """Crafting update cron should send Slack reviews using templated body
-    (no Claude drafting)."""
+def test_cron_crafting_updates(mock_db_cls, mock_email_cls, mock_log, client, cron_headers):
+    """Crafting update cron is now AUTO-tier (Phase 12): sends directly
+    via SendGrid, logs to auto_sent_actions, no Slack approval."""
     mock_db = AsyncMock()
     mock_db_cls.return_value = mock_db
     mock_db.get_orders_needing_crafting_update.return_value = [
@@ -164,18 +165,24 @@ def test_cron_crafting_updates(mock_db_cls, mock_slack_cls, client, cron_headers
         }
     ]
 
-    mock_slack = AsyncMock()
-    mock_slack_cls.return_value = mock_slack
+    mock_email = MagicMock()
+    mock_email.send_crafting_update.return_value = True
+    mock_email_cls.return_value = mock_email
+    mock_log.return_value = 1
 
     response = client.post("/cron/crafting-updates", headers=cron_headers)
     assert response.status_code == 200
     assert response.json()["sent"] == 1
 
-    # Verify Slack was called with a templated (not AI-drafted) body
-    mock_slack.send_crafting_update_review.assert_called_once()
-    call_kwargs = mock_slack.send_crafting_update_review.call_args.kwargs
-    assert "handcraft process" in call_kwargs["email_body"]
-    assert call_kwargs["customer_email"] == "jane@example.com"
+    mock_email.send_crafting_update.assert_called_once()
+    args, kwargs = mock_email.send_crafting_update.call_args
+    # positional: to_email, customer_name, order_number, email_body
+    assert args[0] == "jane@example.com"
+    assert "handcraft process" in args[3]
+
+    mock_log.assert_called_once()
+    assert mock_log.call_args.kwargs["action_type"] == "crafting_update_email"
+    assert mock_log.call_args.kwargs["agent_name"] == "order_ops"
 
 
 @patch("src.api.app.SlackNotifier")
