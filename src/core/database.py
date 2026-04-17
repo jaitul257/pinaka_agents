@@ -891,6 +891,170 @@ class Database:
         )
         return result.data or []
 
+    # ── Customer Anniversaries (Phase 9.2) ──
+
+    def upsert_customer_anniversary(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Insert or update an anniversary row keyed on (customer_id, anniversary_date)."""
+        result = (
+            self._client.table("customer_anniversaries")
+            .upsert(row, on_conflict="customer_id,anniversary_date")
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def get_anniversary_candidates(self, trigger_year: int = 1) -> list[dict[str, Any]]:
+        """Anniversaries coming up ~`trigger_year` years from now (within 7 days window).
+
+        Used by the lifecycle cron to send "mark the moment" emails before
+        the actual date. Filters out ones already reminded for this year.
+        """
+        from datetime import timedelta as _td
+        today = date.today()
+        # Window: dates whose month+day match dates 7-30 days from now
+        # We compute month/day of (today + offset) and match anniversaries.
+        # Simpler approach: pull all future anniversaries and filter in Python.
+        result = (
+            self._client.table("customer_anniversaries")
+            .select("*, customers(id,email,name)")
+            .execute()
+        )
+        rows = result.data or []
+        hits: list[dict[str, Any]] = []
+        for row in rows:
+            anniv = row.get("anniversary_date")
+            if not anniv:
+                continue
+            try:
+                m, d = int(anniv[5:7]), int(anniv[8:10])
+            except (ValueError, IndexError):
+                continue
+            # Compute the next occurrence of this month/day
+            try:
+                this_year_date = today.replace(month=m, day=d)
+            except ValueError:
+                continue  # invalid date (e.g. Feb 30)
+            if this_year_date < today:
+                this_year_date = this_year_date.replace(year=today.year + 1)
+            days_out = (this_year_date - today).days
+            if 7 <= days_out <= 30:
+                year_key = f"year_{this_year_date.year}"
+                if not (row.get("reminded") or {}).get(year_key):
+                    row["_days_out"] = days_out
+                    row["_year_key"] = year_key
+                    hits.append(row)
+        return hits
+
+    def mark_anniversary_reminded(self, anniversary_id: int, year_key: str) -> None:
+        """Set `reminded.{year_key} = true` so we don't resend."""
+        existing = (
+            self._client.table("customer_anniversaries")
+            .select("reminded")
+            .eq("id", anniversary_id)
+            .execute()
+        )
+        current = (existing.data[0].get("reminded") or {}) if existing.data else {}
+        current[year_key] = True
+        self._client.table("customer_anniversaries").update({"reminded": current}).eq("id", anniversary_id).execute()
+
+    # ── Customer Lifecycle Dedup (Phase 9.2) ──
+
+    def mark_lifecycle_email_sent(self, customer_id: int, trigger: str) -> None:
+        """Set customers.lifecycle_emails_sent[trigger] = now()."""
+        from datetime import datetime as _dt
+        existing = (
+            self._client.table("customers")
+            .select("lifecycle_emails_sent")
+            .eq("id", customer_id)
+            .execute()
+        )
+        current = (existing.data[0].get("lifecycle_emails_sent") or {}) if existing.data else {}
+        current[trigger] = _dt.utcnow().isoformat()
+        self._client.table("customers").update({"lifecycle_emails_sent": current}).eq("id", customer_id).execute()
+
+    def get_lifecycle_candidates_from_orders(
+        self, days_since_purchase: int, window_days: int = 2
+    ) -> list[dict[str, Any]]:
+        """Orders whose created_at is between (days_since_purchase - window_days)
+        and `days_since_purchase` days ago, with buyer info joined.
+
+        Returns one row per order so the caller can dedupe per customer using
+        the lifecycle_emails_sent JSONB.
+        """
+        from datetime import timedelta as _td
+        now = datetime.utcnow()
+        upper = (now - _td(days=days_since_purchase)).isoformat()
+        lower = (now - _td(days=days_since_purchase + window_days)).isoformat()
+        result = (
+            self._client.table("orders")
+            .select("*, customers(*)")
+            .gte("created_at", lower)
+            .lte("created_at", upper)
+            .eq("status", "paid")
+            .execute()
+        )
+        return result.data or []
+
+    # ── Welcome Series (Phase 9.2) ──
+
+    def start_welcome_series(self, customer_id: int) -> None:
+        """Mark a customer as just-entered the welcome cohort. Idempotent —
+        no-op if welcome_started_at already set."""
+        from datetime import datetime as _dt
+        existing = (
+            self._client.table("customers")
+            .select("welcome_started_at")
+            .eq("id", customer_id)
+            .execute()
+        )
+        if existing.data and existing.data[0].get("welcome_started_at"):
+            return
+        self._client.table("customers").update({
+            "welcome_started_at": _dt.utcnow().isoformat(),
+            "welcome_step": 0,
+        }).eq("id", customer_id).execute()
+
+    def get_welcome_candidates(self) -> list[dict[str, Any]]:
+        """Customers in the welcome cohort who are due for a next-step email.
+
+        Returns customer rows with `_next_step` (int 1-5) attached, based on
+        days since welcome_started_at. Filters out purchasers entirely.
+        """
+        from datetime import timedelta as _td
+        # Welcome steps to fire at day 0, 3, 7, 12, 18
+        schedule = [(1, 0), (2, 3), (3, 7), (4, 12), (5, 18)]
+
+        result = (
+            self._client.table("customers")
+            .select("*")
+            .neq("welcome_started_at", None)
+            .eq("order_count", 0)
+            .execute()
+        )
+        rows = result.data or []
+        now = datetime.utcnow()
+        hits: list[dict[str, Any]] = []
+        for r in rows:
+            if r.get("order_count", 0) > 0:
+                continue  # defence-in-depth — already handled by eq("order_count", 0)
+            started = r.get("welcome_started_at")
+            if not started:
+                continue
+            try:
+                started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            days_in = (now.replace(tzinfo=started_dt.tzinfo) - started_dt).days
+            last_step = int(r.get("welcome_step") or 0)
+            for step, day in schedule:
+                if days_in >= day and step > last_step:
+                    r["_next_step"] = step
+                    hits.append(r)
+                    break
+        return hits
+
+    def mark_welcome_step_sent(self, customer_id: int, step: int) -> None:
+        self._client.table("customers").update({"welcome_step": step}).eq("id", customer_id).execute()
+
     # ── Ad Creative Metrics (Phase 9.1) ──
 
     def upsert_creative_metrics(self, row: dict[str, Any]) -> dict[str, Any]:

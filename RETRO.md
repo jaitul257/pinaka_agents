@@ -11,6 +11,40 @@ Last updated: 2026-04-16
 
 ## Push Log
 
+### 2026-04-16 (late): Phase 9.2 — Lifecycle Orchestration
+
+**What shipped:**
+- **Post-purchase lifecycle orchestrator** (`src/customer/lifecycle.py`): 4 triggers — `care_guide_day10`, `referral_day60`, `custom_inquiry_day180`, `anniversary_year1`. Claude drafts each; Slack approval; SendGrid send on approve; `customers.lifecycle_emails_sent` JSONB dedup. $250 referral credit baked in.
+- **Anniversary capture**: `customer_anniversaries` table + thankyou-survey Checkout UI Extension asks for date when `purchase_reason ∈ {anniversary, engagement, milestone}` + `/api/attribution/submit` validates + writes. Year-out trigger drives personal "I remembered" email.
+- **Welcome educational series** (`src/customer/welcome.py`): 5-email arc (day 0, 3, 7, 12, 18) for new customers who accept marketing and haven't purchased. Entry on `customers/create` webhook. Static SendGrid templates, no Slack approval (pre-vetted educational copy).
+- **6 SendGrid dynamic templates created via v3 API** in one shot (`scripts/create_sendgrid_lifecycle_templates.py`): `pinaka_lifecycle` (shared, takes `{{subject}}` + `{{email_body}}`) + `pinaka_welcome_1..5`. All 6 template IDs auto-set on Railway via `railway variables --set`.
+- **2 new cron-job.org entries** (`/cron/lifecycle-daily` 10 AM ET jobId 7494947, `/cron/welcome-daily` 11 AM ET jobId 7494948).
+- **Slack approval flow** for lifecycle: `approve_lifecycle` / `skip_lifecycle` action handlers. Tombstone pattern matches existing reorder reminder UX.
+- **Migration applied** (`20260416220000_lifecycle_anniversary.sql`): customer_anniversaries table + customers.lifecycle_emails_sent JSONB + welcome_started_at/welcome_step + post_purchase_attribution.anniversary_date/relationship columns.
+- **21 new tests** (329 → 350 passing). Extension redeployed (v9 `pinaka-ai-agents-9`).
+
+**What went well:**
+- **Automated SendGrid template creation saved a 30-min admin slog.** Single script creates 6 dynamic templates + sets 6 Railway env vars. Would have been 6 manual copy-pastes of HTML into SendGrid's UI. User explicitly called this out — automation over manual config.
+- **Welcome series content drafted inline** as static HTML (no Claude at send time) means zero ongoing Claude cost for what's educational content anyway. Saved ~$0.10/welcome/customer.
+- **Re-using existing reorder reminder patterns** for lifecycle Slack approval meant near-zero new UI code. Tombstone flow, block_id extraction, dedup table — all copied cleanly.
+- **JSONB `lifecycle_emails_sent` dedup** kept the schema flat. No need for a separate lifecycle_sent_log table.
+- **Tests caught a `settings` import scoping issue** in welcome.py (imported inside function, not at module level) before it went to prod — `patch("src.customer.welcome.settings")` failed because attr didn't exist. Promoted import, tests passed.
+
+**What was painful:**
+- **Scope discipline:** original roadmap had browse-abandonment with JS pixel + cart-abandon "call Jaitul" upgrade. Cut both. Browse needs real PDP tracking infra. Cart-abandon already works. At 1-2 orders/week, shipping the 3 things that matter > shipping 5 with half-broken ones.
+- **Slack action handler for `approve_lifecycle`** had to reach into `db._sync.mark_lifecycle_email_sent` via `asyncio.to_thread` because AsyncDatabase's `__getattr__` wrapping broke on methods that call `_client.table(...).update(...).execute()` in nested SQL calls. Went underneath to the sync layer — ugly but works. Worth a proper fix in a future sweep.
+- **Extension build quirk:** trying to pass `--flavor=preact` to `shopify app generate extension --template=checkout_ui` rejects with "Expected flavor one of vanilla-js|react|typescript|typescript-react|wasm|rust" — but preact IS the only valid checkout_ui flavor. Documented in Phase 9.1 RETRO; hit it again in 9.2. Solution: omit `--flavor`.
+- **Setting `SENDGRID_LIFECYCLE_TEMPLATE_ID` via `railway variables --set`** triggers a Railway redeploy per set call (6 sets → 6 redeploys queued). Annoying but not broken — Railway coalesces eventually. If we need to set many vars atomically, use a single `railway variables --set A=x --set B=y ...` form.
+
+**Lessons learned:**
+- **SendGrid API > SendGrid admin UI for template management.** Once you have 3+ templates, the API path is faster *and* version-controlled (HTML lives in the repo). Store `html_content` in the creation script, not in SendGrid's editor. Make templates regenerable.
+- **JSONB for per-trigger dedup > separate sent_log table.** A JSON map on the customer row is self-contained, easy to read, and doesn't multiply JOINs. Fine when the trigger set is small (<10).
+- **Welcome series at 1-2 orders/week is a slow compounding play.** You won't see results for weeks. But the "educational, not promotional" approach (Mejuri template) produces zero unsubs and measurable open-rate lift at high AOV. Plant the tree now.
+- **Auto-send for pre-vetted content, Slack-approve for AI-drafted content.** Welcome templates = auto. Lifecycle Claude drafts = approve. Don't flip these. One makes noise bearable, the other prevents embarrassment.
+- **"Skip" = "mark sent" at the dedup layer.** When founder clicks Skip on a lifecycle prompt, we still mark it sent — otherwise it reappears tomorrow. Skipping is a decision, not a defer.
+
+---
+
 ### 2026-04-16 (evening): Phase 9.1 — Creative Intelligence
 
 **What shipped:**

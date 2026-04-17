@@ -36,10 +36,19 @@ function Survey() {
   const [channel, setChannel] = useState('');
   const [channelDetail, setChannelDetail] = useState('');
   const [reason, setReason] = useState('');
+  const [anniversaryDate, setAnniversaryDate] = useState('');
   const [status, setStatus] = useState(alreadySubmitted ? 'done' : 'idle');
   // status: 'idle' | 'sending' | 'done' | 'error'
 
   const needsDetail = channel === 'other' || channel === 'press' || channel === 'friend';
+  const askForDate = reason === 'anniversary' || reason === 'engagement' || reason === 'milestone';
+
+  function defaultRelationshipFor(r) {
+    if (r === 'anniversary') return 'wedding_anniversary';
+    if (r === 'engagement') return 'engagement';
+    if (r === 'milestone') return 'milestone';
+    return null;
+  }
 
   async function submit() {
     if (!channel || !orderId) return;
@@ -54,6 +63,8 @@ function Survey() {
           channel_primary: channel,
           channel_detail: channelDetail.trim() || null,
           purchase_reason: reason || null,
+          anniversary_date: askForDate && anniversaryDate ? anniversaryDate : null,
+          relationship: askForDate ? defaultRelationshipFor(reason) : null,
         }),
       });
       if (resp.ok) {
@@ -131,6 +142,18 @@ function Survey() {
         <s-choice value="milestone">A milestone</s-choice>
         <s-choice value="other">Other</s-choice>
       </s-choice-list>
+
+      {askForDate && (
+        <s-stack direction="vertical" gap="tight">
+          <s-text-field
+            label="Special date? (so we can mark it with you next year)"
+            type="date"
+            value={anniversaryDate}
+            onChange={(event) => setAnniversaryDate(event.target.value)}
+          />
+          <s-text variant="subdued">Optional — only used for a personal anniversary note, never to spam you.</s-text>
+        </s-stack>
+      )}
 
       <s-button
         variant="primary"

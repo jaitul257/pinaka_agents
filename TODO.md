@@ -169,6 +169,19 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] **Evaluate iAugment virtual try-on app** — https://apps.shopify.com/iaugment-virtual-try-on (free tier, 100 try-ons, bracelet support). AI-based try-on was abandoned — not realistic enough.
 - [ ] **Product photography** — studio shots on cream linen with directional light
 
+### Phase 9.2 — Lifecycle Orchestration — DONE (2026-04-16)
+- [x] `customer_anniversaries` table + `customers.lifecycle_emails_sent` JSONB + `customers.welcome_started_at/welcome_step`
+- [x] `post_purchase_attribution.anniversary_date/relationship` columns
+- [x] Thank-you survey extension: optional "special date" field when purchase_reason is anniversary/engagement/milestone (v9 deployed)
+- [x] `/api/attribution/submit`: accepts + validates anniversary + writes to customer_anniversaries
+- [x] Post-purchase lifecycle orchestrator (4 triggers: care_guide_day10, referral_day60, custom_inquiry_day180, anniversary_year1)
+- [x] `/cron/lifecycle-daily` (10 AM ET, jobId 7494947) + Slack approval flow (approve/skip handlers)
+- [x] Welcome educational series (5 emails, day 0/3/7/12/18) + `/cron/welcome-daily` (11 AM ET, jobId 7494948)
+- [x] Welcome entry on `customers/create` webhook (accepts_marketing=true + no purchases)
+- [x] 6 SendGrid dynamic templates created via v3 API (`pinaka_lifecycle` + `pinaka_welcome_1..5`) — all 6 IDs set on Railway
+- [x] 21 new tests (329 → 350 passing)
+- **Cut from original:** browse-abandonment (needs JS tracker infra), cart-abandon enhancement (already functional).
+
 ### Phase 9.1 — Creative Intelligence — DONE (2026-04-16)
 - [x] `ad_creative_metrics` table + indexes
 - [x] Meta Insights per-ad daily pull (`MetaAdsClient.get_creative_insights`)

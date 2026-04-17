@@ -568,6 +568,29 @@ async def submit_attribution(request: Request):
     if reason and reason not in ALLOWED_PURCHASE_REASONS:
         reason = "other"
 
+    # Optional anniversary capture (Phase 9.2). Only accepted when reason is
+    # anniversary/engagement/milestone. Date must be ISO YYYY-MM-DD and within
+    # a sane range (no 1930s, no far-future).
+    anniversary_date: str | None = None
+    relationship: str | None = None
+    raw_date = (body.get("anniversary_date") or "").strip()
+    if raw_date and reason in {"anniversary", "engagement", "milestone"}:
+        try:
+            parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            if date(1970, 1, 1) <= parsed <= date.today().replace(year=date.today().year + 5):
+                anniversary_date = parsed.isoformat()
+                raw_rel = (body.get("relationship") or "").strip().lower()
+                if raw_rel in {"wedding_anniversary", "engagement", "birthday", "milestone", "other"}:
+                    relationship = raw_rel
+                elif reason == "anniversary":
+                    relationship = "wedding_anniversary"
+                elif reason == "engagement":
+                    relationship = "engagement"
+                else:
+                    relationship = "milestone"
+        except ValueError:
+            pass  # Invalid date — silently drop the field
+
     db = AsyncDatabase()
 
     # Validate the order exists (cheap spam filter — fake IDs won't match)
@@ -587,6 +610,8 @@ async def submit_attribution(request: Request):
         "channel_detail": (body.get("channel_detail") or "").strip()[:500] or None,
         "purchase_reason": reason,
         "purchase_reason_detail": (body.get("purchase_reason_detail") or "").strip()[:500] or None,
+        "anniversary_date": anniversary_date,
+        "relationship": relationship,
         "submitted_via": "thankyou_page",
         "ip_address": request.client.host if request.client else None,
         "user_agent": request.headers.get("user-agent", "")[:500] or None,
@@ -602,20 +627,40 @@ async def submit_attribution(request: Request):
         logger.exception("Failed to insert attribution for order %s", shopify_order_id)
         raise HTTPException(status_code=500, detail="Could not record response")
 
+    # If the buyer gave us an anniversary date, store it on customer_anniversaries
+    # so the yearly reminder cron can fire. Non-fatal on failure.
+    if anniversary_date and order.get("customer_id"):
+        try:
+            await db.upsert_customer_anniversary({
+                "customer_id": order["customer_id"],
+                "customer_email": row["customer_email"],
+                "anniversary_date": anniversary_date,
+                "relationship": relationship,
+                "source_order_id": order.get("id"),
+            })
+        except Exception:
+            logger.exception("Failed to upsert anniversary for order %s (non-fatal)", shopify_order_id)
+
     try:
         from src.agents.observations import observe
+        summary = (
+            f"Buyer on order #{shopify_order_id} said heard via {channel_primary}"
+            + (f" ({row['channel_detail']})" if row["channel_detail"] else "")
+            + (f" — {relationship} on {anniversary_date}" if anniversary_date else "")
+        )
         await observe(
             source="survey:post_purchase",
             category="marketing",
             severity="info",
-            summary=f"Buyer on order #{shopify_order_id} said heard via {channel_primary}"
-                    + (f" ({row['channel_detail']})" if row["channel_detail"] else ""),
+            summary=summary,
             entity_type="order",
             entity_id=shopify_order_id,
             data={
                 "channel_primary": channel_primary,
                 "channel_detail": row["channel_detail"],
                 "purchase_reason": reason,
+                "anniversary_date": anniversary_date,
+                "relationship": relationship,
             },
         )
     except Exception:
@@ -1577,6 +1622,78 @@ async def cron_competitor_brief():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/lifecycle-daily", dependencies=[Depends(verify_cron_secret)])
+async def cron_lifecycle_daily():
+    """Post-purchase lifecycle orchestrator — runs daily 10 AM ET.
+
+    Finds candidates for care_guide_day10, referral_day60, custom_inquiry_day180,
+    and anniversary_year1 triggers. Claude drafts each. Posts to Slack for
+    founder approval; Slack handler sends on approve. Dedupes per-customer +
+    per-trigger via customers.lifecycle_emails_sent.
+    """
+    from src.customer.lifecycle import LifecycleOrchestrator
+
+    try:
+        orch = LifecycleOrchestrator()
+        candidates = await orch.find_all_candidates()
+        slack = SlackNotifier()
+        posted = 0
+        for cand in candidates[:20]:  # cap per run — avoid Slack spam if DB has a backlog
+            drafted = await orch.draft(cand)
+            context = ""
+            if cand.anniversary_date:
+                context = f"{cand.relationship} on {cand.anniversary_date}"
+            elif cand.days_since_purchase is not None:
+                context = f"{cand.days_since_purchase}d since #{cand.last_order_number}"
+            try:
+                await slack.send_lifecycle_email_review(
+                    customer_name=cand.customer_name,
+                    customer_email=cand.customer_email,
+                    customer_id=cand.customer_id,
+                    trigger=cand.trigger,
+                    subject=drafted.subject,
+                    email_body=drafted.body,
+                    context_note=context,
+                    anniversary_id=cand.anniversary_id,
+                    anniversary_year_key=cand.anniversary_year_key,
+                )
+                posted += 1
+            except Exception:
+                logger.exception("Failed to post lifecycle review for %s / %s",
+                                 cand.customer_email, cand.trigger)
+        return {
+            "status": "ok",
+            "candidates_found": len(candidates),
+            "slack_posts": posted,
+            "by_trigger": {
+                t: sum(1 for c in candidates if c.trigger == t)
+                for t in {c.trigger for c in candidates}
+            },
+        }
+    except Exception as e:
+        logger.exception("Lifecycle cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/welcome-daily", dependencies=[Depends(verify_cron_secret)])
+async def cron_welcome_daily():
+    """Welcome educational series — runs daily 11 AM ET.
+
+    For each customer in the welcome cohort (welcome_started_at set, 0 orders),
+    sends the next due step based on days elapsed. No Slack approval — these
+    are pre-vetted static templates. 5 emails over 18 days: day 0, 3, 7, 12, 18.
+    """
+    from src.customer.welcome import WelcomeSeriesEngine
+
+    try:
+        engine = WelcomeSeriesEngine()
+        result = await engine.send_due()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("Welcome daily cron failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/ugc-brief", dependencies=[Depends(verify_cron_secret)])
 async def cron_ugc_brief():
     """Weekly UGC filming brief — runs Sunday 6 PM ET.
@@ -2232,6 +2349,94 @@ async def webhook_slack(request: Request):
     elif action_id == "skip_reorder":
         tombstone = SlackNotifier.tombstone_blocks(
             "Reorder Skipped", f"Customer #{value}", timestamp,
+        )
+        await slack.update_message(channel, message_ts, tombstone)
+
+    elif action_id == "approve_lifecycle":
+        try:
+            data = json.loads(value)
+        except Exception:
+            data = {}
+        customer_id = data.get("customer_id")
+        customer_email = data.get("customer_email", "")
+        customer_name = data.get("customer_name", "Customer")
+        trigger = data.get("trigger", "")
+        subject = data.get("subject", "From Pinaka")
+        anniversary_id = data.get("anniversary_id")
+        anniversary_year_key = data.get("anniversary_year_key")
+
+        # Extract the body from the Slack message blocks (same pattern as reorder)
+        body_text = ""
+        for block in payload.get("message", {}).get("blocks", []):
+            if block.get("block_id") == "lifecycle_draft":
+                raw = block.get("text", {}).get("text", "")
+                # Strip leading "*Draft:*\n" prefix the reviewer block adds
+                body_text = raw.replace("*Draft:*\n", "", 1).strip()
+                break
+
+        ok = False
+        if customer_email and body_text:
+            ok = email.send_lifecycle_email(
+                to_email=customer_email,
+                customer_name=customer_name,
+                subject=subject,
+                email_body=body_text,
+            )
+
+        if ok and customer_id and trigger:
+            try:
+                await asyncio.to_thread(
+                    db._sync.mark_lifecycle_email_sent, int(customer_id), trigger,
+                )
+            except Exception:
+                logger.exception("Failed to mark lifecycle sent for %s/%s", customer_id, trigger)
+
+        # Mark anniversary reminded for this year even on failure — retry logic can handle
+        if anniversary_id and anniversary_year_key:
+            try:
+                await asyncio.to_thread(
+                    db._sync.mark_anniversary_reminded,
+                    int(anniversary_id), anniversary_year_key,
+                )
+            except Exception:
+                logger.exception("Failed to mark anniversary reminded %s/%s",
+                                 anniversary_id, anniversary_year_key)
+
+        label = "Lifecycle Sent" if ok else "Lifecycle Send FAILED"
+        tombstone = SlackNotifier.tombstone_blocks(
+            label, f"{customer_name} ({customer_email}) — {trigger}", timestamp,
+        )
+        await slack.update_message(channel, message_ts, tombstone)
+
+    elif action_id == "skip_lifecycle":
+        try:
+            data = json.loads(value)
+        except Exception:
+            data = {}
+        customer_id = data.get("customer_id")
+        trigger = data.get("trigger", "")
+        anniversary_id = data.get("anniversary_id")
+        anniversary_year_key = data.get("anniversary_year_key")
+
+        # Skip = mark sent so we don't re-ask (user actively chose NOT to send)
+        if customer_id and trigger:
+            try:
+                await asyncio.to_thread(
+                    db._sync.mark_lifecycle_email_sent, int(customer_id), trigger,
+                )
+            except Exception:
+                pass
+        if anniversary_id and anniversary_year_key:
+            try:
+                await asyncio.to_thread(
+                    db._sync.mark_anniversary_reminded,
+                    int(anniversary_id), anniversary_year_key,
+                )
+            except Exception:
+                pass
+
+        tombstone = SlackNotifier.tombstone_blocks(
+            "Lifecycle Skipped", f"Customer #{customer_id} — {trigger}", timestamp,
         )
         await slack.update_message(channel, message_ts, tombstone)
 

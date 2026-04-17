@@ -553,13 +553,27 @@ async def _process_customer(customer_data: dict[str, Any]) -> None:
     email = customer_data.get("email", "")
     name = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
 
-    await _get_async_db().upsert_customer({
+    db = _get_async_db()
+    customer_row = await db.upsert_customer({
         "shopify_customer_id": shopify_customer_id,
         "email": email,
         "name": name or email,
         "phone": customer_data.get("phone", ""),
         "accepts_marketing": customer_data.get("accepts_marketing", False),
     })
+
+    # Welcome series cohort entry — only for non-purchasers who accepted marketing.
+    # Idempotent: start_welcome_series no-ops if welcome_started_at is already set.
+    if (
+        customer_row
+        and customer_row.get("id")
+        and customer_data.get("accepts_marketing")
+        and (customer_data.get("orders_count") or 0) == 0
+    ):
+        try:
+            await db.start_welcome_series(customer_row["id"])
+        except Exception:
+            logger.exception("Failed to start welcome series for %s (non-fatal)", email)
 
     await event_bus.emit("customer.created", {"customer_data": customer_data})
     logger.info("Customer %s upserted: %s", shopify_customer_id, name or email)

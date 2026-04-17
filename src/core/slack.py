@@ -366,6 +366,87 @@ class SlackNotifier:
             blocks, text=f"Chargeback evidence ready for Order #{order_number}"
         )
 
+    async def send_lifecycle_email_review(
+        self,
+        customer_name: str,
+        customer_email: str,
+        customer_id: int,
+        trigger: str,
+        subject: str,
+        email_body: str,
+        context_note: str = "",
+        anniversary_id: int | None = None,
+        anniversary_year_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Post a lifecycle email draft for founder approval."""
+        icon = {
+            "care_guide_day10": ":sparkles:",
+            "referral_day60": ":gift:",
+            "custom_inquiry_day180": ":pencil2:",
+            "anniversary_year1": ":heart:",
+        }.get(trigger, ":mailbox:")
+        trigger_label = trigger.replace("_", " ").replace("day", "d ").replace("year", "y ").title()
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"{icon} LIFECYCLE — {trigger_label}"},
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Customer:* {customer_name}"},
+                    {"type": "mrkdwn", "text": f"*Email:* {customer_email}"},
+                    {"type": "mrkdwn", "text": f"*Trigger:* `{trigger}`"},
+                    {"type": "mrkdwn", "text": f"*Context:* {context_note or '—'}"},
+                ],
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Subject:* {subject}"},
+            },
+            {
+                "type": "section",
+                "block_id": "lifecycle_draft",
+                "text": {"type": "mrkdwn", "text": f"*Draft:*\n{email_body}"},
+            },
+            {"type": "divider"},
+            {
+                "type": "actions",
+                "block_id": f"lifecycle_review_{customer_id}_{trigger}",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Approve & Send"},
+                        "style": "primary",
+                        "action_id": "approve_lifecycle",
+                        "value": json.dumps({
+                            "customer_id": customer_id,
+                            "customer_email": customer_email,
+                            "customer_name": customer_name,
+                            "trigger": trigger,
+                            "subject": subject,
+                            "anniversary_id": anniversary_id,
+                            "anniversary_year_key": anniversary_year_key,
+                        }),
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Skip"},
+                        "action_id": "skip_lifecycle",
+                        "value": json.dumps({
+                            "customer_id": customer_id,
+                            "trigger": trigger,
+                            "anniversary_id": anniversary_id,
+                            "anniversary_year_key": anniversary_year_key,
+                        }),
+                    },
+                ],
+            },
+        ]
+        return await self.send_blocks(blocks, text=f"Lifecycle ({trigger}) for {customer_name}")
+
     async def send_reorder_reminder_review(
         self,
         customer_name: str,

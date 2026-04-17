@@ -215,3 +215,58 @@ class EmailSender:
             },
             to_name=customer_name,
         )
+
+    def send_lifecycle_email(
+        self,
+        to_email: str,
+        customer_name: str,
+        subject: str,
+        email_body: str,
+    ) -> bool:
+        """Send a post-purchase lifecycle email (care/referral/custom/anniversary).
+
+        Uses a generic SendGrid template with {{subject}} + {{email_body}} vars,
+        letting us reuse one template across all 4 lifecycle triggers.
+        """
+        return self.send(
+            to_email=to_email,
+            template_id=settings.sendgrid_lifecycle_template_id,
+            template_data={
+                "customer_name": customer_name,
+                "subject": subject,
+                "email_body": email_body,
+                "founder_name": settings.founder_name,
+            },
+            to_name=customer_name,
+        )
+
+    def send_welcome_email(
+        self,
+        to_email: str,
+        customer_name: str,
+        step: int,
+    ) -> bool:
+        """Send a welcome series email (step 1-5).
+
+        Uses five separate SendGrid templates (one per step) with static
+        educational content. No Claude in the loop — pre-vetted copy.
+        """
+        template_id = {
+            1: settings.sendgrid_welcome_1_template_id,
+            2: settings.sendgrid_welcome_2_template_id,
+            3: settings.sendgrid_welcome_3_template_id,
+            4: settings.sendgrid_welcome_4_template_id,
+            5: settings.sendgrid_welcome_5_template_id,
+        }.get(step, "")
+        if not template_id:
+            logger.warning("No SendGrid template configured for welcome step %d", step)
+            return False
+        return self.send(
+            to_email=to_email,
+            template_id=template_id,
+            template_data={
+                "customer_name": customer_name,
+                "founder_name": settings.founder_name,
+            },
+            to_name=customer_name,
+        )

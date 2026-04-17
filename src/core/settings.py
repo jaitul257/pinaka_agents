@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     sendgrid_delivery_confirmation_template_id: str = ""
     sendgrid_refund_confirmation_template_id: str = ""
     sendgrid_reorder_reminder_template_id: str = ""
+    # Phase 9.2: post-purchase lifecycle + welcome series
+    sendgrid_lifecycle_template_id: str = ""
+    sendgrid_welcome_1_template_id: str = ""
+    sendgrid_welcome_2_template_id: str = ""
+    sendgrid_welcome_3_template_id: str = ""
+    sendgrid_welcome_4_template_id: str = ""
+    sendgrid_welcome_5_template_id: str = ""
 
     # ── Anthropic ──
     anthropic_api_key: str = ""
