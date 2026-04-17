@@ -1927,6 +1927,24 @@ async def cron_reconcile_meta_ads():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/compile-entity-memory", dependencies=[Depends(verify_cron_secret)])
+async def cron_compile_entity_memory():
+    """Nightly — compile markdown wikis for active customers + products + current/next month.
+
+    Runs 3:30 AM ET (before the 4 AM KPI cron so retros / dashboards can
+    use fresh notes). Skips entities with a note <24h old unless raw data
+    has moved past source_through. Bounded by our current active volume —
+    a full run is O(customers + products), not O(all history).
+    """
+    from src.agents.memory import compile_all_active
+    try:
+        results = await compile_all_active()
+        return {"status": "ok", **results}
+    except Exception as e:
+        logger.exception("compile-entity-memory cron failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/compute-agent-kpis", dependencies=[Depends(verify_cron_secret)])
 async def cron_compute_agent_kpis():
     """Compute each agent's north-star KPI and store in agent_kpis.

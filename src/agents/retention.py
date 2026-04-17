@@ -146,6 +146,30 @@ class RetentionAgent(BaseAgent):
             risk_tier=1,
         )
 
+        self.tools.register(
+            name="get_entity_memory",
+            description=(
+                "Read-only. Fetch the compiled wiki note for a customer "
+                "(entity_type='customer', entity_id=customer.id as string) or "
+                "a product SKU (entity_type='product', entity_id=sku). Returns "
+                "markdown content + compiled_at + sample_count, or null. "
+                "Use for: deciding WHICH reorder pitch a repeat customer would "
+                "open, OR what complementary SKU to recommend based on past "
+                "creative performance. Call only when you need qualitative "
+                "context — do not pull memory for quick eligibility checks."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "entity_type": {"type": "string", "enum": ["customer", "product", "seasonal"]},
+                    "entity_id": {"type": "string", "description": "Customer id, SKU, or 'MM'"},
+                },
+                "required": ["entity_type", "entity_id"],
+            },
+            func=self._get_entity_memory_wrapper,
+            risk_tier=1,
+        )
+
     # ── Tool wrappers ──
 
     async def _search_products_wrapper(self, query: str, top_k: int = 3) -> list[dict]:
@@ -183,3 +207,16 @@ class RetentionAgent(BaseAgent):
         ]
         await self._slack_notifier.send_blocks(blocks, text=message[:200])
         return {"posted": True}
+
+    async def _get_entity_memory_wrapper(
+        self, entity_type: str, entity_id: str,
+    ) -> dict | None:
+        from src.agents.memory import get_memory
+        note = await get_memory(entity_type, str(entity_id))
+        if not note:
+            return None
+        return {
+            "content": note.get("content"),
+            "compiled_at": note.get("compiled_at"),
+            "sample_count": note.get("sample_count"),
+        }

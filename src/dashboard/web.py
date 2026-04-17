@@ -145,6 +145,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
         <a href="/dashboard/ad-creatives" class="nav-link {"active" if active == "ad-creatives" else ""}">Ad Creatives</a>
         <a href="/dashboard/pipeline" class="nav-link {"active" if active == "pipeline" else ""}">Pipeline</a>
         <a href="/dashboard/agents" class="nav-link {"active" if active == "agents" else ""}">Agents</a>
+        <a href="/dashboard/memory" class="nav-link {"active" if active == "memory" else ""}">Memory</a>
         <div class="nav-right">
             <a href="/dashboard/logout" class="nav-link">Logout</a>
         </div>
@@ -3225,3 +3226,158 @@ async def agent_flag_action(
     from src.agents.approval_tiers import flag_auto_sent
     await flag_auto_sent(action_id, reason or "flagged from dashboard")
     return RedirectResponse(f"/dashboard/agents/{agent_name}", status_code=303)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 13.2 — Entity memory inspector
+# Founder can scan what each customer / product wiki looks like. If a note
+# reads wrong, that's signal to tune the compile prompt — not to edit the
+# note directly (the compiler owns the wiki; raw data is the source).
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/memory", response_class=HTMLResponse)
+async def memory_index_page(dash_token: str | None = Cookie(None)):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    import asyncio as _asyncio
+    from src.core.database import Database
+
+    def _q():
+        sync = Database()
+        return (sync._client.table("entity_memory")
+                .select("entity_type,entity_id,sample_count,compiled_at,content")
+                .order("compiled_at", desc=True)
+                .limit(100)
+                .execute())
+    try:
+        res = await _asyncio.to_thread(_q)
+        rows = res.data or []
+    except Exception:
+        rows = []
+
+    by_type: dict[str, list[dict]] = {"customer": [], "product": [], "seasonal": []}
+    for r in rows:
+        by_type.setdefault(r["entity_type"], []).append(r)
+
+    sections = []
+    for t in ("customer", "product", "seasonal"):
+        items = by_type.get(t, [])
+        if not items:
+            continue
+        cards = []
+        for r in items[:30]:
+            snippet = (r.get("content") or "")[:180].replace("\n", " ")
+            cards.append(f"""
+            <a href="/dashboard/memory/{t}/{r['entity_id']}"
+               style="text-decoration:none;color:inherit;display:block">
+                <div class="card" style="cursor:pointer">
+                    <div class="card-header">
+                        <h3 style="text-transform:capitalize">{t} · {r['entity_id']}</h3>
+                        <span class="tag">{r.get('sample_count', 0)} rows</span>
+                    </div>
+                    <div style="font-size:13px;color:var(--text-secondary);margin-top:6px">{snippet}…</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+                        compiled {str(r.get('compiled_at', ''))[:16]}
+                    </div>
+                </div>
+            </a>
+            """)
+        sections.append(
+            f"<h2 style='margin:24px 0 12px;text-transform:capitalize'>{t} memory ({len(items)})</h2>"
+            + "".join(cards)
+        )
+
+    if not sections:
+        sections = ["<div class='alert' style='background:var(--surface-raised);color:var(--text-muted)'>"
+                    "No compiled memory yet. Run /cron/compile-entity-memory to populate.</div>"]
+
+    body = f"""
+    <h1>Entity memory</h1>
+    <p style="color:var(--text-muted);margin:4px 0 16px;font-size:14px">
+        LLM-compiled wiki notes for customers, products, and historical months.
+        Agents read these instead of raw history. Compiled nightly.
+    </p>
+    {''.join(sections)}
+    """
+    return HTMLResponse(_base_html("Memory", body, active="memory"))
+
+
+@router.get("/memory/{entity_type}/{entity_id}", response_class=HTMLResponse)
+async def memory_detail_page(
+    entity_type: str, entity_id: str, dash_token: str | None = Cookie(None),
+):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.agents.memory import get_memory, SUPPORTED_TYPES
+    if entity_type not in SUPPORTED_TYPES:
+        return HTMLResponse(_base_html("Memory",
+            f'<div class="alert alert-error">Unsupported entity_type: {entity_type}</div>',
+            active="memory"))
+
+    note = await get_memory(entity_type, entity_id)
+    if not note:
+        body = f"""
+        <div style="margin-bottom:8px">
+            <a href="/dashboard/memory" style="font-size:13px;color:var(--text-muted);text-decoration:none">← All memory</a>
+        </div>
+        <h1 style="text-transform:capitalize">{entity_type} · {entity_id}</h1>
+        <div class="alert" style="background:var(--surface-raised);color:var(--text-muted);margin-top:16px">
+            No compiled note yet. Wait for the nightly cron, or POST to
+            /cron/compile-entity-memory to trigger a run.
+        </div>
+        """
+        return HTMLResponse(_base_html("Memory", body, active="memory"))
+
+    # Raw markdown → very light HTML (headings + line breaks), no external deps
+    content = note.get("content", "")
+    html_content = _render_markdown_light(content)
+
+    body = f"""
+    <div style="margin-bottom:8px">
+        <a href="/dashboard/memory" style="font-size:13px;color:var(--text-muted);text-decoration:none">← All memory</a>
+    </div>
+    <h1 style="text-transform:capitalize">{entity_type} · {entity_id}</h1>
+    <div style="font-size:12px;color:var(--text-muted);margin:4px 0 20px">
+        compiled {str(note.get('compiled_at', ''))[:19]} · {note.get('sample_count', 0)} raw rows
+    </div>
+    <div class="card" style="line-height:1.65">
+        {html_content}
+    </div>
+    """
+    return HTMLResponse(_base_html(f"Memory: {entity_id}", body, active="memory"))
+
+
+def _render_markdown_light(text: str) -> str:
+    """Tiny markdown shim — headings + paragraphs + bullets. Avoids a dep."""
+    import html as _html
+    lines = _html.escape(text).split("\n")
+    out: list[str] = []
+    in_list = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if in_list:
+                out.append("</ul>"); in_list = False
+            out.append(f"<h3 style='margin-top:16px'>{stripped[3:]}</h3>")
+        elif stripped.startswith("# "):
+            if in_list:
+                out.append("</ul>"); in_list = False
+            out.append(f"<h2>{stripped[2:]}</h2>")
+        elif stripped.startswith("- "):
+            if not in_list:
+                out.append("<ul style='margin:8px 0 8px 20px'>"); in_list = True
+            out.append(f"<li>{stripped[2:]}</li>")
+        elif not stripped:
+            if in_list:
+                out.append("</ul>"); in_list = False
+            out.append("<br>")
+        else:
+            if in_list:
+                out.append("</ul>"); in_list = False
+            out.append(f"<p style='margin:6px 0'>{stripped}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "".join(out)

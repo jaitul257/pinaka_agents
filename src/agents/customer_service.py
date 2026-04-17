@@ -111,17 +111,53 @@ class CustomerServiceAgent(BaseAgent):
         self.tools.register(
             name="lookup_customer",
             description=(
-                "Get customer profile by email. Returns name, order count, lifetime value, "
-                "lifecycle stage, last order date. Check this before any customer communication."
+                "Read-only. Fetch structured customer row by email (case-insensitive). "
+                "Returns {id, name, email, order_count, lifetime_value (USD), "
+                "lifecycle_stage, last_order_at, accepts_marketing} or null. "
+                "For qualitative context (past complaints, voice cues, open threads) "
+                "call `get_entity_memory` separately — it's the compiled wiki note."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "email": {"type": "string", "description": "Customer's email address"},
+                    "email": {"type": "string", "description": "Customer email address"},
                 },
                 "required": ["email"],
             },
             func=self._db.get_customer_by_email,
+            risk_tier=1,
+        )
+
+        self.tools.register(
+            name="get_entity_memory",
+            description=(
+                "Read-only. Fetch the LLM-compiled wiki note for a specific "
+                "customer, product SKU, or calendar month (entity_type = "
+                "'customer' | 'product' | 'seasonal'). Returns markdown content "
+                "plus compiled_at freshness timestamp, or null if no note exists "
+                "yet. Short (500-800 words) distilled summary of the entity's "
+                "history — orders, interactions, patterns, open threads for "
+                "customers; sales + creative performance for products; YoY "
+                "patterns for seasonal. Call this BEFORE drafting a customer "
+                "reply so you know about prior complaints or voice cues. "
+                "Do NOT call for cold lookups — classify first, then pull memory "
+                "only when you need qualitative context."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "entity_type": {
+                        "type": "string",
+                        "enum": ["customer", "product", "seasonal"],
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Customer id (numeric string), SKU, or 'MM' for seasonal",
+                    },
+                },
+                "required": ["entity_type", "entity_id"],
+            },
+            func=self._get_entity_memory_wrapper,
             risk_tier=1,
         )
 
@@ -278,3 +314,18 @@ class CustomerServiceAgent(BaseAgent):
         ]
         await self._slack_notifier.send_blocks(blocks, text=message[:200])
         return {"posted": True}
+
+    async def _get_entity_memory_wrapper(
+        self, entity_type: str, entity_id: str,
+    ) -> dict | None:
+        from src.agents.memory import get_memory
+        note = await get_memory(entity_type, str(entity_id))
+        if not note:
+            return None
+        # Return content + compiled_at so the agent knows if the wiki is
+        # stale enough to warrant ignoring.
+        return {
+            "content": note.get("content"),
+            "compiled_at": note.get("compiled_at"),
+            "sample_count": note.get("sample_count"),
+        }

@@ -182,6 +182,31 @@ class MarketingAgent(BaseAgent):
             risk_tier=1,
         )
 
+        self.tools.register(
+            name="get_entity_memory",
+            description=(
+                "Read-only. Fetch compiled wiki note for a product SKU "
+                "(entity_type='product') or historical month (entity_type="
+                "'seasonal', entity_id='MM' e.g. '04' for April). Returns "
+                "markdown + compiled_at + sample_count, or null. Product note "
+                "summarizes sales + creative performance + what angles worked. "
+                "Seasonal note summarizes YoY revenue / MER / anomalies. Use "
+                "when making a SKU-specific or window-specific recommendation. "
+                "Don't call for general ROAS reviews — use get_current_strategy "
+                "instead."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "entity_type": {"type": "string", "enum": ["product", "seasonal"]},
+                    "entity_id": {"type": "string", "description": "SKU or 'MM' month"},
+                },
+                "required": ["entity_type", "entity_id"],
+            },
+            func=self._get_entity_memory_wrapper,
+            risk_tier=1,
+        )
+
     def _get_roas_wrapper(
         self, daily_stats: list, window_days: int | None = None,
     ) -> dict:
@@ -227,6 +252,19 @@ class MarketingAgent(BaseAgent):
         ]
         await self._slack_notifier.send_blocks(blocks, text=message[:200])
         return {"posted": True}
+
+    async def _get_entity_memory_wrapper(
+        self, entity_type: str, entity_id: str,
+    ) -> dict | None:
+        from src.agents.memory import get_memory
+        note = await get_memory(entity_type, str(entity_id))
+        if not note:
+            return None
+        return {
+            "content": note.get("content"),
+            "compiled_at": note.get("compiled_at"),
+            "sample_count": note.get("sample_count"),
+        }
 
 
 # Backwards-compat shims: ugc_brief.py and dashboard/brief.py still import
