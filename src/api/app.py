@@ -1881,6 +1881,39 @@ async def cron_reconcile_customers():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/reconcile-meta-ads", dependencies=[Depends(verify_cron_secret)])
+async def cron_reconcile_meta_ads():
+    """Daily Meta→Supabase ad status reverse-sync — runs 9 AM ET.
+
+    Founder pauses/resumes ads directly in Meta Ads Manager. Without this,
+    ad_creatives.status drifts and fatigue detection lies.
+    """
+    from src.marketing.meta_ad_sync import reconcile_ad_statuses
+    try:
+        result = await reconcile_ad_statuses()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("reconcile-meta-ads cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/reconcile-seo-publish", dependencies=[Depends(verify_cron_secret)])
+async def cron_reconcile_seo_publish():
+    """Weekly Shopify blog publish reverse-sync — runs Friday 10 AM ET.
+
+    Drafts we push to Shopify get reviewed and published from admin. This
+    mirrors `published_at` back into seo_topics and fires a Slack celebration
+    for newly-published posts.
+    """
+    from src.content.seo_publish_sync import reconcile_seo_publish_status
+    try:
+        result = await reconcile_seo_publish_status()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("reconcile-seo-publish cron failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/weekly-creative-rotation", dependencies=[Depends(verify_cron_secret)])
 async def cron_weekly_creative_rotation():
     """Weekly rotation — picks the stalest active product and generates 3 fresh variants.
