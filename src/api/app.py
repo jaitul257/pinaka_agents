@@ -149,8 +149,9 @@ async def shopify_app_root(request: Request):
     if not shop:
         return {"status": "Pinaka Agents API", "docs": "/docs"}
 
-    # Redirect to Shopify OAuth authorize
-    scopes = "read_checkouts,read_customers,read_orders,read_products,read_shipping,write_customers,write_orders,write_products,write_shipping"
+    # Redirect to Shopify OAuth authorize.
+    # Keep this string aligned with shopify.app.toml::access_scopes.
+    scopes = "read_checkouts,read_customers,read_orders,read_products,read_shipping,write_customers,write_orders,write_products,write_shipping,write_content"
     redirect_uri = f"https://pinaka-agents-production-198b5.up.railway.app/api/auth"
     nonce = hashlib.sha256(f"{shop}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:16]
 
