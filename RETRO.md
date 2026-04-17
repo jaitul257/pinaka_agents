@@ -11,6 +11,70 @@ Last updated: 2026-04-17
 
 ## Push Log
 
+### 2026-04-17 (late evening): Phase 13.1 + 13.3 + 13.4 — outcomes, skeptic, agent memory
+
+**What shipped:**
+- **Phase 13.1 program-verified outcomes (commit 49933e1)** — closed taxonomy of 10 deterministic outcome types tied to `agent_audit_log.id`. Writers: `POST /webhook/sendgrid` (delivery/open/click/bounce with sg_event_id dedup) + `POST /cron/verify-outcomes` (daily 4:30 AM ET, jobId 7495782) running 3 SQL verifiers (on-time shipping, 48h customer reply, 30d repurchase). Agents explicitly CANNOT write outcomes about their own work — the closed taxonomy + rejection of unknown types are the guardrails. +21 tests.
+- **Phase 13.3 cross-model skeptic (commit cdaaac4)** — GPT-4o-mini reviews Claude's customer email drafts via raw httpx (no new dep). Asymmetric rubric in the prompt: +5 for catching a real issue, −10 for rejecting a clean draft. Soft-fail-open: if OpenAI is unreachable, returns PASS verdict (we NEVER block sends because the secondary reviewer is down). `/dashboard/skeptic` with "Mark skeptic wrong" override button + block-override-rate metric for rubric calibration. +16 tests.
+- **Phase 13.4 agent rolling self-memory (commit ff2e961)** — extended the llm-wiki pattern from 13.2 to each agent's own 7-day activity. Migration drops the entity_memory `entity_type` CHECK (Python enforcement is the single source of truth). `compile_agent()` pulls audit_log + auto_sent_actions + outcomes + observations, Claude distills into 4 sections. `get_my_memory` registered on BaseAgent itself so every subclass inherits it. +7 tests.
+- **514 tests passing** across the session (+7 vs 13.1 + 13.3 at 507).
+
+**What went well:**
+- **Three-way research pass BEFORE coding.** Internal audit (what's sycophantic in our current prompts) + external production evidence (Kamoi TACL 2024, Vercel −80% tools, Ramp golden datasets) + one authoritative voice (Karpathy on LLM-Council, llm-wiki, context engineering). All three converged on the same answers, giving the build much higher confidence. The initial Phase 13 plan I proposed was wrong in the ways the research warned about — vector memory trap, universal self-critique.
+- **Closed taxonomies beat open ones.** `OUTCOME_TYPES = frozenset(...)` with rejection of unknown values catches the exact drift failure mode we'd see six months from now when someone tries to record `customer_was_delighted`. Test explicitly asserts the closed set can't be bypassed.
+- **Soft-fail-open for optional reviewers.** The skeptic returns PASS when OpenAI is down. Failing-closed would mean every OpenAI hiccup stops customer service email. One of those small design choices that prevents a real incident.
+- **Schema verification via production smoke-tests caught four bugs fast.** Every compile failure surfaced a specific column-name mismatch. Fix → push → wait 3-5 min → retry. Each iteration was bounded and cheap. Don't build around schema you think exists; verify against actual Supabase.
+- **Test contracts stay small and specific.** Each new feature got 6-21 tests, each test asserting ONE non-obvious invariant. No tests of "code runs" — only tests of "this specific failure mode is prevented."
+
+**What was painful:**
+- **Four schema mismatches in production smoke-test.** `orders.line_items` doesn't exist; `daily_stats.aov` is `avg_order_value`; `customers.welcome_step_sent` is `welcome_step`; `ad_creatives.claude_brief` is `headline + primary_text`; `ad_creative_metrics.creative_id` is `meta_ad_id`. Lesson: before writing any query, grep the migrations for each column name. A 30-second check prevents a 30-minute deploy-cycle debug.
+- **Railway deploy latency × 4 iterations = real session time.** Each schema fix required a push + wait + retry. Could have batched: run the compile locally against Supabase first, surface all schema issues at once, fix in one commit. Next time: local dry-run before first push.
+- **Initial session plan was wrong.** "Outcomes + memory + self-critique" sounded right, but the internal audit surfaced that our prompts were already sycophancy accelerators (confidence defaults to "high" silently). Adding outcome feedback ON TOP would have reinforced over-confident agents. Prereqs had to ship FIRST. Lesson: audit before stacking.
+
+**Lessons learned:**
+- **Closed-set taxonomies are load-bearing.** Wherever you take input that routes to an action (outcome_type, verdict, action_type), make the allowed set a frozenset and reject unknown values with a log warning. Prevents drift you won't notice until it's six months of bad data.
+- **Secondary reviewers must soft-fail.** Any system where A wraps B must have a clear policy for "what if B is down?" For critics/reviewers/validators, the answer is almost always PASS — don't block the primary flow.
+- **Three-way research convergence = high confidence.** When your own audit, production evidence, and a named authority all point at the same answer, you can ship that answer without second-guessing. When they disagree, stop and dig deeper.
+- **Schema verification precedes query writing.** Every time I assumed a column name, I was wrong. `grep` first, write second.
+- **Context is RAM, not append-only storage.** Compaction must be a first-class concern, not a v2. The llm-wiki pattern (raw + compiled view) scales to any entity type. Applied to customers, products, seasonal, agents — same pattern, one table.
+
+---
+
+### 2026-04-17 (evening): Phase 13 prereqs + 13.2 — llm-wiki memory
+
+**What shipped:**
+- **Prereq pass (commit 4aa4fe2)** — fixed sycophancy + context bloat BEFORE stacking new capabilities on top. Per Karpathy's "context is RAM" and the essay's "clean up rules before adding more":
+  - `base.py`: confidence parser no longer defaults missing `[CONFIDENCE: …]` to `"high"` — returns `"unknown"` + warning log. Added 6 contract tests locking this in.
+  - `marketing.py`: 85 lines of hardcoded campaign strategy removed from system prompt. Strategy now lives as data in `strategy_config.py`, returned by a new `get_current_strategy` tool the agent calls before reasoning. Prompt dropped 3.8k → 2.5k chars.
+  - `context.py`: dump-everything `for_daily_ops()` deleted. Per-agent slices: `for_marketing` (stats + margins only), `for_finance` (30d), `for_order_ops` (fulfillment queue — no revenue noise), `for_customer_service_queue` (pending + carts only).
+  - `heartbeat.py`: reframed from "decide what action to take" to "verify each flagged item against its threshold." New `NO_ACTION` verb for normal variance. Claude now receives raw data + threshold definition per flag.
+  - `order_ops.py` + `customer_service.py`: tool descriptions tightened — units (USD), side effects (ShipStation create is NOT idempotent), failure modes (lookup returns null on webhook delay → retry not escalate), threshold numbers ($5k fraud, 2 orders/24h velocity). Customer service now has explicit confidence gate for auto-respond.
+- **Phase 13.2 llm-wiki memory (commit 3dd44b6)** — Karpathy's pattern applied to Pinaka's domain:
+  - Migration 20260417040000: `entity_memory` table (type, id, content markdown, sample_count, source_through, compiled_at). Unique (type, id).
+  - `src/agents/memory.py`: compile_customer / compile_product / compile_seasonal via single Claude call each (sonnet-4.5, temperature 0.2, 1200 tokens, hard-capped at 4500 chars). Fallback notes when API unavailable. compile_all_active() orchestrator with 24h staleness gate.
+  - `/cron/compile-entity-memory` daily 3:30 AM ET (jobId 7495699).
+  - `get_entity_memory` tool wired into customer_service, retention, marketing with explicit "when to call" guidance in the docstring — not stuffed into context by default.
+  - `/dashboard/memory` + `/dashboard/memory/{type}/{id}`: founder-facing inspector. Shows compiled wikis sorted by freshness.
+  - 16 new tests for the memory contract.
+- **470 tests passing** (+22 across both commits).
+
+**What went well:**
+- **Research pass FIRST** was the right call. Before building, spawned two research agents in parallel (internal audit of our prompts + external production research). Karpathy research came third. Synthesizing three perspectives before coding prevented me from shipping a "memory feature" that would've been a classic vector-DB bloat trap.
+- **The audit findings forced the prereq cleanup.** 5 concrete blocking issues (confidence default, hardcoded strategy, dumped context, biased heartbeat, vague tools) landed as a single focused commit. Not bolted onto the feature — a real spa-day.
+- **Fallback notes are the safety net.** Every compile function has a deterministic fallback that runs when Claude is unavailable. Memory never goes fully dark — it just degrades.
+- **Hard cap on content** (4500 chars / ~750 words) is enforced at the last step of every compile path, including fallbacks. Tests verify even 200 orders produce a compliant note.
+
+**What was painful:**
+- **Tempting to build vector memory anyway.** The research unanimously said don't. I pushed back internally multiple times — "but what if customers query agents for info about other customers" — and kept coming back to: at 1-2 orders/week, a keyed SELECT dominates cosine similarity on both relevance AND latency. Killed the urge.
+- **Scope creep narrowly avoided.** Initial Phase 13 proposal had outcome feedback + memory + self-critique as one commit. Broke it into prereqs → 13.2 alone → (next) 13.4 compactor → 13.1 outcomes → 13.3 skeptic. Five commits beats one 2000-line mega-commit.
+
+**Lessons learned:**
+- **Clean up BEFORE adding, not after.** Phase 12 added tiered approval, KPIs, dashboards. Phase 13 was going to stack on top. The audit showed those layers would amplify existing bugs (confidence-defaults-high + outcome-feedback = reinforce over-confident agents). Fixing the prereqs FIRST was the single most valuable decision this session.
+- **Karpathy's cross-model skeptic finding is the big one.** Same-model self-critique (Claude reviews Claude) is weak signal. Different-model (GPT-5 reviews Claude) genuinely works. Saved for Phase 13.3.
+- **Three-way research beats single-source.** Internal audit + production research + one named voice (Karpathy) triangulated on the same answer. Much higher confidence in the plan than any one source would've given.
+
+---
+
 ### 2026-04-17: Phase 12 — Agent Ownership Layer + reverse-sync route fix
 
 **What shipped:**

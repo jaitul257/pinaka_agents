@@ -116,15 +116,47 @@ Supabase PostgreSQL. Migrations in `supabase/migrations/` (001-006b, 20260407-20
 | Business timezone | US/Eastern | All daily_stats date boundaries |
 | Made-to-order days | 15 | "Ships in X business days" |
 
-## Slack Approval Pattern
+## Slack Approval Pattern (Phase 12 — tiered)
 
-All customer-facing actions go through Slack approval:
-1. AI drafts message/email
-2. Posts to Slack with "Approve" / "Reject" buttons
-3. Founder reviews and clicks
-4. System sends or skips
+Not every action goes through Slack anymore. Phase 12 introduced three tiers (`src/agents/approval_tiers.py`):
 
-15 Slack action types defined. Handler at `POST /webhook/slack`.
+| Tier | What | Examples |
+|------|------|----------|
+| **AUTO** | Send directly, log to `auto_sent_actions` for founder review | Welcome series 1-5, crafting update, care guide reminder, reorder reminder 180/365d |
+| **REVIEW** | Existing Slack approve/reject flow | Customer response, cart recovery, listing publish, ad creative, POQ batch, SEO blog, lifecycle anniversary/VIP/sunset |
+| **ESCALATE** | Always surfaces to Slack with extra context | Order hold/cancel, fraud review, budget change, refund approval |
+
+Unknown action types default to REVIEW (safe-side). Conservative v1 list — widen AUTO by observing `auto_flag_rate_30d()` over time.
+
+15+ Slack action types. Handler at `POST /webhook/slack`.
+
+## Agent System Design Rules (learned the hard way — don't re-break)
+
+These are non-negotiable patterns the Phase 13 research + production incidents validated. Break one = bug.
+
+1. **Closed-set taxonomies reject unknowns with a log warning.** Any field that routes to an action (`outcome_type`, `verdict`, `action_type`) uses a `frozenset` of allowed values. Unknown values are rejected, not silently accepted. Prevents six-months-from-now drift where someone adds `customer_was_delighted` and corrupts downstream analytics. See `src/agents/outcomes.py:OUTCOME_TYPES`, `src/agents/approval_tiers.py:AUTO_ACTIONS`.
+
+2. **Confidence defaults to `"unknown"`, NEVER silently to `"high"`.** See `src/agents/base.py:_extract_confidence`. Missing confidence tag = warning log + "unknown" — not quietly assumed high. Prior default (`"high"`) was laundering every parser miss into a positive signal that outcome feedback would reinforce.
+
+3. **Secondary reviewers must soft-fail PASS.** Any critic/validator/skeptic that wraps a primary flow (e.g. `src/agents/skeptic.py`) returns PASS when it can't reach its backend. Failing closed would stop every customer-service email whenever OpenAI has a hiccup. Never block a primary flow because a secondary check is down.
+
+4. **Outcomes are program-verified only.** `src/agents/outcomes.py` writes rows from SendGrid webhooks + scheduled SQL checks. Agents CANNOT write outcomes about their own work. Kamoi TACL 2024 + Karpathy's "sucking supervision through a straw" — LLM self-grading without external ground truth degrades performance.
+
+5. **Cross-model for critique, same-model never.** If you need a reviewer, use a DIFFERENT model. Claude drafts → GPT-4o-mini reviews. Never Claude-reviews-Claude. Karpathy LLM-Council finding: cross-model carries genuine signal, same-model self-critique doesn't. `DRAFTER_MODEL != REVIEWER_MODEL` is a lock-in test.
+
+6. **Asymmetric critique rubrics prevent over-rejection.** Critics default to "reject to look useful." Asymmetric scoring in the prompt (+5 for a real catch, −10 for a false block) shifts the behavior. See `src/agents/skeptic.py:SYSTEM_PROMPT`.
+
+7. **Memory is file-based, not vector-based at our scale.** 1-2 orders/week means a keyed SQL lookup beats cosine similarity on both latency AND relevance. See `src/agents/memory.py` entity_memory pattern. Only reach for ChromaDB when the entity count is in the thousands AND natural-language query is the access pattern — which for Pinaka is only the concierge's product RAG.
+
+8. **Compacted view, raw as immutable log.** Agents read compiled markdown wikis for entities (customer / product / seasonal / agent). Raw rows in `orders`, `messages`, `agent_audit_log`, `observations` stay forever — they're the source of truth — but agents never read them during reasoning. Karpathy llm-wiki pattern: "you rarely ever write or edit the wiki manually — it's the domain of the LLM." Compile nightly via `/cron/compile-entity-memory`.
+
+9. **Tool docstrings state units, side effects, failure modes, and WHEN NOT to call.** Tool descriptions are the agent's only documentation for the tool's behavior. Vague docs force the agent to hallucinate inputs. Every tool registered in `src/agents/*.py` should have: units (USD), idempotency status ("NOT idempotent: duplicates produce real duplicate labels"), failure-mode guidance ("returns null on webhook delay — retry, don't escalate"), and a "do not call for X" clause.
+
+10. **System prompts should be neutral, tools carry the strategy.** A prompt that says "decide what action to take" biases toward action. Neutral framing: "review state, report findings, recommend only if warranted." Strategy lives in tool-returned data (e.g. `get_current_strategy`) so the agent reasons against LIVE data, not a memorized memo. See `src/agents/marketing.py` + `src/marketing/strategy_config.py`.
+
+11. **Verify schema before writing queries.** Grep migrations for each column name before using it. We wasted 4 deploy cycles in Phase 13.2 on assumed-but-wrong column names (`orders.line_items`, `daily_stats.aov`, `ad_creatives.claude_brief`, `ad_creative_metrics.creative_id`). 30 seconds of `grep` prevents 30 minutes of deploy-cycle debug.
+
+12. **Wire the route BEFORE writing the handler body.** A cron handler that imports cleanly but has no `@app.post` decorator fails silently — tests pass, curl returns 404. Learned from `b741a97` → `8a0d5ff`. Pattern: add the decorator + a one-line stub FIRST, confirm route registers, THEN write the body.
 
 ## Testing Conventions
 
@@ -168,6 +200,12 @@ Only ask the user if the variable is not set on Railway or needs to be created f
 | 8.2 | Agent awareness: observations table, heartbeat monitor (30-min cron, cheap SQL checks, Claude only when issues found), observation writers in webhooks |
 | 8.3 | Marketing strategy: 3-campaign funnel (Prospecting/Retargeting/Retention), seasonal calendar (6 windows), margin-driven budget, 6h data snapshots, Monday 9AM weekly strategy review |
 | 8.4 | Product pipeline dashboard (PDF extraction → Pomelli → Shopify with variant matrix), hero video on homepage, mobile UX scroll-hide, abandoned cart flow fix (mark_abandoned_carts transition), concierge MCP bugfix (search_shop_catalog → search_catalog), product status/published_at fix, Freepik AI asset research (Flux Pro + real photographer vocab) |
+| 9 | Measurement foundation + creative intel + lifecycle + retention engine (MER vs platform ROAS, attribution, SEO publish loop) |
+| 10 | Customer intelligence: RFM segmentation (absolute thresholds, not quintiles), VOC theme miner, unified customer profile API |
+| 11 | Bidirectional Shopify↔Supabase sync: real-time product/customer webhooks + daily reconcile crons. Centralized `src/core/shopify_sync.py` shared by webhooks, crons, and manual backfill scripts |
+| 11.5 | Reverse-sync: Meta ad status (pause/resume in Ads Manager mirrors into Supabase daily), Shopify blog publish status (newly-published detection + Slack celebration) |
+| 12 | Agent ownership: tiered approval (AUTO/REVIEW/ESCALATE), per-agent dashboards, agent-owned KPIs (MER, repeat rate, resolution hours, net margin, on-time ship), weekly Claude-authored retros, approval feedback loop |
+| 13 | Agent intelligence (research-validated): llm-wiki entity memory (customers/products/seasonal, file-based not vector), program-verified outcomes (closed taxonomy, SendGrid webhook + SQL verifiers, never LLM-judged), cross-model skeptic (GPT-4o-mini reviews Claude with asymmetric rubric +5/−10), agent rolling self-memory (compaction of audit_log + observations so agents read distilled view not raw rows). Prereqs: confidence defaults to `unknown` not `high`, marketing strategy moved from prompt to `get_current_strategy` tool, context assembler per-agent slices, heartbeat reframed neutral |
 
 ## Shopify Theme Development
 
@@ -267,6 +305,7 @@ Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude
 1. **Read MEMORY.md** (project root) — contains pointers to persistent memory files with user profile, project state, business details, testing conventions, and external references. Memory files live in `~/.claude/projects/-Users-jaitulbharodiya-Documents-GitHub-pinaka_agents/memory/`.
 2. **Read RETRO.md** — captures what shipped, what worked, what hurt, and lessons learned from every push to main. Learn from past mistakes before repeating them.
 3. **Read TODO.md** — know what's done, what's next, and what's blocked.
+4. **Skim the "Agent System Design Rules" section above** — 12 non-negotiable rules the research + incidents validated. Break one = bug.
 
 ## After Every Push to Main
 

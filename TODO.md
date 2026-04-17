@@ -6,21 +6,32 @@ Last updated: 2026-04-17
 
 All core infrastructure + agentic layer + product pipeline shipped and deployed. 243 tests passing. System is live on Railway with 5 autonomous agents, heartbeat awareness, marketing strategy crons, product pipeline dashboard, homepage video hero, and concierge chat using Shopify MCP.
 
-## Phase 9-12: SHIPPED
+## Phase 9-13: SHIPPED
 
 - **Phase 9 (measurement + creative intel + lifecycle + retention)** — DONE
 - **Phase 10 (customer intelligence: RFM, VOC, unified profile)** — DONE 2026-04-16
 - **Phase 11 (bidirectional Shopify↔Supabase sync)** — DONE 2026-04-16
 - **Phase 11.5 (Meta ad + Shopify blog reverse-sync)** — DONE 2026-04-17 (route fix landed same day)
-- **Phase 12 (agent ownership: tiered approval, KPIs, dashboards, retros, feedback loop)** — DONE 2026-04-17, 448 tests passing
+- **Phase 12 (agent ownership: tiered approval, KPIs, dashboards, retros, feedback loop)** — DONE 2026-04-17
+- **Phase 13 (agent intelligence)** — DONE 2026-04-17, 514 tests passing
+  - Prereqs A–E: confidence defaults to `unknown`, marketing strategy tool-returned, context per-agent slices, heartbeat reframed neutral, tool docs tightened
+  - 13.2 entity memory (customer / product / seasonal wikis, Karpathy llm-wiki pattern, no vectors)
+  - 13.1 program-verified outcomes (closed taxonomy, SendGrid webhook, 3 SQL verifiers)
+  - 13.3 cross-model skeptic (GPT-4o-mini reviews Claude, asymmetric rubric, soft-fail-open)
+  - 13.4 agent rolling self-memory (extends entity_memory to agents themselves)
 
-## Phase 12 follow-ups (v2 work that builds on 12)
+## Phase 12-13 follow-ups (v2 work that builds on what's shipped)
 
 - [ ] Wire `capture_edit()` into Slack modal submissions — today, edits in Slack aren't captured. Need a view_submission handler that stores `{original, edited}` to approval_feedback. Low volume today makes this nice-to-have, but it's the input that powers 12.5's learning loop.
 - [ ] Inject `founder_style_for(agent, trigger)` into ContextAssembler prompts. Scaffolded but not wired — once 10+ edits accumulate per trigger and the Sunday cron rolls them, agents should auto-use the style guidance.
 - [ ] Promote/demote AUTO actions based on 30d flag_rate. Add a cron that reviews `auto_flag_rate_30d()` and either logs "this should go back to REVIEW" (>10% flag) or "this REVIEW action is ready for AUTO" (<5% edits when captured).
 - [ ] Fix backfilled Shopify products failing Pydantic Product schema at startup (spams logs). Either: make Product schema fields optional for Shopify-sourced rows, or skip ChromaDB embedding for rows without full metadata.
 - [ ] Clean up root directory (`.gitignore` for catalog/stories, freepik-tests, *.mp4 at root, supabase/.temp).
+- [ ] **Phase 13.1 follow-up**: wire `custom_args={agent_name, action_type, audit_log_id}` into every EmailSender.send() call so SendGrid events can correlate back to the specific agent run that caused the email. Infra is ready; writers aren't attached yet.
+- [ ] **Phase 13.1 follow-up**: configure SendGrid Event Webhook to POST to `https://pinaka-agents-production-198b5.up.railway.app/webhook/sendgrid`. Operator step in SendGrid admin.
+- [ ] **Phase 13.3 follow-up**: harden `/webhook/sendgrid` with SG's HMAC signature verification (X-Twilio-Email-Event-Webhook-Signature) — currently accepted unsigned (URL obscurity only).
+- [ ] **Phase 13.3 follow-up**: monitor skeptic `block_override_rate_pct` on `/dashboard/skeptic` — if >25% after ~20 blocks, tune the SYSTEM_PROMPT rubric or raise the confidence gate before calling it.
+- [ ] **Phase 13.4 follow-up**: consider wiring `get_my_memory` into ContextAssembler as an optional automatic inject for agents with > N runs in the past week — currently strictly opt-in via tool call.
 
 ---
 
