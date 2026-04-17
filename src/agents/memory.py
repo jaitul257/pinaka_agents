@@ -214,7 +214,8 @@ async def _gather_product_raw(sku: str) -> dict[str, Any]:
                    .execute()).data or []
 
         ad_creatives = (sync._client.table("ad_creatives")
-                        .select("id,variant_label,status,created_at,meta_ad_id,claude_brief")
+                        .select("id,variant_label,status,created_at,meta_ad_id,"
+                                "headline,primary_text")
                         .eq("sku", sku)
                         .order("created_at", desc=True)
                         .limit(20)
@@ -400,7 +401,8 @@ ORDERS WITH THIS SKU ({len(orders)})
 
 AD CREATIVES
 {[{"id": c.get("id"), "variant": c.get("variant_label"), "status": c.get("status"),
-   "brief_snippet": (c.get("claude_brief") or "")[:200]} for c in creatives[:6]]}
+   "headline": c.get("headline"),
+   "primary_text": (c.get("primary_text") or "")[:160]} for c in creatives[:6]]}
 
 AD METRICS AGGREGATED BY CREATIVE
 {by_creative}
