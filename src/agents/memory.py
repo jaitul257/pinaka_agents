@@ -155,6 +155,11 @@ async def compile_seasonal(month: str) -> dict[str, Any] | None:
 # ── Raw data gatherers (read-only queries on immutable tables) ──
 
 async def _gather_customer_raw(customer_id: int) -> dict[str, Any]:
+    """Pull raw data for a customer. Column names verified against actual schema:
+    customers.welcome_step (not welcome_step_sent), customers.last_order_date
+    (renamed from last_order_at in migration 002), messages.body (not
+    inbound_content).
+    """
     def _q():
         sync = Database()
         orders = (sync._client.table("orders")
@@ -165,27 +170,29 @@ async def _gather_customer_raw(customer_id: int) -> dict[str, Any]:
                   .execute()).data or []
 
         messages = (sync._client.table("messages")
-                    .select("category,status,created_at,ai_draft,inbound_content")
+                    .select("category,status,created_at,ai_draft,body")
                     .eq("customer_id", customer_id)
                     .order("created_at", desc=True)
                     .limit(20)
                     .execute()).data or []
 
-        # Lifecycle events: welcome_step_sent, anniversaries_reminded, reorder_email_at
         customer = (sync._client.table("customers")
-                    .select("email,name,lifecycle_stage,welcome_step_sent,last_order_at,"
+                    .select("email,name,lifecycle_stage,welcome_step,last_order_date,"
                             "last_reorder_email_at,created_at,last_segment,lifetime_value")
                     .eq("id", customer_id)
                     .limit(1)
                     .execute()).data or []
 
-        # RFM snapshot if present
-        rfm = (sync._client.table("customer_rfm")
-               .select("segment,r_score,f_score,m_score,ltv_365d_projection,computed_at")
-               .eq("customer_id", customer_id)
-               .order("computed_at", desc=True)
-               .limit(1)
-               .execute()).data or []
+        # RFM snapshot is optional (table may not exist in all environments)
+        try:
+            rfm = (sync._client.table("customer_rfm")
+                   .select("segment,r_score,f_score,m_score,ltv_365d_projection,computed_at")
+                   .eq("customer_id", customer_id)
+                   .order("computed_at", desc=True)
+                   .limit(1)
+                   .execute()).data or []
+        except Exception:
+            rfm = []
 
         return {"customer": customer, "orders": orders,
                 "messages": messages, "rfm": rfm,
@@ -194,6 +201,10 @@ async def _gather_customer_raw(customer_id: int) -> dict[str, Any]:
 
 
 async def _gather_product_raw(sku: str) -> dict[str, Any]:
+    """Pull raw data for a product. Note: we don't store line_items on orders
+    (that schema addition is pending) — order→SKU linkage is therefore
+    unavailable at this layer. Product memory is ad-creative-driven for now.
+    """
     def _q():
         sync = Database()
         product = (sync._client.table("products")
@@ -201,14 +212,6 @@ async def _gather_product_raw(sku: str) -> dict[str, Any]:
                    .eq("sku", sku)
                    .limit(1)
                    .execute()).data or []
-
-        # Orders that include this SKU (line_items is JSONB — filter approximately)
-        orders = (sync._client.table("orders")
-                  .select("shopify_order_id,total,line_items,created_at")
-                  .order("created_at", desc=True)
-                  .limit(100)
-                  .execute()).data or []
-        orders_with_sku = [o for o in orders if _sku_in_line_items(sku, o.get("line_items"))]
 
         ad_creatives = (sync._client.table("ad_creatives")
                         .select("id,variant_label,status,created_at,meta_ad_id,claude_brief")
@@ -230,7 +233,7 @@ async def _gather_product_raw(sku: str) -> dict[str, Any]:
 
         return {
             "product": product[0] if product else None,
-            "orders_with_sku": orders_with_sku[:15],
+            "orders_with_sku": [],  # placeholder — see note above
             "ad_creatives": ad_creatives,
             "ad_metrics": ad_metrics,
         }
@@ -238,15 +241,19 @@ async def _gather_product_raw(sku: str) -> dict[str, Any]:
 
 
 async def _gather_seasonal_raw(month: str) -> dict[str, Any]:
-    """All daily_stats rows for the given month across all years."""
+    """All daily_stats rows for the given month across all years.
+
+    Column notes: daily_stats uses avg_order_value (not 'aov'), ad_spend_google
+    and ad_spend_meta are nullable/absent on old rows — select safe, reason
+    tolerantly.
+    """
     def _q():
         sync = Database()
-        # Supabase doesn't expose EXTRACT(MONTH ...) from REST — pull a year
-        # at a time and filter in Python. At 365 rows/yr we can handle it.
         rows = (sync._client.table("daily_stats")
-                .select("date,revenue,order_count,ad_spend_google,ad_spend_meta,aov,new_customers")
+                .select("date,revenue,order_count,avg_order_value,new_customers,"
+                        "ad_spend,ad_spend_google,ad_spend_meta")
                 .order("date", desc=True)
-                .limit(1500)  # ~4 years of daily rows
+                .limit(1500)
                 .execute()).data or []
         filtered = [r for r in rows
                     if r.get("date") and str(r["date"])[5:7] == month]
@@ -311,9 +318,9 @@ ORDERS ({len(orders)} most recent)
 {orders[:10]}
 
 MESSAGES ({len(messages)} most recent, summarized)
-{[{"date": m.get("created_at", "")[:10], "category": m.get("category"),
+{[{"date": (m.get("created_at") or "")[:10], "category": m.get("category"),
    "status": m.get("status"),
-   "snippet": (m.get("inbound_content") or m.get("ai_draft") or "")[:120]}
+   "snippet": (m.get("body") or m.get("ai_draft") or "")[:120]}
   for m in messages[:10]]}
 
 RFM SNAPSHOT
