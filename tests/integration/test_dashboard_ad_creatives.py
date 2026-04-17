@@ -77,12 +77,13 @@ def test_list_page_requires_auth_redirects_to_login(client):
 
 
 def test_list_page_empty_state(client, auth_cookie, mock_db):
-    """Empty DB renders the empty-state copy."""
+    """Empty DB renders the empty-state copy + still shows the product picker heading."""
     mock_db.get_recent_ad_creatives.return_value = []
     resp = client.get("/dashboard/ad-creatives", cookies=auth_cookie)
     assert resp.status_code == 200
     assert "No ad drafts yet" in resp.text
-    assert "Go to Products" in resp.text
+    # New copy nudges user toward the picker at the top instead of the old "Go to Products" link
+    assert "Pick a product above" in resp.text or "Generate new creatives" in resp.text
 
 
 def test_list_page_renders_batches(client, auth_cookie, mock_db):

@@ -1967,12 +1967,193 @@ def _batch_section_html(batch_id: str, creatives: list[dict], ready: bool) -> st
 
 def _empty_state_html() -> str:
     return """
-    <div class="card" style="text-align:center;padding:48px 24px;">
-        <h2 style="font-size:28px;margin-bottom:12px;">No ad drafts yet</h2>
-        <p style="font-size:14px;color:var(--text-muted);margin-bottom:24px;">
-            Generate 3 Claude-drafted ad copy variants from any product.
+    <div class="card" style="text-align:center;padding:32px 24px;">
+        <h2 style="font-size:24px;margin-bottom:8px;">No ad drafts yet</h2>
+        <p style="font-size:14px;color:var(--text-muted);">
+            Pick a product above to generate 3 Claude-drafted variants.
         </p>
-        <a href="/dashboard" class="btn btn-primary">Go to Products →</a>
+    </div>
+    """
+
+
+def _staleness_pill(last_created_at: str | None) -> str:
+    """Return an HTML pill describing how stale a product's creative is."""
+    from datetime import datetime as _dt, timezone as _tz
+    if not last_created_at:
+        return ('<span style="display:inline-block;padding:3px 10px;border-radius:9999px;'
+                'background:var(--surface-raised);color:var(--text-muted);'
+                'font-size:11px;font-weight:600;letter-spacing:0.5px;">NEVER GENERATED</span>')
+    try:
+        dt = _dt.fromisoformat(str(last_created_at).replace("Z", "+00:00"))
+        days = (_dt.now(_tz.utc) - dt).days
+    except Exception:
+        return ""
+
+    if days <= 7:
+        color, bg, label = "#2E7D4F", "rgba(46,125,79,0.12)", f"FRESH · {days}d"
+    elif days <= 14:
+        color, bg, label = "#C17E1A", "rgba(193,126,26,0.12)", f"AGING · {days}d"
+    else:
+        color, bg, label = "#C4392D", "rgba(196,57,45,0.10)", f"STALE · {days}d"
+    return (f'<span style="display:inline-block;padding:3px 10px;border-radius:9999px;'
+            f'background:{bg};color:{color};font-size:11px;font-weight:600;'
+            f'letter-spacing:0.5px;">{label}</span>')
+
+
+def _product_picker_card_html(product: dict, ready: bool, pending_sku: str = "") -> str:
+    """Render one product card with a Generate button. Sorted stale-first upstream."""
+    from html import escape
+    sku = escape(str(product.get("sku", "")))
+    name = escape(str(product.get("name") or product.get("title") or "Unnamed"))
+    images = product.get("images") or []
+    image_src = ""
+    if isinstance(images, list) and images:
+        first = images[0]
+        image_src = first if isinstance(first, str) else (first.get("src") or first.get("url") or "")
+
+    last_at = product.get("_last_creative_at")
+    pill = _staleness_pill(last_at)
+
+    is_pending = (pending_sku == sku)
+    btn_disabled = "disabled" if is_pending else ""
+    btn_label = "Generating…" if is_pending else "Generate 3 variants"
+    btn_style = (
+        'style="width:100%;opacity:0.6;cursor:not-allowed;"'
+        if is_pending else 'style="width:100%;"'
+    )
+
+    img_html = (
+        f'<img src="{escape(image_src)}" alt="" style="width:100%;aspect-ratio:1/1;'
+        f'object-fit:cover;border-radius:8px;background:var(--surface-raised);"/>'
+        if image_src else
+        '<div style="width:100%;aspect-ratio:1/1;background:var(--surface-raised);'
+        'border-radius:8px;"></div>'
+    )
+
+    last_label = ""
+    if last_at:
+        last_label = f'<div style="font-size:11px;color:var(--text-muted);font-family:\'Geist Mono\',monospace;margin-top:4px;">Last: {str(last_at)[:10]}</div>'
+
+    return f"""
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+        {img_html}
+        <div>
+            <div style="font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--text-primary);line-height:1.2;">{name}</div>
+            <div style="font-size:11px;color:var(--text-muted);font-family:'Geist Mono',monospace;margin-top:2px;">{sku}</div>
+            <div style="margin-top:8px;">{pill}</div>
+            {last_label}
+        </div>
+        <form method="post" action="/dashboard/ad-creatives/generate" style="margin-top:auto;">
+            <input type="hidden" name="sku" value="{sku}"/>
+            <button type="submit" class="btn btn-primary" {btn_disabled} {btn_style}>{btn_label}</button>
+        </form>
+    </div>
+    """
+
+
+async def _active_products_with_staleness() -> list[dict]:
+    """Pull active Shopify products, join with last ad_creative per SKU.
+
+    Returns list sorted stale-first (NULL / oldest last_created_at → top).
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    db = _get_db()
+    shopify_products: list[dict] = []
+    if settings.shopify_shop_domain and settings.shopify_access_token:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    _shopify_api(
+                        "products.json?limit=100&status=active"
+                        "&fields=id,handle,title,status,images,variants,tags"
+                    ),
+                    headers=_shopify_headers(),
+                )
+                resp.raise_for_status()
+                shopify_products = resp.json().get("products", [])
+        except Exception:
+            logger.exception("product picker: failed to fetch Shopify products")
+
+    if not shopify_products:
+        return []
+
+    # Build SKU list (one per product — use first variant's SKU)
+    by_sku: dict[str, dict] = {}
+    for sp in shopify_products:
+        variants = sp.get("variants") or []
+        sku = (variants[0].get("sku") if variants else "") or ""
+        if not sku:
+            continue
+        images = sp.get("images") or []
+        by_sku[sku] = {
+            "sku": sku,
+            "name": sp.get("title") or "Unnamed",
+            "images": [img.get("src") for img in images if img.get("src")],
+            "handle": sp.get("handle", ""),
+            "shopify_product_id": sp.get("id"),
+        }
+
+    if not by_sku:
+        return []
+
+    # Join with last ad_creative per sku
+    try:
+        creatives = (
+            db._client.table("ad_creatives")
+            .select("sku,created_at")
+            .in_("sku", list(by_sku.keys()))
+            .order("created_at", desc=True)
+            .execute()
+        )
+        last_per_sku: dict[str, str] = {}
+        for row in creatives.data or []:
+            sku = row.get("sku")
+            if sku and sku not in last_per_sku:
+                last_per_sku[sku] = row.get("created_at") or ""
+    except Exception:
+        logger.exception("product picker: failed to fetch last-creative timestamps")
+        last_per_sku = {}
+
+    enriched: list[dict] = []
+    for sku, p in by_sku.items():
+        p["_last_creative_at"] = last_per_sku.get(sku)
+        enriched.append(p)
+
+    # Sort stale-first: NULL first, then oldest created_at
+    def _sort_key(p: dict):
+        lc = p.get("_last_creative_at")
+        if not lc:
+            return (0, "")
+        return (1, lc)
+
+    enriched.sort(key=_sort_key)
+    return enriched
+
+
+def _product_picker_section_html(products: list[dict], ready: bool, pending_sku: str = "") -> str:
+    """Full section: heading + grid of product cards."""
+    if not products:
+        return ""
+
+    cards = "".join(_product_picker_card_html(p, ready, pending_sku) for p in products)
+    return f"""
+    <div class="card" style="padding:20px 20px 24px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+            <h3 style="font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);">
+                Generate new creatives
+            </h3>
+            <div style="font-size:12px;color:var(--text-muted);">
+                {len(products)} active products · stale first
+            </div>
+        </div>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">
+            Pick a product to generate 3 Claude-drafted variants. Closed-loop insights from last 30d
+            top performers automatically feed the prompt. Staleness: <span style="color:#2E7D4F;">fresh ≤7d</span> ·
+            <span style="color:#C17E1A;">aging ≤14d</span> · <span style="color:#C4392D;">stale &gt;14d</span>.
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;">
+            {cards}
+        </div>
     </div>
     """
 
@@ -1983,53 +2164,112 @@ async def ad_creatives_page(
     msg: str = "",
     pending: str = "",
 ):
-    """List all ad creative drafts, grouped by batch, newest first."""
+    """Ad creative manager: product picker at top, generated batches below."""
     if not _check_auth(dash_token):
         return RedirectResponse("/dashboard/login", status_code=303)
 
     from src.core.settings import settings as _settings
     db = _get_db()
+
     creatives = db.get_recent_ad_creatives(limit=60)
 
-    # Group by batch, preserve order (first occurrence wins = newest first)
+    # Identify any in-flight generation (pending batch_id → look up its sku)
+    pending_sku = ""
+    auto_refresh_meta = ""
+    if pending:
+        try:
+            # pending is a batch_id; find which sku it's for
+            res = (
+                db._client.table("generation_batches")
+                .select("sku,status")
+                .eq("id", pending)
+                .execute()
+            )
+            if res.data:
+                batch_row = res.data[0]
+                if batch_row.get("status") not in ("complete", "failed"):
+                    pending_sku = batch_row.get("sku") or ""
+                    # Auto-refresh every 5s while batch is in-flight
+                    auto_refresh_meta = '<meta http-equiv="refresh" content="5">'
+        except Exception:
+            logger.exception("ad-creatives: pending batch lookup failed")
+
+    # Group existing creatives by batch, preserve newest-first order
     batches: dict[str, list[dict]] = {}
     for c in creatives:
         bid = c.get("generation_batch_id", "unknown")
         batches.setdefault(bid, []).append(c)
-
-    # Within each batch, sort by variant_label A/B/C
     for bid in batches:
         batches[bid].sort(key=lambda x: x.get("variant_label", ""))
 
+    # Product picker section — always shown, even when batches is empty
+    active_products = await _active_products_with_staleness()
+    picker_html = _product_picker_section_html(
+        active_products, _settings.is_meta_creative_ready, pending_sku=pending_sku,
+    )
+
     pending_banner = ""
     if pending:
+        sku_label = pending_sku or "your product"
         pending_banner = f"""
         <div class="alert" style="background:rgba(59,126,197,0.08);color:#3B7EC5;">
-            Generating 3 variants for batch <code>{pending[:8]}</code>...
-            Refresh the page in about 15 seconds.
+            <strong>Generating 3 variants for {sku_label}…</strong>
+            Page auto-refreshes every 5 seconds until Claude finishes (usually 15-25s).
         </div>
         """
 
-    if not batches:
-        body = f"""
-            <h1>Ad Creatives</h1>
-            <div class="gold-divider"></div>
-            {_ad_creatives_banner_html(msg)}
-            {pending_banner}
-            {_empty_state_html()}
-        """
-    else:
-        batches_html = "".join(
+    # Pending review section (batches with any pending_review variants) shown separately
+    pending_batches: dict[str, list[dict]] = {}
+    history_batches: dict[str, list[dict]] = {}
+    for bid, items in batches.items():
+        if any(x.get("status") == "pending_review" for x in items):
+            pending_batches[bid] = items
+        else:
+            history_batches[bid] = items
+
+    pending_section = ""
+    if pending_batches:
+        pending_section = "".join(
             _batch_section_html(bid, items, _settings.is_meta_creative_ready)
-            for bid, items in batches.items()
+            for bid, items in pending_batches.items()
         )
-        body = f"""
-            <h1>Ad Creatives</h1>
-            <div class="gold-divider"></div>
-            {_ad_creatives_banner_html(msg)}
-            {pending_banner}
-            {batches_html}
+        pending_section = f"""
+        <h3 style="font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin:32px 0 12px;">
+            Pending review
+        </h3>
+        {pending_section}
         """
+
+    history_section = ""
+    if history_batches:
+        history_section = "".join(
+            _batch_section_html(bid, items, _settings.is_meta_creative_ready)
+            for bid, items in history_batches.items()
+        )
+        history_section = f"""
+        <h3 style="font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin:32px 0 12px;">
+            History
+        </h3>
+        {history_section}
+        """
+
+    empty_state = ""
+    if not batches:
+        # Always show the "no drafts" copy when the history is empty — whether products
+        # exist or not. Picker above tells the user what to do; this confirms no drafts.
+        empty_state = _empty_state_html()
+
+    body = f"""
+        {auto_refresh_meta}
+        <h1>Ad Creatives</h1>
+        <div class="gold-divider"></div>
+        {_ad_creatives_banner_html(msg)}
+        {pending_banner}
+        {picker_html}
+        {pending_section}
+        {history_section}
+        {empty_state}
+    """
 
     return HTMLResponse(_base_html("Ad Creatives", body, active="ad-creatives"))
 
@@ -2079,8 +2319,22 @@ async def _run_generation_task(
             except Exception:
                 logger.exception("Lazy image backfill failed for sku=%s (continuing)", sku)
 
+        # Phase 10.E closed-loop: feed top-performing ads from last 30d into the prompt.
+        # _run_generation_task is async, so we await directly (no asyncio.run — would
+        # crash with "cannot be called from a running event loop").
+        from src.core.database import AsyncDatabase
+        from src.marketing.ad_generator import fetch_top_performers
+        top_performers: list[dict] = []
+        try:
+            async_db = AsyncDatabase()
+            top_performers = await fetch_top_performers(async_db, days=30, limit=5)
+        except Exception:
+            logger.exception("Closed-loop insights fetch failed (non-fatal, continuing)")
+
         gen = AdCreativeGenerator()
-        variants, returned_batch_id, dna_hash = gen.generate(product, n_variants=3)
+        variants, returned_batch_id, dna_hash = gen.generate(
+            product, n_variants=3, top_performers=top_performers or None,
+        )
 
         rows = [
             v.to_db_row(sku=sku, generation_batch_id=batch_id, brand_dna_hash=dna_hash)
