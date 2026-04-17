@@ -20,6 +20,8 @@ from src.api.shopify_webhooks import (
     handle_checkout_webhook,
     handle_customer_webhook,
     handle_order_webhook,
+    handle_product_delete_webhook,
+    handle_product_webhook,
     handle_refund_webhook,
 )
 from src.core.database import AsyncDatabase
@@ -694,6 +696,18 @@ async def shopify_checkouts_webhook(request: Request, background_tasks: Backgrou
 async def shopify_refund_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle refunds/create webhooks."""
     return await handle_refund_webhook(request, background_tasks)
+
+
+@app.post("/webhook/shopify/products")
+async def shopify_products_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle products/create + products/update webhooks. Same payload; upsert covers both."""
+    return await handle_product_webhook(request, background_tasks)
+
+
+@app.post("/webhook/shopify/products-delete")
+async def shopify_products_delete_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle products/delete webhook. Payload is just {"id": N}."""
+    return await handle_product_delete_webhook(request, background_tasks)
 
 
 # ── ShipStation Webhook ──

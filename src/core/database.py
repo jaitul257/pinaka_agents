@@ -509,6 +509,20 @@ class Database:
     def delete_product(self, sku: str) -> None:
         self._client.table("products").delete().eq("sku", sku).execute()
 
+    def get_product_by_shopify_id(self, shopify_product_id: int) -> dict[str, Any] | None:
+        result = (
+            self._client.table("products")
+            .select("*")
+            .eq("shopify_product_id", shopify_product_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
+    def delete_product_by_shopify_id(self, shopify_product_id: int) -> None:
+        self._client.table("products").delete().eq(
+            "shopify_product_id", shopify_product_id
+        ).execute()
+
     def update_product_images(self, sku: str, image_urls: list[str]) -> dict[str, Any]:
         """Overwrite the images column for a product. Used by Shopify image sync."""
         result = (

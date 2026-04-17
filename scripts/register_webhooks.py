@@ -23,8 +23,14 @@ from src.core.shopify_client import ShopifyClient
 WEBHOOK_TOPICS = {
     "orders/create": "/webhook/shopify/orders",
     "customers/create": "/webhook/shopify/customers",
+    "customers/update": "/webhook/shopify/customers",
     "checkouts/create": "/webhook/shopify/checkouts",
     "refunds/create": "/webhook/shopify/refund",
+    # Phase 11: product mirroring so Supabase stays in real-time sync with
+    # Shopify admin changes (new product creation, edits, deletions)
+    "products/create": "/webhook/shopify/products",
+    "products/update": "/webhook/shopify/products",
+    "products/delete": "/webhook/shopify/products-delete",
 }
 
 

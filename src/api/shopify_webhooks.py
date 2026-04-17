@@ -544,6 +544,108 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
     logger.info("Order #%s processed: $%.2f from %s", shopify_order_id, total, customer_name)
 
 
+def _shopify_product_to_supabase_row(sp: dict[str, Any]) -> dict[str, Any]:
+    """Translate a Shopify Admin API product payload into a Supabase products row.
+
+    SKU is taken from the first variant (Pinaka is one-SKU-per-product today).
+    Handles the variant matrix case (Metal × Wrist Size) by picking the first
+    variant's SKU as the canonical identifier — other variants are stored in
+    `variant_options` for reference.
+    """
+    variants = sp.get("variants") or []
+    first_variant = variants[0] if variants else {}
+    sku = (first_variant.get("sku") or "").strip()
+
+    images = sp.get("images") or []
+    image_urls = [img.get("src", "") for img in images if isinstance(img, dict) and img.get("src")]
+
+    # Parse carats from title (e.g. "Diamond Tennis — 7ct Lab Grown" → "7ct")
+    import re
+    title = sp.get("title", "") or ""
+    carat_match = re.search(r"([\d.]+)\s*CT", title, re.IGNORECASE)
+    carats = carat_match.group(0) if carat_match else ""
+
+    return {
+        "sku": sku,
+        "name": title,
+        "shopify_product_id": sp.get("id"),
+        "handle": sp.get("handle"),
+        "category": sp.get("product_type") or "jewelry",
+        "status": sp.get("status") or "draft",
+        "images": image_urls,
+        "tags": [t.strip() for t in (sp.get("tags") or "").split(",") if t.strip()],
+        "carats": carats,
+        "variant_options": [
+            {
+                "id": v.get("id"),
+                "sku": v.get("sku"),
+                "title": v.get("title"),
+                "price": v.get("price"),
+                "option1": v.get("option1"),
+                "option2": v.get("option2"),
+            }
+            for v in variants
+        ],
+        "story": sp.get("body_html") or "",
+    }
+
+
+async def _process_product_create_or_update(product_data: dict[str, Any]) -> None:
+    """Mirror a Shopify product create or update into our Supabase products table.
+
+    Idempotent — upsert keyed on sku. If SKU is missing (Shopify products can
+    exist without a SKU, though ours always have one), skip the row and log.
+    """
+    try:
+        row = _shopify_product_to_supabase_row(product_data)
+        if not row.get("sku"):
+            logger.info(
+                "Product webhook: Shopify product %s has no SKU; skipping Supabase mirror",
+                product_data.get("id"),
+            )
+            return
+        db = _get_async_db()
+        await db.upsert_product(row)
+        logger.info(
+            "Product webhook: upserted SKU=%s (shopify_id=%s, status=%s)",
+            row["sku"], row.get("shopify_product_id"), row.get("status"),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to mirror Shopify product %s into Supabase", product_data.get("id")
+        )
+
+
+async def _process_product_delete(product_data: dict[str, Any]) -> None:
+    """Handle Shopify products/delete webhook. Removes the Supabase row + any
+    ad creatives tied to that SKU (via ad_creatives.sku FK ON DELETE SET NULL,
+    the ads stay but lose their product link).
+
+    Shopify sends only `{"id": <product_id>}` on delete — no full payload.
+    """
+    try:
+        shopify_product_id = product_data.get("id")
+        if not shopify_product_id:
+            return
+        db = _get_async_db()
+        existing = await db.get_product_by_shopify_id(int(shopify_product_id))
+        if not existing:
+            logger.info(
+                "Product delete webhook: Shopify %s not in Supabase; nothing to remove",
+                shopify_product_id,
+            )
+            return
+        await db.delete_product_by_shopify_id(int(shopify_product_id))
+        logger.info(
+            "Product delete webhook: removed SKU=%s (shopify_id=%s)",
+            existing.get("sku"), shopify_product_id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to delete Shopify product %s from Supabase", product_data.get("id")
+        )
+
+
 async def _process_customer(customer_data: dict[str, Any]) -> None:
     """Process a Shopify customer create/update event."""
     shopify_customer_id = customer_data.get("id")
@@ -736,6 +838,24 @@ async def handle_refund_webhook(request: Request, background_tasks: BackgroundTa
     """Handle refunds/create webhooks."""
     _, refund_data = await validate_shopify_request(request)
     background_tasks.add_task(_process_refund, refund_data)
+    return {"status": "received"}
+
+
+async def handle_product_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle products/create + products/update webhooks — keep Supabase in sync.
+
+    Shopify sends the full product payload on both. We upsert by sku (from the
+    first variant), which covers both create and update transparently.
+    """
+    _, product_data = await validate_shopify_request(request)
+    background_tasks.add_task(_process_product_create_or_update, product_data)
+    return {"status": "received"}
+
+
+async def handle_product_delete_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle products/delete webhook — remove from Supabase when archived in Shopify."""
+    _, product_data = await validate_shopify_request(request)
+    background_tasks.add_task(_process_product_delete, product_data)
     return {"status": "received"}
 
 
