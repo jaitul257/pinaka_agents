@@ -1830,6 +1830,107 @@ async def cron_seo_post():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/weekly-creative-rotation", dependencies=[Depends(verify_cron_secret)])
+async def cron_weekly_creative_rotation():
+    """Weekly rotation — picks the stalest active product and generates 3 fresh variants.
+
+    Runs Monday 1 PM ET. Prevents stale ads from running past 14 days with
+    outdated brand copy. Uses Phase 10.E closed-loop insights (top-performers
+    from last 30d) to make each generation smarter than the last.
+
+    Safeguards:
+      - Skips if AUTO_ROTATE_CREATIVES=false on Railway
+      - Skips if >5 creatives already pending_review (back-pressure)
+      - Skips if no product is stale enough (everything was rotated recently)
+      - Max 1 product per run
+    """
+    import os
+    import uuid as _uuid
+
+    if os.environ.get("AUTO_ROTATE_CREATIVES", "true").lower() in ("false", "0", "off"):
+        return {"status": "disabled", "reason": "AUTO_ROTATE_CREATIVES env flag set to false"}
+
+    from src.marketing.ad_generator import AdCreativeGenerator, AdGeneratorError, fetch_top_performers
+
+    db = AsyncDatabase()
+
+    # Back-pressure check
+    pending = await db.count_pending_ad_creatives()
+    if pending > 5:
+        logger.info("Rotation: %d pending approvals, skipping to avoid pile-up", pending)
+        return {"status": "skipped", "reason": "too_many_pending", "pending": pending}
+
+    # Pick the stalest product
+    product = await db.get_next_rotation_sku(min_days_stale=14)
+    if not product:
+        return {"status": "skipped", "reason": "no_stale_products"}
+
+    sku = product["sku"]
+    last_generated = product.get("_last_creative_at") or "never"
+
+    # Pull closed-loop insights (Phase 10.E)
+    top_performers = await fetch_top_performers(db, days=30, limit=5)
+
+    try:
+        gen = AdCreativeGenerator()
+        variants, batch_id, dna_hash = gen.generate(
+            product, n_variants=3, top_performers=top_performers,
+        )
+    except AdGeneratorError as e:
+        logger.error("Rotation: generation failed for %s: %s", sku, e)
+        return {"status": "error", "error": str(e), "sku": sku}
+
+    rows = [
+        v.to_db_row(sku=sku, generation_batch_id=batch_id, brand_dna_hash=dna_hash)
+        for v in variants
+    ]
+    await db.create_ad_creative_batch(rows)
+
+    # Slack notification + observation
+    slack = SlackNotifier()
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": ":arrows_counterclockwise: Weekly Creative Rotation"}},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*Product:* `{sku}`"},
+            {"type": "mrkdwn", "text": f"*Name:* {product.get('name', '—')}"},
+            {"type": "mrkdwn", "text": f"*Last generated:* {last_generated[:10] if last_generated != 'never' else 'never'}"},
+            {"type": "mrkdwn", "text": f"*Variants drafted:* {len(variants)}"},
+        ]},
+        {"type": "section", "text": {"type": "mrkdwn",
+            "text": (
+                f":point_right: <https://pinaka-agents-production-198b5.up.railway.app/dashboard/ad-creatives"
+                f"|Review the 3 variants>" + (
+                    f" · *{len(top_performers)} top performers* informed the prompt"
+                    if top_performers else " · no historical performers yet — first batch"
+                )
+            )}},
+    ]
+    await slack.send_blocks(blocks, text=f"Weekly rotation: {sku}")
+
+    try:
+        from src.agents.observations import observe
+        await observe(
+            source="cron:weekly_creative_rotation",
+            category="marketing",
+            severity="info",
+            summary=f"Weekly rotation generated {len(variants)} variants for {sku} (last: {last_generated[:10] if last_generated != 'never' else 'never'})",
+            entity_type="ad_creative_batch",
+            entity_id=batch_id,
+            data={"sku": sku, "batch_id": batch_id, "top_performers": len(top_performers)},
+        )
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "sku": sku,
+        "batch_id": batch_id,
+        "variant_count": len(variants),
+        "last_generated": last_generated,
+        "top_performers_used": len(top_performers),
+    }
+
+
 @app.post("/cron/rfm-compute", dependencies=[Depends(verify_cron_secret)])
 async def cron_rfm_compute():
     """Daily RFM scoring for all past buyers — runs 8 AM ET.

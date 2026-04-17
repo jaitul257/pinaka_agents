@@ -601,6 +601,93 @@ class Database:
         )
         return result.data or []
 
+    def get_next_rotation_sku(self, min_days_stale: int = 14) -> dict[str, Any] | None:
+        """Pick the active product most in need of fresh ad creative.
+
+        Returns the product row with an extra `_last_creative_at` field
+        (ISO string or None). Chosen by:
+          1. Active products only (status='active', have images)
+          2. Exclude products with any creative in last `min_days_stale` days
+          3. Rank by oldest last-creative-at (NULLS FIRST = never generated)
+
+        Returns None if every active product was just rotated.
+        """
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+        # 1. All active products that have at least one image
+        products_resp = (
+            self._client.table("products")
+            .select("sku, name, status, images, story, materials, category, occasions, certification")
+            .eq("status", "active")
+            .execute()
+        )
+        products = products_resp.data or []
+        # Filter to ones with usable images
+        products = [p for p in products if p.get("images") and len(p.get("images") or []) > 0]
+        if not products:
+            return None
+
+        skus = [p["sku"] for p in products if p.get("sku")]
+        if not skus:
+            return None
+
+        # 2. Most recent ad_creative per sku in one query
+        creatives_resp = (
+            self._client.table("ad_creatives")
+            .select("sku, created_at")
+            .in_("sku", skus)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        # First-seen wins (already ordered desc) — per-sku most recent
+        last_creative_by_sku: dict[str, str] = {}
+        for row in creatives_resp.data or []:
+            sku = row.get("sku")
+            if sku and sku not in last_creative_by_sku:
+                last_creative_by_sku[sku] = row.get("created_at") or ""
+
+        # 3. Compute stale threshold — any creative newer than this disqualifies
+        now = _dt.now(_tz.utc)
+        stale_cutoff = now - _td(days=min_days_stale)
+
+        eligible: list[dict[str, Any]] = []
+        for p in products:
+            last_at = last_creative_by_sku.get(p["sku"])
+            p["_last_creative_at"] = last_at
+            if not last_at:
+                # Never generated — highest priority
+                p["_sort_key"] = (0, "")  # NULLS FIRST
+                eligible.append(p)
+                continue
+            try:
+                last_dt = _dt.fromisoformat(last_at.replace("Z", "+00:00"))
+                if last_dt > stale_cutoff:
+                    continue  # Too fresh, skip
+                p["_sort_key"] = (1, last_at)
+                eligible.append(p)
+            except (ValueError, AttributeError):
+                # Bad date — treat as "never generated"
+                p["_sort_key"] = (0, "")
+                eligible.append(p)
+
+        if not eligible:
+            return None
+
+        # Oldest first (NULLS FIRST already handled via (0, ...) tuple)
+        eligible.sort(key=lambda x: x["_sort_key"])
+        return eligible[0]
+
+    def count_pending_ad_creatives(self) -> int:
+        """Count of ad_creatives still in pending_review. Used as back-pressure:
+        don't pile more approvals on the founder if there's already a stack."""
+        result = (
+            self._client.table("ad_creatives")
+            .select("id", count="exact")
+            .eq("status", "pending_review")
+            .execute()
+        )
+        return result.count or 0
+
     def approve_ad_creative_atomic(
         self, creative_id: int, approved_by: str = ""
     ) -> dict[str, Any] | None:
