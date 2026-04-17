@@ -33,22 +33,61 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_PROMPT = """You are the Heartbeat Monitor for Pinaka Jewellery's AI operations system.
 
-You've just received a list of issues found during a routine health check. For each issue,
-decide what action to take:
+## Your job
 
-ACTIONS AVAILABLE:
-- ALERT: Post to Slack for founder attention (use for critical/ambiguous issues)
-- DISPATCH: Recommend which agent should handle this (order_ops, customer_service, marketing, finance, retention)
-- MONITOR: No action needed yet, but flag for next heartbeat check
-- DISMISS: Not a real issue (e.g., test data, expected behavior)
+Review a snapshot of system state against the thresholds we use to flag \
+anomalies. Report findings. Recommend action ONLY if the data supports it.
 
-For each issue, respond with a JSON array:
+You are not a problem-finder. You are a verifier. Most heartbeats should \
+conclude "state is within thresholds, no action needed." That is a correct \
+and valuable outcome.
+
+## What each item in the input means
+
+Each item carries a `check` name, a `severity` flag, a `summary`, and a \
+`data` payload containing the raw values and the thresholds that triggered \
+the flag. Reason against the actual numbers — do not assume the flag is \
+correct just because it's in the list.
+
+A stuck-order flag at 49 hours on a Sunday is different from one at 72 hours \
+on a Tuesday. A shipping_delay on a 10-day-old overseas order is different \
+from one on a 10-day-old domestic order. The data payload tells you which.
+
+## Actions available
+
+For each item, choose exactly one of:
+
+- NO_ACTION: state is within acceptable variance given the data. Preferred \
+  when thresholds are technically crossed but the business context explains \
+  it (weekend, holiday, seasonal window, known-long lead time).
+- MONITOR: flag to re-check in the next cycle without alerting now. Use when \
+  something is drifting but has not yet crossed a material line.
+- DISPATCH: recommend a specific agent handle this (order_ops, \
+  customer_service, marketing, finance, retention). Only when there is a \
+  concrete action an agent can take to resolve it.
+- ALERT: post to Slack for founder attention. Reserved for cases where \
+  (a) there is real business impact AND (b) no agent can resolve it \
+  autonomously. Do not ALERT just because something is unusual.
+
+## Output format
+
+Respond with a JSON array, one entry per input item, in the same order:
+
 [
-  {"issue": "summary", "action": "ALERT|DISPATCH|MONITOR|DISMISS", "agent": "agent_name or null", "reason": "why", "priority": "high|medium|low"}
+  {"issue": "summary", "action": "NO_ACTION|MONITOR|DISPATCH|ALERT", \
+"agent": "agent_name or null", "reason": "specific numeric comparison, e.g. \
+'47h < 48h threshold, within variance'", "priority": "high|medium|low"}
 ]
 
-Be conservative. Only ALERT or DISPATCH when there's a real business impact. Most observations
-are routine and should be MONITOR or DISMISS.
+The `reason` field MUST cite specific numbers or conditions from the data \
+payload. A reason like "looks fine" is not acceptable; "47h elapsed vs 48h \
+threshold, and weekend explains the gap" is.
+
+## Default assumption
+
+If you cannot confidently justify ALERT or DISPATCH from the data, choose \
+MONITOR or NO_ACTION. Silence is valid. Over-alerting costs founder \
+attention and trains the system to escalate normal variance.
 """
 
 
@@ -87,15 +126,25 @@ class Heartbeat:
         actions = await self._reason_about_issues(issues)
 
         # ── Execute actions ──
+        # NO_ACTION and MONITOR are deliberate no-ops: we count them so the
+        # dashboard knows the heartbeat actually reviewed items (not silence),
+        # but we do not page the founder for them.
         alerts_sent = 0
         dispatches = 0
+        monitored = 0
+        no_action = 0
         for action in actions:
-            if action.get("action") == "ALERT":
+            verb = (action.get("action") or "").upper()
+            if verb == "ALERT":
                 await self._send_alert(action)
                 alerts_sent += 1
-            elif action.get("action") == "DISPATCH":
+            elif verb == "DISPATCH":
                 await self._dispatch_agent(action)
                 dispatches += 1
+            elif verb == "MONITOR":
+                monitored += 1
+            elif verb in ("NO_ACTION", "DISMISS"):
+                no_action += 1
 
         # Mark observations as acted on
         await self._mark_observations_acted(issues)
@@ -105,13 +154,18 @@ class Heartbeat:
             await self._increment_counter("beats_with_action")
 
         summary = {
-            "status": "acted",
+            "status": "acted" if (alerts_sent or dispatches) else "reviewed",
             "issues": len(issues),
             "alerts_sent": alerts_sent,
             "dispatches": dispatches,
+            "monitored": monitored,
+            "no_action": no_action,
             "duration_ms": int((datetime.utcnow() - start).total_seconds() * 1000),
         }
-        logger.info("Heartbeat: %d issues, %d alerts, %d dispatches", len(issues), alerts_sent, dispatches)
+        logger.info(
+            "Heartbeat: %d items, %d alerts, %d dispatches, %d monitor, %d no-action",
+            len(issues), alerts_sent, dispatches, monitored, no_action,
+        )
         return summary
 
     # ── Cheap SQL checks ──
@@ -233,34 +287,64 @@ class Heartbeat:
 
     # ── Claude reasoning ──
 
+    # Threshold definitions — shared with the agent's reasoning context
+    # so Claude can compare observed values to the line that was crossed,
+    # not just trust the flag.
+    _THRESHOLDS: dict[str, str] = {
+        "stuck_order": "paid > 48h with no ShipStation tracking",
+        "unanswered_message": "pending_review > 2h",
+        "shipping_delay": "shipped > 7d with no delivered_at",
+        "unacted_observation": "observation.severity in (warning, critical) AND acted_on=false",
+        "agent_failure": "audit_log in last 6h with result=failed OR escalated=true",
+    }
+
     async def _reason_about_issues(self, issues: list[dict]) -> list[dict]:
-        """Ask Claude to triage issues and decide actions."""
-        issues_text = json.dumps(
-            [{"severity": i["severity"], "summary": i["summary"], "check": i["check"]} for i in issues],
-            indent=2,
-        )
+        """Ask Claude to triage findings and decide actions.
+
+        We include the full data payload AND the threshold definition for
+        each check so Claude is comparing observed vs expected, not just
+        parroting the flag. Prompt framing is neutral (verify, don't hunt).
+        """
+        enriched = [
+            {
+                "check": i["check"],
+                "severity": i["severity"],
+                "threshold": self._THRESHOLDS.get(i["check"], "unknown threshold"),
+                "summary": i["summary"],
+                "data": i.get("data", {}),
+            }
+            for i in issues
+        ]
+        issues_text = json.dumps(enriched, indent=2, default=str)
 
         try:
             response = await self._client.messages.create(
                 model=settings.claude_model,
                 system=HEARTBEAT_PROMPT,
                 max_tokens=1024,
-                messages=[{"role": "user", "content": f"Issues found during heartbeat scan:\n\n{issues_text}"}],
+                messages=[{"role": "user",
+                           "content": f"Snapshot of flagged items with raw data and thresholds:\n\n{issues_text}"}],
             )
 
             text = response.content[0].text.strip()
-
-            # Extract JSON from response
             import re
             match = re.search(r"\[.*\]", text, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            return []
+            if not match:
+                return []
+            parsed = json.loads(match.group())
+            # Keep only items that imply action — NO_ACTION and MONITOR are
+            # deliberately dropped here so _send_alert / _dispatch_agent
+            # never fires on them. Statistics live in the return summary.
+            return parsed
         except Exception:
             logger.exception("Heartbeat Claude reasoning failed")
-            # Fall back: alert on all critical issues
+            # Fall back: alert on items explicitly marked 'critical' in the
+            # input severity — not 'warning'. Warning-level items wait for
+            # the next heartbeat when Claude is working again.
             return [
-                {"issue": i["summary"], "action": "ALERT", "agent": None, "reason": "Claude reasoning failed, alerting by default", "priority": "high"}
+                {"issue": i["summary"], "action": "ALERT", "agent": None,
+                 "reason": "Claude reasoning failed; critical-severity item escalated by fallback policy",
+                 "priority": "high"}
                 for i in issues if i["severity"] == "critical"
             ]
 

@@ -19,22 +19,44 @@ from src.finance.calculator import FinanceCalculator
 from src.shipping.processor import ShippingProcessor
 
 SYSTEM_PROMPT = """You are the Order Operations Agent for Pinaka Jewellery, a premium \
-handcrafted diamond tennis bracelet brand.
+handcrafted diamond tennis bracelet brand (~$5,000 AOV, made-to-order, 15 \
+business day lead time).
 
-When a new order arrives, follow this sequence:
-1. Look up the order and customer details using lookup_order and lookup_customer.
-2. Run check_fraud_risk — if flagged, STOP and post_to_slack to escalate immediately. Do not proceed with fulfillment.
-3. Check validate_insurance — note if there is a coverage gap.
-4. Create the ShipStation fulfillment order using create_shipstation_order.
-5. Calculate the order profit using calculate_profit.
-6. Post a summary to Slack with order details, fraud status, insurance status, and profit.
+## Your job
 
-IMPORTANT RULES:
-- Never skip the fraud check. Every single order gets checked.
-- If fraud is flagged with requires_video_verification=true, you MUST escalate. Do not proceed with fulfillment.
-- All bracelets are made-to-order (15 business days). Set expectations accordingly.
-- If any tool returns an error, explain the issue and escalate to Slack for human review.
-- Be concise in your reasoning. State what you're doing and why at each step.
+Process a new order from Shopify through to ShipStation handoff, verifying \
+fraud and insurance conditions on the way. Report a concise summary at the \
+end. Escalate when the data warrants it, not by default.
+
+## Hard rules (non-negotiable, safety-critical)
+
+- Every order gets `check_fraud_risk`. No exceptions. Skipping this is a bug.
+- If `requires_video_verification` is true (orders above $5,000), stop the \
+  sequence and escalate to Slack. Do not create the ShipStation order.
+- If a fulfillment tool (`create_shipstation_order`) returns an error, do \
+  NOT retry silently — report the failure and escalate. A duplicate \
+  ShipStation order costs real money.
+
+## Suggested sequence (the 99% path)
+
+1. `lookup_order` + `lookup_customer` to ground yourself.
+2. `check_fraud_risk` — act on the result.
+3. `validate_insurance` — note the gap but continue; insurance shortfall \
+   is a flag, not a stop.
+4. `create_shipstation_order` if no fraud stop condition was hit.
+5. `calculate_profit` for the Slack summary.
+6. `post_to_slack` with a structured summary (fraud status, insurance \
+   status, profit, ShipStation ID).
+
+Deviations from this sequence are fine when the data demands it — e.g. a \
+repeat customer with clean history doesn't need a second lookup_customer. \
+Reason out loud when you deviate.
+
+## Framing
+
+- Errors from non-fulfillment tools (`lookup_*`, `calculate_profit`) do \
+  not automatically mean escalation. Investigate first.
+- Made-to-order shipping is 15 business days — don't promise faster.
 """ + CONFIDENCE_INSTRUCTIONS
 
 
@@ -59,16 +81,19 @@ class OrderOpsAgent(BaseAgent):
         self.tools.register(
             name="lookup_order",
             description=(
-                "Look up order details by Shopify order ID. Returns order total, "
-                "line items, status, shipping address, customer email, and all stored "
-                "fields. Use this first when handling any order-related task."
+                "Read-only. Fetch a single Shopify order row from Supabase by its "
+                "numeric Shopify order ID. Returns the full order dict (total in USD, "
+                "line_items, status, shipping_address, buyer_email, created_at, "
+                "shipstation_order_id if already fulfilled, tracking_number if shipped). "
+                "Returns null if the order isn't in our DB (webhook may be delayed — "
+                "wait and retry, don't escalate)."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "order_id": {
                         "type": "integer",
-                        "description": "The Shopify order ID (numeric)",
+                        "description": "Numeric Shopify order ID (not the '#1234' display number)",
                     },
                 },
                 "required": ["order_id"],
@@ -80,17 +105,15 @@ class OrderOpsAgent(BaseAgent):
         self.tools.register(
             name="lookup_customer",
             description=(
-                "Get customer profile by email address. Returns name, order history count, "
-                "lifetime value, lifecycle stage, last order date, accepts_marketing flag. "
-                "Check this before sending any customer communication."
+                "Read-only. Fetch a customer row from Supabase by email (case-insensitive). "
+                "Returns {id, name, order_count, lifetime_value (USD), lifecycle_stage, "
+                "last_order_at, accepts_marketing} or null if unknown. Use to distinguish "
+                "first-time buyers from repeat customers in your summary."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "email": {
-                        "type": "string",
-                        "description": "Customer's email address",
-                    },
+                    "email": {"type": "string", "description": "Customer email address"},
                 },
                 "required": ["email"],
             },
@@ -101,17 +124,19 @@ class OrderOpsAgent(BaseAgent):
         self.tools.register(
             name="check_fraud_risk",
             description=(
-                "Evaluate fraud risk for an order. Pass the full order dict. Returns "
-                "is_flagged (bool), reasons (list of strings), requires_video_verification "
-                "(bool for orders > $5,000), and insurance_gap (float). ALWAYS run this "
-                "on every new order before proceeding with fulfillment."
+                "Read-only. Score an order against fraud heuristics. Returns "
+                "{is_flagged: bool, reasons: list[str], requires_video_verification: "
+                "bool, insurance_gap: float}. Thresholds: total > $5,000 sets "
+                "requires_video_verification; email+IP velocity > 2 orders/24h sets "
+                "is_flagged; mismatched shipping/billing country sets is_flagged. "
+                "insurance_gap is max(0, total - $2,500)."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "order": {
                         "type": "object",
-                        "description": "The order dict with total, buyer_email, and other fields",
+                        "description": "Order dict with at minimum: total (number), buyer_email (string), shipping_address, billing_address",
                     },
                 },
                 "required": ["order"],
@@ -123,16 +148,17 @@ class OrderOpsAgent(BaseAgent):
         self.tools.register(
             name="validate_insurance",
             description=(
-                "Check if carrier insurance covers the order value. Returns covered (bool), "
-                "insured_value, and gap amount. Carrier cap is $2,500. Orders above that "
-                "need supplemental Shipsurance coverage."
+                "Read-only. Compare order total against the $2,500 carrier insurance "
+                "cap. Returns {covered: bool, insured_value (USD), gap (USD)}. A gap > 0 "
+                "indicates need for supplemental Shipsurance coverage — flag in the "
+                "summary but do NOT stop the fulfillment sequence on gap alone."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "order_total": {
                         "type": "number",
-                        "description": "The order total in dollars",
+                        "description": "Order total in USD (positive number)",
                     },
                 },
                 "required": ["order_total"],
@@ -144,16 +170,19 @@ class OrderOpsAgent(BaseAgent):
         self.tools.register(
             name="create_shipstation_order",
             description=(
-                "Create an order in ShipStation for fulfillment. Pass the full order data "
-                "including shipping_address, billing_address, and line_items. Returns the "
-                "ShipStation order response with orderId on success."
+                "SIDE EFFECT — creates a new order in ShipStation. NOT idempotent: "
+                "calling twice creates a duplicate order and real duplicate shipping "
+                "labels. Only call after check_fraud_risk passes (or fraud stop "
+                "condition is manually waived). On HTTP error, do NOT retry — escalate "
+                "to Slack and let a human decide. Returns ShipStation's response "
+                "object with orderId on success."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "order_data": {
                         "type": "object",
-                        "description": "Order data with shipping_address, billing_address, line_items, total, buyer_email",
+                        "description": "Full order payload: shipping_address, billing_address, line_items, total (USD), buyer_email, shopify_order_id",
                     },
                 },
                 "required": ["order_data"],
@@ -165,16 +194,18 @@ class OrderOpsAgent(BaseAgent):
         self.tools.register(
             name="calculate_profit",
             description=(
-                "Calculate net profit for an order. Pass the order dict with total, cogs, "
-                "shipping_cost, ad_spend fields. Returns revenue, COGS, Shopify fees, "
-                "shipping cost, ad cost, net profit, and margin percentage."
+                "Read-only. Compute P&L for one order. Shopify fee is 2.9% + $0.30 "
+                "(applied inside). Returns {revenue, cogs, shopify_fees, shipping_cost, "
+                "ad_spend, net_profit, margin_pct} all in USD. If cogs or ad_spend are "
+                "missing from the order, they're treated as zero — margin_pct will be "
+                "optimistic in that case. Flag if margin_pct < 20."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "order": {
                         "type": "object",
-                        "description": "Order dict with total, cogs, shipping_cost, ad_spend",
+                        "description": "Order dict with total (required); cogs, shipping_cost, ad_spend optional (default 0)",
                     },
                 },
                 "required": ["order"],
@@ -186,15 +217,17 @@ class OrderOpsAgent(BaseAgent):
         self.tools.register(
             name="post_to_slack",
             description=(
-                "Post a message to the Slack ops channel. Use for escalation, status "
-                "updates, or requesting human approval. Pass a text message."
+                "SIDE EFFECT — posts one message to the founder's Slack channel. "
+                "Use for: order summaries after successful fulfillment, escalations "
+                "(fraud stop conditions, tool errors), or insurance-gap flags. One "
+                "message per run — do not spam. Message is truncated at 2900 chars."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "message": {
                         "type": "string",
-                        "description": "The message text to post to Slack",
+                        "description": "Text or simple markdown, max ~2900 chars",
                     },
                 },
                 "required": ["message"],

@@ -102,80 +102,104 @@ class ContextAssembler:
         context["sender_email"] = sender_email
         return context
 
-    async def for_daily_ops(self) -> dict[str, Any]:
-        """Daily operations context: today's stats, pending items, ad performance.
+    # ── Internal helpers ──
+    # These return *slices*, not dumps. Public for_<agent> methods compose
+    # only the slices their agent actually reasons on. Rule: if an agent
+    # never cites the field in its output, it shouldn't be in its context.
 
-        Used by: FinanceAgent, MarketingAgent
-        """
+    async def _daily_stats(self, days: int = 7) -> list[dict[str, Any]]:
         from datetime import date, timedelta
-
-        context: dict[str, Any] = {}
-
         today = date.today()
-        week_ago = today - timedelta(days=7)
+        return await self._db.get_stats_range(today - timedelta(days=days), today)
 
-        # Daily stats for the past week
-        stats = await self._db.get_stats_range(week_ago, today)
-        context["daily_stats"] = stats
+    async def _recent_order_margins(self, cap: int = 20) -> dict[str, Any]:
+        """Per-order margins for the most recent paid/shipped/delivered orders.
 
-        # Pending messages
-        pending = await self._db.get_pending_messages()
-        context["pending_messages"] = len(pending)
-
-        # Abandoned carts
-        carts = await self._db.get_abandoned_carts_pending_recovery()
-        context["abandoned_carts"] = len(carts)
-
-        # Orders by status
-        paid_orders = await self._db.get_orders_by_status("paid")
-        shipped_orders = await self._db.get_orders_by_status("shipped")
-        context["orders_awaiting_fulfillment"] = len(paid_orders)
-        context["orders_in_transit"] = len(shipped_orders)
-
-        return context
-
-    async def for_marketing(self) -> dict[str, Any]:
-        """Marketing context with finance feedback loop.
-
-        Includes daily stats + per-product margin data so the marketing agent
-        can prioritize high-margin products for ad spend.
+        Returns {product_margins, avg_margin_pct, total_net_profit} or empty.
+        Marketing needs margin data to prioritize ad spend; finance needs it
+        for profit reporting. Nobody else should see this.
         """
-        from datetime import date, timedelta
         from src.finance.calculator import FinanceCalculator
 
-        context = await self.for_daily_ops()
-        finance = FinanceCalculator()
-
-        # Calculate margins for recent orders → feed into marketing decisions
         try:
-            today = date.today()
-            month_ago = today - timedelta(days=30)
-
-            # Get recent delivered/paid orders for margin analysis
-            all_orders = []
+            finance = FinanceCalculator()
+            all_orders: list[dict[str, Any]] = []
             for status in ("paid", "shipped", "delivered"):
                 orders = await self._db.get_orders_by_status(status)
                 all_orders.extend(orders)
-
-            if all_orders:
-                margins = []
-                for order in all_orders[:20]:  # Cap at 20 for token efficiency
-                    profit = finance.calculate_order_profit(order)
-                    margins.append({
-                        "order_id": order.get("shopify_order_id"),
-                        "revenue": profit.revenue,
-                        "net_profit": profit.net_profit,
-                        "margin_pct": profit.margin_pct,
-                    })
-
-                context["product_margins"] = margins
-                avg_margin = sum(m["margin_pct"] for m in margins) / len(margins) if margins else 0
-                context["avg_margin_pct"] = round(avg_margin, 1)
-                context["total_net_profit"] = round(sum(m["net_profit"] for m in margins), 2)
+            if not all_orders:
+                return {}
+            margins = []
+            for order in all_orders[:cap]:
+                profit = finance.calculate_order_profit(order)
+                margins.append({
+                    "order_id": order.get("shopify_order_id"),
+                    "revenue": profit.revenue,
+                    "net_profit": profit.net_profit,
+                    "margin_pct": profit.margin_pct,
+                })
+            avg = sum(m["margin_pct"] for m in margins) / len(margins)
+            return {
+                "product_margins": margins,
+                "avg_margin_pct": round(avg, 1),
+                "total_net_profit": round(sum(m["net_profit"] for m in margins), 2),
+            }
         except Exception:
-            pass  # Non-critical — marketing agent works without margins too
+            logger.exception("_recent_order_margins failed")
+            return {}
 
+    async def for_marketing(self) -> dict[str, Any]:
+        """Marketing-only context: daily stats + margin data.
+
+        Does NOT include abandoned carts, pending messages, or fulfillment
+        counts — those belong to other agents and would just invite the
+        marketing agent to correlate noise. Seasonal window is fetched via
+        the `get_current_strategy` tool, not the context dump.
+        """
+        context: dict[str, Any] = {"daily_stats": await self._daily_stats()}
+        context.update(await self._recent_order_margins())
         return context
+
+    async def for_finance(self) -> dict[str, Any]:
+        """Finance-only context: daily stats + margin data over 30 days.
+
+        Same slice as marketing today; diverges as Phase 13's outcome
+        feedback lands. Kept as a separate method so the divergence doesn't
+        require refactoring callers.
+        """
+        context: dict[str, Any] = {"daily_stats": await self._daily_stats(days=30)}
+        context.update(await self._recent_order_margins(cap=30))
+        return context
+
+    async def for_order_ops(self) -> dict[str, Any]:
+        """Order ops context: only the fulfillment queue.
+
+        Does NOT include ad spend, ROAS, margins, or pending customer
+        messages. Order ops cares about physical movement of orders.
+        """
+        paid = await self._db.get_orders_by_status("paid")
+        shipped = await self._db.get_orders_by_status("shipped")
+        return {
+            "orders_awaiting_fulfillment": len(paid),
+            "orders_in_transit": len(shipped),
+            # Include the IDs so the agent can reason about specific orders
+            # without needing a second tool call.
+            "awaiting_order_ids": [o.get("shopify_order_id") for o in paid[:20]],
+        }
+
+    async def for_customer_service_queue(self) -> dict[str, Any]:
+        """Customer service queue context: pending messages + abandoned carts.
+
+        Used when the CS agent runs a queue sweep (not a single-message
+        reply — that uses for_message). Does NOT include revenue or margin
+        data.
+        """
+        pending = await self._db.get_pending_messages()
+        carts = await self._db.get_abandoned_carts_pending_recovery()
+        return {
+            "pending_message_count": len(pending),
+            "abandoned_cart_count": len(carts),
+        }
 
     async def for_retention(self, customer_id: int) -> dict[str, Any]:
         """Context for retention decisions (reorder reminders, cart recovery).

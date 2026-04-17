@@ -33,17 +33,22 @@ class AgentResult:
     escalated: bool = False
     audit_id: str | None = None
     tokens_used: int = 0
-    confidence: str = "high"  # "high", "medium", "low" — self-reported by the agent
+    # "high", "medium", "low", or "unknown" — self-reported by the agent.
+    # "unknown" is the fail-open default when the agent didn't tag its response;
+    # we do NOT assume high confidence silently (that masks uncertainty and
+    # trains downstream feedback to reinforce over-confident agents).
+    confidence: str = "unknown"
 
 
 CONFIDENCE_INSTRUCTIONS = """
 
 CONFIDENCE RATING (required in your final response):
-End every response with [CONFIDENCE: high], [CONFIDENCE: medium], or [CONFIDENCE: low].
-- HIGH: You completed the task successfully with clear data. No ambiguity.
-- MEDIUM: You completed the task but had to make assumptions or lacked some data.
-- LOW: You are uncertain about your actions or the data was contradictory/missing. When LOW, explain what you're unsure about.
+End every response with one of [CONFIDENCE: high], [CONFIDENCE: medium], or [CONFIDENCE: low].
+- HIGH: You completed the task successfully with clear data. No ambiguity. You would make the same call in a review.
+- MEDIUM: You completed the task but had to make at least one assumption or lacked some data. Say which.
+- LOW: You are uncertain about your actions OR the data was contradictory / missing. Explain what you're unsure about.
 
+Omitting the confidence tag is treated as 'unknown' and routed for review.
 Be concise. Act first, explain only when needed. Do not narrate each step — just do it."""
 
 
@@ -122,11 +127,16 @@ class BaseAgent:
     def _extract_confidence(text: str) -> str:
         """Extract confidence level from agent's response text.
 
-        Looks for [CONFIDENCE: high/medium/low] pattern. Defaults to 'high'.
+        Looks for [CONFIDENCE: high/medium/low] pattern. Returns 'unknown' if
+        missing — we do not silently default to 'high'. An agent that forgets
+        to tag confidence is not the same as an agent that is actually sure.
         """
         import re
         match = re.search(r"\[CONFIDENCE:\s*(high|medium|low)\]", text, re.IGNORECASE)
-        return match.group(1).lower() if match else "high"
+        if not match:
+            logger.warning("Agent response missing [CONFIDENCE: …] tag; treating as 'unknown'")
+            return "unknown"
+        return match.group(1).lower()
 
     async def _escalate_to_slack(
         self,
