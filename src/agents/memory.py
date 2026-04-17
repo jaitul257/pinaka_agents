@@ -221,12 +221,14 @@ async def _gather_product_raw(sku: str) -> dict[str, Any]:
                         .limit(20)
                         .execute()).data or []
 
-        creative_ids = [c["id"] for c in ad_creatives]
+        # ad_creative_metrics links via meta_ad_id, not creative_id. Only
+        # creatives that were actually pushed to Meta have metrics rows.
+        meta_ad_ids = [c["meta_ad_id"] for c in ad_creatives if c.get("meta_ad_id")]
         ad_metrics: list[dict[str, Any]] = []
-        if creative_ids:
+        if meta_ad_ids:
             metrics = (sync._client.table("ad_creative_metrics")
-                       .select("creative_id,impressions,clicks,spend,ctr,roas,conversion_rate,date")
-                       .in_("creative_id", creative_ids)
+                       .select("meta_ad_id,meta_creative_id,impressions,clicks,spend,ctr,date")
+                       .in_("meta_ad_id", meta_ad_ids)
                        .order("date", desc=True)
                        .limit(60)
                        .execute()).data or []
@@ -376,18 +378,18 @@ async def _claude_compile_product(raw: dict[str, Any]) -> str | None:
     creatives = raw.get("ad_creatives", [])
     metrics = raw.get("ad_metrics", [])
 
-    # Per-creative aggregates to hand to Claude, so it doesn't have to re-sum
-    by_creative: dict[int, dict[str, float]] = {}
+    # Per-meta-ad aggregates to hand to Claude. ad_creative_metrics joins
+    # via meta_ad_id, not our internal creative id, so we bucket by that.
+    by_meta_ad: dict[str, dict[str, float]] = {}
     for m in metrics:
-        cid = m.get("creative_id")
-        if cid is None:
+        key = m.get("meta_ad_id")
+        if not key:
             continue
-        agg = by_creative.setdefault(cid, {"impressions": 0, "spend": 0.0,
-                                           "clicks": 0, "conversions": 0.0})
+        agg = by_meta_ad.setdefault(str(key), {"impressions": 0, "spend": 0.0,
+                                               "clicks": 0})
         agg["impressions"] += int(m.get("impressions") or 0)
         agg["clicks"] += int(m.get("clicks") or 0)
         agg["spend"] += float(m.get("spend") or 0)
-        agg["conversions"] += float(m.get("conversion_rate") or 0) * int(m.get("impressions") or 0) / 100.0
 
     prompt = f"""You are compiling a one-page wiki note for a Pinaka Jewellery \
 SKU, read by the marketing and retention agents at decision time. Markdown, \
@@ -404,8 +406,8 @@ AD CREATIVES
    "headline": c.get("headline"),
    "primary_text": (c.get("primary_text") or "")[:160]} for c in creatives[:6]]}
 
-AD METRICS AGGREGATED BY CREATIVE
-{by_creative}
+AD METRICS AGGREGATED BY META AD ID
+{by_meta_ad}
 
 Sections (only include if supported by the data):
 
