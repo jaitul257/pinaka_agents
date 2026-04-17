@@ -67,8 +67,21 @@ than a wrong auto-reply to an unhappy customer.
 
 ## When auto-responding
 
-First `draft_customer_reply`, then `send_email`. Use confidence LOW if you \
-had to make any assumption about what the customer meant.
+Sequence: `draft_customer_reply` → (if uncertain) `review_email_draft` → \
+`send_email` OR `post_to_slack`.
+
+The cross-model `review_email_draft` is there for when you're not fully \
+confident — customer context is ambiguous, tone is tricky, or you had to \
+make an assumption. It returns a verdict from an independent model \
+(GPT-4o-mini reviewing your Claude draft):
+
+- `pass`   — send as-is.
+- `revise` — rewrite once using the findings, then send. Do NOT call \
+              `review_email_draft` on the revision — one review per draft.
+- `block`  — do NOT send. Escalate to Slack with the findings.
+
+Default confidence LOW if you had to make any assumption. Consider calling \
+the reviewer whenever confidence would be LOW.
 """ + CONFIDENCE_INSTRUCTIONS
 
 
@@ -278,6 +291,44 @@ class CustomerServiceAgent(BaseAgent):
             risk_tier=1,
         )
 
+        self.tools.register(
+            name="review_email_draft",
+            description=(
+                "Independent cross-model review of a customer email draft "
+                "(GPT-4o-mini reviews Claude's draft). Returns "
+                "{verdict: 'pass'|'revise'|'block', findings: list[str], "
+                "rationale: str, review_id: int}. "
+                "WHEN TO CALL: any time you are not fully confident in the "
+                "draft — customer context is ambiguous, tone is tricky, "
+                "you had to make an assumption, or the category is borderline. "
+                "Call BEFORE send_email. If verdict is 'block', do NOT send — "
+                "post_to_slack with the findings instead. If 'revise', you "
+                "may rewrite ONCE and send (do not loop). If 'pass', send. "
+                "Do not call for drafts you have already revised based on a "
+                "prior review — one review per draft is enough."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_text": {
+                        "type": "string",
+                        "description": "Full email body text you intend to send",
+                    },
+                    "context_snippet": {
+                        "type": "string",
+                        "description": "1-3 sentences on what the customer asked and what you assumed",
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Customer id or order id this email concerns",
+                    },
+                },
+                "required": ["draft_text"],
+            },
+            func=self._review_email_draft_wrapper,
+            risk_tier=1,
+        )
+
     # ── Tool wrappers ──
 
     async def _lookup_order_wrapper(self, order_id: int) -> dict | None:
@@ -328,4 +379,24 @@ class CustomerServiceAgent(BaseAgent):
             "content": note.get("content"),
             "compiled_at": note.get("compiled_at"),
             "sample_count": note.get("sample_count"),
+        }
+
+    async def _review_email_draft_wrapper(
+        self, draft_text: str, context_snippet: str = "",
+        entity_id: str | None = None,
+    ) -> dict:
+        from src.agents.skeptic import review_customer_email_draft
+        review = await review_customer_email_draft(
+            draft_text=draft_text,
+            context_snippet=context_snippet,
+            action_type="customer_response",
+            entity_type="customer" if entity_id else None,
+            entity_id=entity_id,
+        )
+        return {
+            "verdict": review.verdict,
+            "findings": review.findings,
+            "rationale": review.rationale,
+            "review_id": review.review_id,
+            "reviewer_model": "gpt-4o-mini",
         }

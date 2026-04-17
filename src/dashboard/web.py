@@ -146,6 +146,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
         <a href="/dashboard/pipeline" class="nav-link {"active" if active == "pipeline" else ""}">Pipeline</a>
         <a href="/dashboard/agents" class="nav-link {"active" if active == "agents" else ""}">Agents</a>
         <a href="/dashboard/memory" class="nav-link {"active" if active == "memory" else ""}">Memory</a>
+        <a href="/dashboard/skeptic" class="nav-link {"active" if active == "skeptic" else ""}">Skeptic</a>
         <div class="nav-right">
             <a href="/dashboard/logout" class="nav-link">Logout</a>
         </div>
@@ -3436,3 +3437,134 @@ def _render_markdown_light(text: str) -> str:
     if in_list:
         out.append("</ul>")
     return "".join(out)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 13.3 — Cross-model skeptic inspector
+# Shows every review GPT-4o-mini has done on Claude's drafts. Founder can
+# override a BLOCK or REVISE verdict to signal the rubric was too harsh.
+# A high override rate means we should tighten the skeptic prompt or
+# raise the confidence gate before calling it.
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.get("/skeptic", response_class=HTMLResponse)
+async def skeptic_page(dash_token: str | None = Cookie(None)):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    from src.agents.skeptic import recent_reviews, calibration_stats
+    stats = await calibration_stats(days=30)
+    reviews = await recent_reviews(limit=50)
+
+    # Calibration header
+    total = stats.get("total", 0)
+    header_html = ""
+    if total:
+        header_html = f"""
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">Reviews (30d)</div>
+                <div class="metric-value">{total}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Pass</div>
+                <div class="metric-value" style="color:var(--success)">{stats.get('pass', 0)}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Revise</div>
+                <div class="metric-value" style="color:var(--accent)">{stats.get('revise', 0)}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Block</div>
+                <div class="metric-value" style="color:var(--error)">{stats.get('block', 0)}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Block override rate</div>
+                <div class="metric-value" style="font-size:22px">{stats.get('block_override_rate_pct', 0):.0f}%</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+                    How often you override a BLOCK — &gt;25% means the rubric is too harsh.
+                </div>
+            </div>
+        </div>
+        """
+    else:
+        header_html = ('<div class="alert" style="background:var(--surface-raised);color:var(--text-muted)">'
+                       'No cross-model reviews recorded yet. Agents call review_email_draft when their confidence is below high.</div>')
+
+    # Recent reviews
+    rows_html = []
+    for r in reviews:
+        verdict = r.get("verdict", "pass")
+        verdict_color = {"pass": "var(--success)", "revise": "var(--accent)",
+                         "block": "var(--error)"}.get(verdict, "var(--text-muted)")
+        findings = r.get("findings") or []
+        findings_snippet = "; ".join(findings[:2])[:180]
+
+        override_control = ""
+        if not r.get("overridden_by_founder") and verdict in ("revise", "block"):
+            override_control = f"""
+            <form method="post" action="/dashboard/skeptic/override/{r['id']}" style="display:inline;margin-left:8px">
+                <input type="hidden" name="reason" value="Founder override from dashboard">
+                <button class="btn btn-sm" type="submit">Mark skeptic wrong</button>
+            </form>
+            """
+        overridden_tag = "<span class='tag' style='color:var(--error)'>overridden</span>" if r.get("overridden_by_founder") else ""
+
+        rows_html.append(f"""
+        <tr>
+            <td style='padding:10px;font-size:12px;color:var(--text-muted)'>{str(r.get('created_at', ''))[:16]}</td>
+            <td style='padding:10px;font-size:13px'>{r.get('action_type')}</td>
+            <td style='padding:10px;font-size:13px;color:var(--text-muted)'>{r.get('entity_type') or ''} {r.get('entity_id') or ''}</td>
+            <td style='padding:10px;font-size:13px'>
+                <span class='tag' style='color:{verdict_color}'>{verdict}</span>
+                {overridden_tag}
+            </td>
+            <td style='padding:10px;font-size:12px;color:var(--text-muted)'>{findings_snippet}</td>
+            <td style='padding:10px;text-align:right'>{override_control}</td>
+        </tr>
+        """)
+
+    table_html = ""
+    if rows_html:
+        table_html = f"""
+        <div class="card" style="padding:0;margin-top:16px">
+            <table style="width:100%;border-collapse:collapse">
+                <thead>
+                    <tr style="background:var(--surface-raised)">
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>When</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Action</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Entity</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Verdict</th>
+                        <th style='padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>Findings</th>
+                        <th style='padding:10px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)'>&nbsp;</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(rows_html)}</tbody>
+            </table>
+        </div>
+        """
+
+    body = f"""
+    <h1>Cross-model skeptic</h1>
+    <p style="color:var(--text-muted);margin:4px 0 20px;font-size:14px">
+        GPT-4o-mini reviews Claude's customer email drafts with an asymmetric
+        rubric (+5 catch a real issue, −10 reject a clean draft). Fires only
+        when the drafter's confidence is below HIGH — not on every draft.
+    </p>
+    {header_html}
+    {table_html}
+    """
+    return HTMLResponse(_base_html("Skeptic", body, active="skeptic"))
+
+
+@router.post("/skeptic/override/{review_id}")
+async def skeptic_override_endpoint(
+    review_id: int, reason: str = Form(""),
+    dash_token: str | None = Cookie(None),
+):
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+    from src.agents.skeptic import override_review
+    await override_review(review_id, reason or "founder override")
+    return RedirectResponse("/dashboard/skeptic", status_code=303)
