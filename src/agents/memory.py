@@ -30,7 +30,7 @@ from src.core.settings import settings
 logger = logging.getLogger(__name__)
 
 
-SUPPORTED_TYPES = frozenset({"customer", "product", "seasonal"})
+SUPPORTED_TYPES = frozenset({"customer", "product", "seasonal", "agent"})
 
 # Hard cap on compiled note size — forces the compiler to prioritize signal
 # over completeness. If a customer's note hits this limit, the next compile
@@ -122,6 +122,43 @@ async def compile_product(sku: str) -> dict[str, Any] | None:
         content=content,
         sample_count=total_rows,
         source_through=source_through,
+    )
+
+
+async def compile_agent(agent_name: str, lookback_days: int = 7) -> dict[str, Any] | None:
+    """Compile a rolling self-summary for one agent.
+
+    Pulls the last `lookback_days` of:
+      • agent_audit_log rows (runs, tool calls, escalations)
+      • auto_sent_actions (AUTO-tier fire-and-log items)
+      • outcomes (program-verified signals tied to recent runs)
+      • observations (only those this agent acted on)
+
+    Summarizes into one short markdown note. The agent reads this via
+    get_my_memory instead of walking raw tables — otherwise older rows
+    rot the context window the way a year of git log would rot a code
+    review.
+    """
+    raw = await _gather_agent_raw(agent_name, lookback_days)
+    total_signal = (
+        len(raw["audit_log"])
+        + len(raw["auto_sent"])
+        + len(raw["outcomes"])
+        + len(raw["observations"])
+    )
+    if total_signal == 0:
+        return None
+
+    content = await _claude_compile_agent(agent_name, raw, lookback_days)
+    if not content:
+        return None
+
+    return await _upsert_memory(
+        entity_type="agent",
+        entity_id=agent_name,
+        content=content,
+        sample_count=total_signal,
+        source_through=None,  # agent memory is a fixed sliding window, not point-in-time
     )
 
 
@@ -240,6 +277,55 @@ async def _gather_product_raw(sku: str) -> dict[str, Any]:
             "ad_creatives": ad_creatives,
             "ad_metrics": ad_metrics,
         }
+    return await asyncio.to_thread(_q)
+
+
+async def _gather_agent_raw(agent_name: str, lookback_days: int) -> dict[str, Any]:
+    """Pull the agent's own recent activity. Four small queries — at our
+    volume the whole bundle is ~a few hundred rows, well under the compact
+    prompt budget."""
+    since = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
+
+    def _q():
+        sync = Database()
+        audit = (sync._client.table("agent_audit_log")
+                 .select("task_summary,tool_calls,result,escalated,created_at,"
+                         "tokens_used,duration_ms")
+                 .eq("agent_name", agent_name)
+                 .gte("created_at", since)
+                 .order("created_at", desc=True)
+                 .limit(80)
+                 .execute()).data or []
+
+        auto_sent = (sync._client.table("auto_sent_actions")
+                     .select("action_type,entity_type,entity_id,flagged,created_at")
+                     .eq("agent_name", agent_name)
+                     .gte("created_at", since)
+                     .order("created_at", desc=True)
+                     .limit(80)
+                     .execute()).data or []
+
+        outcomes = (sync._client.table("outcomes")
+                    .select("outcome_type,outcome_value,action_type,entity_type,"
+                            "entity_id,fired_at")
+                    .eq("agent_name", agent_name)
+                    .gte("fired_at", since)
+                    .order("fired_at", desc=True)
+                    .limit(100)
+                    .execute()).data or []
+
+        # Observations the agent *acted on* — not every observation in the
+        # system. Those it ignored are noise from this agent's perspective.
+        observations = (sync._client.table("observations")
+                        .select("category,severity,summary,action_taken,acted_at")
+                        .eq("acted_on", True)
+                        .gte("acted_at", since)
+                        .order("acted_at", desc=True)
+                        .limit(40)
+                        .execute()).data or []
+
+        return {"audit_log": audit, "auto_sent": auto_sent,
+                "outcomes": outcomes, "observations": observations}
     return await asyncio.to_thread(_q)
 
 
@@ -446,6 +532,109 @@ Do not fabricate. If a section has no signal, omit it."""
         return _fallback_product_note(raw)
 
 
+async def _claude_compile_agent(
+    agent_name: str, raw: dict[str, Any], lookback_days: int,
+) -> str | None:
+    """Compile an agent's rolling self-summary. Distinct from the weekly
+    retro — this is a decision-time reference ('what have I been doing?'),
+    not a founder-facing narrative.
+    """
+    if not settings.anthropic_api_key:
+        return _fallback_agent_note(agent_name, raw, lookback_days)
+
+    audit = raw.get("audit_log", [])
+    auto = raw.get("auto_sent", [])
+    outs = raw.get("outcomes", [])
+    obs = raw.get("observations", [])
+
+    # Pre-aggregate to keep the prompt small and grounded
+    tool_counts: dict[str, int] = {}
+    for row in audit:
+        for call in (row.get("tool_calls") or []):
+            if isinstance(call, dict):
+                name = call.get("tool") or call.get("name") or "unknown"
+                tool_counts[name] = tool_counts.get(name, 0) + 1
+
+    outcome_counts: dict[str, int] = {}
+    for o in outs:
+        ot = o.get("outcome_type") or "unknown"
+        outcome_counts[ot] = outcome_counts.get(ot, 0) + 1
+
+    action_counts: dict[str, int] = {}
+    flagged_count = 0
+    for a in auto:
+        action_counts[a.get("action_type") or "unknown"] = (
+            action_counts.get(a.get("action_type") or "unknown", 0) + 1)
+        if a.get("flagged"):
+            flagged_count += 1
+
+    audit_total = len(audit)
+    escalated_total = sum(1 for r in audit if r.get("escalated"))
+    success_total = sum(1 for r in audit if r.get("result") == "success")
+
+    prompt = f"""You are compiling a rolling self-memory note for the \
+{agent_name} agent at Pinaka Jewellery. This is what YOU (that agent) will \
+read at the start of your next run to orient yourself — it is NOT a report \
+for the founder.
+
+Lookback: last {lookback_days} days.
+
+AUDIT LOG SUMMARY
+  runs: {audit_total}
+  successes: {success_total}
+  escalated: {escalated_total}
+  tools used (top): {dict(sorted(tool_counts.items(), key=lambda x: -x[1])[:8])}
+
+AUTO-TIER ACTIONS
+  total: {len(auto)}
+  flagged by founder: {flagged_count}
+  breakdown: {dict(sorted(action_counts.items(), key=lambda x: -x[1])[:6])}
+
+OUTCOMES (program-verified signals tied to your runs)
+  total rows: {len(outs)}
+  breakdown: {outcome_counts}
+
+OBSERVATIONS ACTED ON
+  count: {len(obs)}
+  summaries: {[o.get("summary", "")[:100] for o in obs[:8]]}
+
+Write 4 short sections in this exact order:
+
+## What I've been doing
+One paragraph. Specific verbs + counts. If runs = 0, say so.
+
+## What's been working
+Point to outcomes that came back positive (email_clicked, email_replied_48h, \
+order_shipped_on_time, customer_repurchase_30d). Cite numbers.
+
+## What to watch for
+Point to negatives (flagged auto-sends, escalations, bounces, late shipments). \
+Flag any pattern — e.g. "3 of 4 lifecycle_welcome_3 sends bounced this week."
+
+## Open threads
+Anything unresolved — escalations that haven't been answered, observations \
+where the action I took is still pending verification. Use bullets here.
+
+Total output <= 500 words. No preamble. Markdown sections as shown. If a \
+section would be empty, write "(nothing notable)" rather than fabricating."""
+
+    try:
+        client = Anthropic(api_key=settings.anthropic_api_key)
+        def _call():
+            return client.messages.create(
+                model=_COMPILE_MODEL,
+                max_tokens=_COMPILE_MAX_TOKENS,
+                temperature=0.2,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        resp = await asyncio.to_thread(_call)
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
+        return text[:MAX_CONTENT_CHARS] if text else None
+    except Exception:
+        logger.exception("agent compile claude call failed for %s", agent_name)
+        return _fallback_agent_note(agent_name, raw, lookback_days)
+
+
 async def _claude_compile_seasonal(month: str, raw: dict[str, Any]) -> str | None:
     if not settings.anthropic_api_key:
         return _fallback_seasonal_note(month, raw)
@@ -550,6 +739,27 @@ def _fallback_product_note(raw: dict[str, Any]) -> str:
     return "\n".join(lines)[:MAX_CONTENT_CHARS]
 
 
+def _fallback_agent_note(agent_name: str, raw: dict[str, Any], lookback_days: int) -> str:
+    """Deterministic fallback when Claude is unavailable. Still useful to
+    the agent — just less narrative."""
+    audit = raw.get("audit_log", [])
+    auto = raw.get("auto_sent", [])
+    outs = raw.get("outcomes", [])
+    lines = [
+        f"## What I've been doing (last {lookback_days}d)",
+        f"- {len(audit)} runs, {sum(1 for r in audit if r.get('escalated'))} escalated",
+        f"- {sum(1 for r in audit if r.get('result') == 'success')} succeeded",
+        f"- {len(auto)} auto-sent ({sum(1 for a in auto if a.get('flagged'))} flagged)",
+    ]
+    if outs:
+        from collections import Counter
+        cc = Counter(o.get("outcome_type", "?") for o in outs)
+        lines += ["", "## Outcomes observed"] + [
+            f"- {k}: {v}" for k, v in cc.most_common(6)
+        ]
+    return "\n".join(lines)[:MAX_CONTENT_CHARS]
+
+
 def _fallback_seasonal_note(month: str, raw: dict[str, Any]) -> str:
     stats = raw.get("daily_stats", [])
     years = sorted({str(r.get("date", ""))[:4] for r in stats if r.get("date")})
@@ -598,12 +808,40 @@ async def compile_all_active() -> dict[str, Any]:
     customer_results = await _compile_active_customers()
     product_results = await _compile_active_products()
     seasonal_results = await _compile_current_and_next_seasonal()
+    agent_results = await _compile_agent_memories()
 
     return {
         "customers": customer_results,
         "products": product_results,
         "seasonal": seasonal_results,
+        "agents": agent_results,
     }
+
+
+# Keep in sync with AGENT_KPI_MAP in src/agents/kpis.py. Listed here
+# directly to avoid a circular import between memory.py and kpis.py.
+_AGENT_NAMES = ("marketing", "retention", "customer_service", "finance", "order_ops")
+
+
+async def _compile_agent_memories() -> dict[str, int]:
+    """One compile per agent, always — these are sliding 7-day windows so
+    'fresh <24h' staleness gate doesn't apply (we want yesterday's summary
+    to always reflect yesterday's activity)."""
+    compiled = 0
+    skipped_empty = 0
+    errors = 0
+    for name in _AGENT_NAMES:
+        try:
+            result = await compile_agent(name)
+            if result:
+                compiled += 1
+            else:
+                skipped_empty += 1
+        except Exception:
+            logger.exception("compile_agent failed for %s", name)
+            errors += 1
+    return {"compiled": compiled, "skipped_empty": skipped_empty,
+            "errors": errors, "total": len(_AGENT_NAMES)}
 
 
 async def _compile_active_customers() -> dict[str, int]:

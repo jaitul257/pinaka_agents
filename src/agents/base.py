@@ -75,8 +75,44 @@ class BaseAgent:
         self.audit = AuditLogger()
         self._slack = SlackNotifier()
 
-        # Let subclasses register their tools
+        # Register shared tools available to every agent before subclass hooks
+        self._register_base_tools()
+
+        # Let subclasses register their domain-specific tools
         self._register_tools()
+
+    def _register_base_tools(self) -> None:
+        """Tools every agent gets. Kept tiny on purpose — only genuinely
+        agent-agnostic capabilities belong here. Today: self-memory lookup
+        (Phase 13.4 llm-wiki applied to the agent's own recent history)."""
+        self.tools.register(
+            name="get_my_memory",
+            description=(
+                "Read-only. Return YOUR OWN compiled rolling memory note "
+                "(last 7 days of your runs, outcomes, and auto-sent actions, "
+                "distilled to ~400 words by a nightly compiler). Use this at "
+                "the start of a run when prior context would help — e.g. "
+                "a repeat customer, a recurring escalation pattern, a lifecycle "
+                "trigger you've fired several times. Do NOT call for cold "
+                "utility runs; that's just extra tokens. Returns {content, "
+                "compiled_at, sample_count} or null if your memory hasn't "
+                "been compiled yet."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            func=self._get_my_memory_wrapper,
+            risk_tier=1,
+        )
+
+    async def _get_my_memory_wrapper(self) -> dict[str, Any] | None:
+        from src.agents.memory import get_memory
+        note = await get_memory("agent", self.name)
+        if not note:
+            return None
+        return {
+            "content": note.get("content"),
+            "compiled_at": note.get("compiled_at"),
+            "sample_count": note.get("sample_count"),
+        }
 
     def _register_tools(self) -> None:
         """Override in subclasses to register domain-specific tools."""
