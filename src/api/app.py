@@ -1927,6 +1927,49 @@ async def cron_reconcile_meta_ads():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/verify-outcomes", dependencies=[Depends(verify_cron_secret)])
+async def cron_verify_outcomes():
+    """Daily — run program-verified outcome checks across all agents.
+
+    Scans recent orders for on-time/late shipping, recent auto-sent emails
+    for customer replies within 48h, retention emails for repurchase within
+    30d. Deterministic SQL checks only — no LLM scoring. Idempotent via
+    keys on each outcome row, so re-runs are safe.
+
+    Scheduled 4:30 AM ET (after KPI compute at 4 AM).
+    """
+    from src.agents.outcomes import verify_all
+    try:
+        results = await verify_all()
+        return {"status": "ok", **results}
+    except Exception as e:
+        logger.exception("verify-outcomes cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/webhook/sendgrid")
+async def webhook_sendgrid(request: Request):
+    """SendGrid event webhook — captures delivery / open / click / bounce.
+
+    SendGrid signs requests with X-Twilio-Email-Event-Webhook-Signature
+    when the feature is enabled, but we accept unsigned in the first
+    version and rely on URL obscurity. Payload is a JSON array of events.
+    Idempotency handled downstream via sg_event_id.
+    """
+    import json as _json
+    from src.agents.outcomes import record_sendgrid_events
+    try:
+        body = await request.body()
+        events = _json.loads(body) if body else []
+        if not isinstance(events, list):
+            return {"status": "error", "error": "expected JSON array"}
+        result = await record_sendgrid_events(events)
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("sendgrid webhook failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/compile-entity-memory", dependencies=[Depends(verify_cron_secret)])
 async def cron_compile_entity_memory():
     """Nightly — compile markdown wikis for active customers + products + current/next month.

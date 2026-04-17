@@ -3059,6 +3059,10 @@ async def agent_detail_page(agent_name: str, dash_token: str | None = Cookie(Non
     auto_recent = await recent_auto_sent(limit=25, agent_name=agent_name)
     retros = [r for r in await latest_retros(limit_per_agent=3) if r.get("agent_name") == agent_name]
 
+    from src.agents.outcomes import rollup_by_agent, recent_for_agent, OUTCOME_POLARITY
+    outcomes_rollup = (await rollup_by_agent(days=30)).get(agent_name, {})
+    recent_outcomes = await recent_for_agent(agent_name, limit=20)
+
     # KPI header
     kpi_header = ""
     if kpi:
@@ -3199,6 +3203,56 @@ async def agent_detail_page(agent_name: str, dash_token: str | None = Cookie(Non
         </div>
         """
 
+    # Outcomes (Phase 13.1) — program-verified, not self-graded
+    outcomes_html = ""
+    if outcomes_rollup or recent_outcomes:
+        chips = []
+        for otype, count in sorted(outcomes_rollup.items(), key=lambda x: -x[1]):
+            polarity = OUTCOME_POLARITY.get(otype, 0)
+            color = ("var(--success)" if polarity > 0
+                    else "var(--error)" if polarity < 0
+                    else "var(--text-muted)")
+            chips.append(
+                f"<span class='tag' style='color:{color}'>"
+                f"{otype.replace('_', ' ')}: {count}</span>"
+            )
+        chips_html = " ".join(chips) if chips else (
+            "<span style='color:var(--text-muted);font-size:13px'>"
+            "No outcomes recorded in the last 30 days yet.</span>"
+        )
+
+        recent_rows = []
+        for o in recent_outcomes[:10]:
+            polarity = OUTCOME_POLARITY.get(o.get("outcome_type") or "", 0)
+            color = ("var(--success)" if polarity > 0
+                    else "var(--error)" if polarity < 0
+                    else "var(--text-muted)")
+            recent_rows.append(f"""
+            <tr>
+                <td style='padding:10px;font-size:12px;color:var(--text-muted)'>{str(o.get('fired_at', ''))[:16]}</td>
+                <td style='padding:10px;font-size:13px'><span class='tag' style='color:{color}'>{o.get('outcome_type')}</span></td>
+                <td style='padding:10px;font-size:13px;color:var(--text-muted)'>{o.get('entity_type') or ''} {o.get('entity_id') or ''}</td>
+                <td style='padding:10px;font-size:11px;color:var(--text-muted);text-align:right'>{o.get('source')}</td>
+            </tr>
+            """)
+
+        outcomes_html = f"""
+        <h2 style='margin: 32px 0 16px'>Verified outcomes (30d)</h2>
+        <div class="card">
+            <div style="display:flex;flex-wrap:wrap;gap:8px">{chips_html}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:10px">
+                Program-verified signals only. Written by SendGrid webhooks and scheduled SQL checks — never self-graded by the agent.
+            </div>
+        </div>
+        {('<div class="card" style="padding:0;margin-top:12px"><table style="width:100%;border-collapse:collapse">'
+          '<thead><tr style="background:var(--surface-raised)">'
+          '<th style="padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">When</th>'
+          '<th style="padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">Outcome</th>'
+          '<th style="padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">Entity</th>'
+          '<th style="padding:10px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)">Source</th>'
+          '</tr></thead><tbody>' + ''.join(recent_rows) + '</tbody></table></div>') if recent_rows else ''}
+        """
+
     body = f"""
     <div style="margin-bottom: 8px;">
         <a href="/dashboard/agents" style="font-size: 13px; color: var(--text-muted); text-decoration: none;">← All agents</a>
@@ -3209,6 +3263,7 @@ async def agent_detail_page(agent_name: str, dash_token: str | None = Cookie(Non
     </p>
     {kpi_header}
     {spark_html}
+    {outcomes_html}
     {retros_html}
     {runs_html}
     {auto_html}
