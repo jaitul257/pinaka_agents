@@ -317,6 +317,26 @@
         })(window, document, "clarity", "script", "{{ settings.clarity_project_id }}");
       </script>
     {%- endif -%}
+
+    {%- comment -%}
+      Pinterest Tag — conversion tracking pixel.
+      Set your Tag ID in Online Store > Theme > Customize > Theme settings > Analytics > Pinterest Tag ID.
+      Get one at ads.pinterest.com → Conversions.
+    {%- endcomment -%}
+    {%- if settings.pinterest_tag_id != blank -%}
+      <script type="text/javascript">
+        !function(e){if(!window.pintrk){window.pintrk=function(){window.pintrk.queue.push(
+        Array.prototype.slice.call(arguments))};var n=window.pintrk;n.queue=[],n.version="3.0";
+        var t=document.createElement("script");t.async=!0,t.src=e;var r=document.getElementsByTagName("script")[0];
+        r.parentNode.insertBefore(t,r)}}("https://s.pinimg.com/ct/core.js");
+        pintrk('load', '{{ settings.pinterest_tag_id }}');
+        pintrk('page');
+        {%- if template contains 'product' -%}
+          pintrk('track', 'pagevisit');
+        {%- endif -%}
+      </script>
+      <noscript><img height="1" width="1" style="display:none;" alt="" src="https://ct.pinterest.com/v3/?event=init&tid={{ settings.pinterest_tag_id }}&noscript=1" /></noscript>
+    {%- endif -%}
   </head>
 
   <body class="gradient{% if settings.animations_hover_elements != 'none' %} animate--hover-{{ settings.animations_hover_elements }}{% endif %}">

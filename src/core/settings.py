@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     sendgrid_welcome_4_template_id: str = ""
     sendgrid_welcome_5_template_id: str = ""
 
+    # Phase 9.3: Shopify blog (for weekly SEO post auto-publish) + Pinterest API
+    shopify_blog_id: str = ""  # Shopify blog to publish drafts into (numeric ID)
+    pinterest_access_token: str = ""  # from Pinterest Developer Portal
+    pinterest_board_id: str = ""  # target board for auto-generated pins
+    pinterest_ad_account_id: str = ""  # optional, for tag conversion tracking
+    pinterest_tag_id: str = ""  # public pinterest tag ID for theme pixel
+
     # ── Anthropic ──
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"

@@ -11,6 +11,45 @@ Last updated: 2026-04-16
 
 ## Push Log
 
+### 2026-04-16 (late evening): Phase 9.3 — Content & Retention Engine
+
+**What shipped:**
+- **Daily AI brief at `/dashboard/brief`** (`src/dashboard/brief.py`): password-protected page aggregating 14d MER, top/bottom creatives (from ad_creative_metrics), open observations (severity warning+critical), seasonal window, pending lifecycle + welcome counts, next SEO topic. Claude writes a 3-paragraph "focus today" narrative. Auto-refreshes every 30 min. Nav-link added so the founder lands here first.
+- **Weekly SEO journal writer** (`src/content/seo_writer.py` + `seo_topics` migration): 25-keyword long-tail rotation (anniversary, comparison, education, occasion). Each weekly run picks the least-recently-used keyword, Claude drafts 900-1,400 word post + title + meta + slug + tags. `/cron/seo-post` Mon 2 PM ET (jobId 7494975).
+- **Shopify auto-publish** (Unit A+): `write_content` scope added to `shopify.app.toml`. SEOWriter.publish_draft() POSTs to `/admin/api/2025-01/blogs/{id}/articles.json` as draft. Falls back to Slack-paste mode if scope missing or blog_id unset. `scripts/setup_shopify_blog.py` discovers blog_id and sets on Railway.
+- **Piece of the Quarter email** (`src/customer/piece_of_quarter.py`): quarterly batch email to all past buyers who accept marketing. Claude drafts, Slack approves, SendGrid batch-sends via shared lifecycle template. `/cron/quarterly-poq` fires 1st Monday of Jan/Apr/Jul/Oct (jobId 7494977).
+- **Pinterest Tag + API posting** (Unit B+): conversion pixel injected via `pinterest_tag_id` theme setting. PinterestClient v5 API client for programmatic pin creation. `/cron/pinterest-pins` Mon/Wed/Fri 1 PM ET (jobId 7494976). Claude drafts keyword-rich pin title + description + alt_text per product (round-robin through catalog). Graceful no-op when token/board missing.
+- **29 new tests** (350 → 379). 1 new migration applied. 3 new cron entries. Theme pushed (Pinterest tag + Analytics Pinterest setting).
+
+**What went well:**
+- **"Single pane of glass" framing for `/dashboard/brief` was a breakthrough.** Without it, the founder would juggle Slack alerts from 9 different crons. With it, he opens one URL, gets a 3-para narrative, and knows what to touch today. This is the product.
+- **SEO fallback to Slack-paste** means the system works even WITHOUT the `write_content` scope re-auth. Claude drafts, Slack gets the full markdown + title + meta, founder pastes into Shopify admin. Zero scope headache blocking value.
+- **Keyword rotation via DB (`seo_topics` table, `NULLS FIRST` order)** is the right pattern for content pacing. Adding new keywords to the SEO_KEYWORDS list in Python auto-seeds on next run; editing the list doesn't wipe history.
+- **Pinterest client built API-first, theme-tag as bonus.** User can paste the Tag ID NOW (conversion tracking) and add the token/board later (when Pinterest Business is approved). Doesn't block shipping.
+- **JSON-only output discipline in Claude prompts** paid off again — SEO writer, POQ, Pinterest pin all parse with a single `json.loads(text[start:end+1])` pattern and graceful fallback. No brittle regex.
+
+**What was painful:**
+- **Dashboard brief aggregator needed `asyncio.to_thread(lambda: client.table(...).execute())`** because AsyncDatabase's __getattr__ wrapping doesn't reach the raw Supabase client chain. Same pattern as Phase 9.2 Slack approval handlers. Still ugly — proper fix would be to add dedicated DB methods for observations/queries.
+- **`write_content` scope requires re-install** — user has to visit a Shopify OAuth URL to re-grant. For now, Slack-paste fallback handles the gap. But the auto-publish path stays 403'd until user re-authorizes. Documented in TODO.
+- **Pinterest API access token generation is still painful.** Pinterest Developer Portal requires Business account + app registration + scope approval. Code is ready; user still has 10-15 min of manual setup before the first pin flies. No way around it.
+- **Shopify's `settings.clarity_project_id != blank` Liquid check** sometimes returned blank even with data — we hit this in Phase 9.0, fixed with force-push of settings_data.json. Not an issue this phase since the Pinterest tag follows the exact same pattern and benefits from the fix.
+- **cron-job.org PUT API flaked again on one of three calls** (empty body response → JSONDecodeError). Retried once, succeeded. Should probably wrap their API in a retry-with-backoff helper if we're going to keep adding jobs.
+
+**Lessons learned:**
+- **Build the dashboard before the background workers at scale.** When you have 15+ crons, 5 agents, 6 weekly emails in motion — the founder needs a unified view or everything dissolves into Slack noise. We should have built `/dashboard/brief` before Phase 9.2, not after. Note for any future agent architecture: brief-page-first.
+- **Graceful degradation > scope enforcement on user-managed creds.** SEO writer falls back to Slack-paste when `write_content` is missing. Pinterest cron no-ops when token unset. Clarity tag conditional on `!= blank`. Every user-configured integration should have a silent "skip" mode — makes the whole system robust to partial setup.
+- **Long-tail SEO via database rotation is the right abstraction.** A static list in code (what we have) makes editing/extending easy while the DB tracks usage. If you want a different post tomorrow, toggle `active=false` on the current and re-run. Clean.
+- **Pinterest is a search engine, not social media.** Pin copy (title/description/alt_text) is SEO, not caption writing. No emoji in title. No hashtags. Concrete keyword density. The Claude system prompt enforces this — worth copying the pattern for any "searchable content" generation.
+- **`active + NULLS FIRST + times_used ASC` is the right priority for content rotation.** Newest-to-be-posted, tied-breaker on least-used. Stale rows naturally cycle back in once everything's been used.
+
+**Pending human steps:**
+- [ ] **Re-install the Shopify app** to grant `write_content` scope (triggers auto-publish of SEO drafts). Visit the Partners dashboard → Pinaka AI Agents → "Test on development store" or re-open the custom install URL. Alternative: keep Slack-paste mode indefinitely — it works.
+- [ ] **Run `railway run python scripts/setup_shopify_blog.py`** AFTER the scope re-auth, to discover + set `SHOPIFY_BLOG_ID`. Otherwise auto-publish no-ops.
+- [ ] **Set up Pinterest Business + Developer app** → create pinterest_access_token (scopes: `pins:write`, `boards:read`) + find target board_id. Paste on Railway as `PINTEREST_ACCESS_TOKEN` + `PINTEREST_BOARD_ID`. Until then, `/cron/pinterest-pins` gracefully skips.
+- [ ] **Install Pinterest Tag** at ads.pinterest.com → Conversions → create tag → paste ID in Shopify Theme customize → Analytics → Pinterest Tag ID. Separate from API posting (tracks storefront conversions).
+
+---
+
 ### 2026-04-16 (late): Phase 9.2 — Lifecycle Orchestration
 
 **What shipped:**

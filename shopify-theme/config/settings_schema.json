@@ -1468,6 +1468,20 @@
         "id": "clarity_project_id",
         "label": "Clarity project ID",
         "info": "From clarity.microsoft.com (leave blank to disable)"
+      },
+      {
+        "type": "header",
+        "content": "Pinterest"
+      },
+      {
+        "type": "paragraph",
+        "content": "Pinterest conversion tracking. Sign up at ads.pinterest.com → create a tag, paste ID below."
+      },
+      {
+        "type": "text",
+        "id": "pinterest_tag_id",
+        "label": "Pinterest Tag ID",
+        "info": "Numeric string like 2613834567890. Leave blank to disable."
       }
     ]
   }

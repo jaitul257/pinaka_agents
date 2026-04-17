@@ -203,11 +203,21 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] Anniversary capture at checkout + year-out trigger
 - [ ] All on SendGrid (skip Klaviyo until volume justifies $45+/mo)
 
-### Phase 9.3 — Content & Retention Engine (after 9.2)
-- [ ] Weekly long-tail SEO journal post (agent drafts, founder edits/ships)
-- [ ] Pinterest tag + 3 pins/week
-- [ ] "Piece of the quarter" email to past buyers
-- [ ] `/dashboard/brief` — daily AI brief page (MER, creatives, competitor moves, SEO target, anomalies)
+### Phase 9.3 — Content & Retention Engine — DONE (2026-04-16)
+- [x] Daily AI brief at `/dashboard/brief` — password-protected, aggregates MER + creatives + observations + seasonal + pending queues + SEO. Claude writes 3-paragraph "focus today" narrative.
+- [x] `seo_topics` table + 25-keyword long-tail rotation (anniversary/comparison/education/occasion).
+- [x] Weekly SEO journal writer — Claude drafts 900-1,400 word post + title/meta/slug/tags. `/cron/seo-post` Mon 2 PM ET (jobId 7494975).
+- [x] Auto-publish to Shopify blog as DRAFT (requires `write_content` scope — fallback to Slack-paste if not yet granted).
+- [x] Piece of the Quarter quarterly email — Claude drafts, Slack approves, SendGrid batch-sends to past buyers. `/cron/quarterly-poq` 1st Mon Jan/Apr/Jul/Oct (jobId 7494977).
+- [x] Pinterest Tag (conversion pixel) — `pinterest_tag_id` theme setting + theme.liquid script.
+- [x] Pinterest API v5 posting client + `/cron/pinterest-pins` Mon/Wed/Fri 1 PM ET (jobId 7494976). No-ops without token.
+- [x] 29 new tests (350 → 379)
+
+**Pending human setup for Phase 9.3:**
+- [ ] Re-install Shopify app to grant `write_content` scope (enables SEO auto-publish). Without it, SEO posts fall back to Slack-paste mode (still works).
+- [ ] After scope re-auth, run `railway run python scripts/setup_shopify_blog.py` to discover + set `SHOPIFY_BLOG_ID`.
+- [ ] Create Pinterest Business account → dev app at developers.pinterest.com → generate access token with `pins:write` + `boards:read` → paste PINTEREST_ACCESS_TOKEN + PINTEREST_BOARD_ID on Railway.
+- [ ] Install Pinterest Tag — ads.pinterest.com → Conversions → get tag ID → paste in Theme customize → Analytics → Pinterest Tag ID. Separate from API posting.
 
 ### Medium Priority (improvements)
 - [ ] Google Ads developer token approval (in review since 2026-04-04)

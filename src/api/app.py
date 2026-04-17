@@ -1622,6 +1622,213 @@ async def cron_competitor_brief():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/pinterest-pins", dependencies=[Depends(verify_cron_secret)])
+async def cron_pinterest_pins():
+    """Pinterest pin generator — runs Mon/Wed/Fri at 1 PM ET (3 pins/week).
+
+    Picks one product per run, drafts Pinterest-optimized copy via Claude,
+    creates pin via Pinterest API v5. No-op if PINTEREST_ACCESS_TOKEN or
+    PINTEREST_BOARD_ID are missing.
+    """
+    from datetime import date as _date
+    from src.marketing.pinterest import PinterestClient
+
+    client = PinterestClient()
+    if not client.is_configured:
+        return {"status": "skipped", "reason": "Pinterest not configured"}
+
+    # Stable day-based rotation — different product each day we run
+    day_index = (_date.today() - _date(2026, 1, 1)).days
+
+    product = await client.pick_product(day_index=day_index)
+    if not product:
+        return {"status": "error", "error": "No products to pin"}
+
+    draft = await client.draft_copy(product)
+    if not draft:
+        return {"status": "error", "error": "Could not draft pin for product"}
+
+    result = await client.create_pin(draft)
+
+    slack = SlackNotifier()
+    if result.pin_id:
+        await slack.send_blocks([
+            {"type": "header", "text": {"type": "plain_text", "text": ":pushpin: Pinterest pin created"}},
+            {"type": "section", "fields": [
+                {"type": "mrkdwn", "text": f"*Product:* {result.product_name}"},
+                {"type": "mrkdwn", "text": f"*Pin ID:* `{result.pin_id}`"},
+                {"type": "mrkdwn", "text": f"*Title:* {result.title}"},
+            ]},
+            {"type": "section", "text": {"type": "mrkdwn",
+                "text": f"<https://pinterest.com/pin/{result.pin_id}|View pin>"}},
+        ], text=f"Pin created: {result.product_name}")
+    else:
+        await slack.send_blocks([
+            {"type": "header", "text": {"type": "plain_text", "text": ":warning: Pinterest pin failed"}},
+            {"type": "section", "text": {"type": "mrkdwn",
+                "text": f"*Product:* {result.product_name}\n*Error:* `{result.error}`"}},
+        ], text=f"Pin failed: {result.product_name}")
+
+    return {
+        "status": "ok" if result.pin_id else "error",
+        "product": result.product_name,
+        "pin_id": result.pin_id,
+        "error": result.error,
+    }
+
+
+@app.post("/cron/quarterly-poq", dependencies=[Depends(verify_cron_secret)])
+async def cron_quarterly_poq():
+    """Piece of the Quarter email — fires first Monday of Jan/Apr/Jul/Oct.
+
+    Claude drafts a short email featuring one new piece. Posts to Slack
+    with Approve & Send / Skip buttons. On approve, batch-sends to every
+    past buyer who accepts marketing.
+    """
+    from src.customer.piece_of_quarter import PieceOfQuarter
+
+    try:
+        poq = PieceOfQuarter()
+        draft = await poq.draft()
+        slack = SlackNotifier()
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text",
+                "text": f":package: Piece of the Quarter — {draft.quarter_key}"}},
+            {"type": "section", "fields": [
+                {"type": "mrkdwn", "text": f"*Featured:* {draft.featured_piece}"},
+                {"type": "mrkdwn", "text": f"*Audience:* {draft.audience_count} past buyers"},
+                {"type": "mrkdwn", "text": f"*Subject:* {draft.subject}"},
+            ]},
+            {"type": "divider"},
+            {"type": "section", "block_id": "poq_draft",
+             "text": {"type": "mrkdwn", "text": f"*Draft:*\n{draft.body}"}},
+            {"type": "divider"},
+            {"type": "actions",
+             "block_id": f"poq_review_{draft.quarter_key}",
+             "elements": [
+                {"type": "button",
+                 "text": {"type": "plain_text", "text": f"Approve & Send to {draft.audience_count}"},
+                 "style": "primary",
+                 "action_id": "approve_poq",
+                 "value": json.dumps({
+                     "subject": draft.subject,
+                     "quarter_key": draft.quarter_key,
+                     "audience_count": draft.audience_count,
+                 })},
+                {"type": "button",
+                 "text": {"type": "plain_text", "text": "Skip"},
+                 "action_id": "skip_poq",
+                 "value": draft.quarter_key},
+             ]},
+        ]
+        await slack.send_blocks(blocks, text=f"POQ {draft.quarter_key}: {draft.subject}")
+        return {
+            "status": "ok",
+            "quarter": draft.quarter_key,
+            "subject": draft.subject,
+            "audience_count": draft.audience_count,
+            "featured": draft.featured_piece,
+        }
+    except Exception as e:
+        logger.exception("POQ cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/seo-post", dependencies=[Depends(verify_cron_secret)])
+async def cron_seo_post():
+    """Weekly long-tail SEO journal post — runs Monday 2 PM ET.
+
+    Picks the next-due keyword from seo_topics table. Claude drafts
+    900-1,400 word post. If SHOPIFY_BLOG_ID + write_content scope are
+    available, publishes as DRAFT and sends admin URL to Slack. Otherwise
+    sends the full markdown to Slack for manual paste.
+    """
+    from src.content.seo_writer import SEOWriter
+
+    try:
+        writer = SEOWriter()
+        await writer.ensure_topics_seeded()
+        topic = await writer.next_topic()
+        if not topic:
+            return {"status": "error", "error": "No active SEO topics"}
+
+        keyword = topic["keyword"]
+        category = topic.get("category") or "general"
+
+        draft = await writer.draft(keyword, category)
+        shopify_enabled = writer.shopify_publish_enabled
+        if shopify_enabled:
+            draft = await writer.publish_draft(draft)
+
+        await writer.mark_used(
+            topic["id"],
+            article_id=draft.shopify_article_id,
+            admin_url=draft.shopify_admin_url,
+        )
+
+        # Slack notification
+        slack = SlackNotifier()
+        if draft.shopify_admin_url and not draft.publish_error:
+            blocks = [
+                {"type": "header", "text": {"type": "plain_text", "text": ":writing_hand: Weekly SEO Draft"}},
+                {"type": "section", "fields": [
+                    {"type": "mrkdwn", "text": f"*Keyword:* {keyword}"},
+                    {"type": "mrkdwn", "text": f"*Category:* {category}"},
+                    {"type": "mrkdwn", "text": f"*Title:* {draft.title}"},
+                    {"type": "mrkdwn", "text": f"*Words:* {draft.word_count}"},
+                ]},
+                {"type": "section", "text": {"type": "mrkdwn",
+                    "text": f"*Meta description:*\n{draft.meta_description}"}},
+                {"type": "section", "text": {"type": "mrkdwn",
+                    "text": f":link: <{draft.shopify_admin_url}|Review draft in Shopify admin>"}},
+                {"type": "context", "elements": [{"type": "mrkdwn",
+                    "text": "_Published as draft — review, tweak, click Publish in Shopify admin._"}]},
+            ]
+        else:
+            # Fallback: paste-to-Shopify
+            error_note = f" (API: {draft.publish_error})" if draft.publish_error else ""
+            body_excerpt = draft.body_markdown[:2500]
+            if len(draft.body_markdown) > 2500:
+                body_excerpt += "\n\n_... (truncated — full post in logs)_"
+            blocks = [
+                {"type": "header", "text": {"type": "plain_text",
+                    "text": ":writing_hand: Weekly SEO Draft (paste mode)"}},
+                {"type": "section", "fields": [
+                    {"type": "mrkdwn", "text": f"*Keyword:* {keyword}"},
+                    {"type": "mrkdwn", "text": f"*Category:* {category}"},
+                    {"type": "mrkdwn", "text": f"*Title:* {draft.title}"},
+                    {"type": "mrkdwn", "text": f"*Slug:* `{draft.slug}`"},
+                ]},
+                {"type": "section", "text": {"type": "mrkdwn",
+                    "text": f"*Meta description:* {draft.meta_description}"}},
+                {"type": "section", "text": {"type": "mrkdwn",
+                    "text": f"*Tags:* `{', '.join(draft.tags)}`"}},
+                {"type": "divider"},
+                {"type": "section", "text": {"type": "mrkdwn",
+                    "text": f"```\n{body_excerpt}\n```"}},
+                {"type": "context", "elements": [{"type": "mrkdwn",
+                    "text": f":warning: Shopify auto-publish disabled{error_note}. "
+                            f"Paste into Admin → Online Store → Blog posts."}]},
+            ]
+            # Log full body so founder can retrieve if Slack truncates
+            logger.info("SEO FULL BODY for %s:\n%s", keyword, draft.body_markdown)
+
+        await slack.send_blocks(blocks, text=f"SEO draft: {draft.title}")
+
+        return {
+            "status": "ok",
+            "keyword": keyword,
+            "title": draft.title,
+            "word_count": draft.word_count,
+            "shopify_article_id": draft.shopify_article_id,
+            "shopify_admin_url": draft.shopify_admin_url,
+            "publish_error": draft.publish_error,
+        }
+    except Exception as e:
+        logger.exception("SEO post cron failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/lifecycle-daily", dependencies=[Depends(verify_cron_secret)])
 async def cron_lifecycle_daily():
     """Post-purchase lifecycle orchestrator — runs daily 10 AM ET.
@@ -2405,6 +2612,41 @@ async def webhook_slack(request: Request):
         label = "Lifecycle Sent" if ok else "Lifecycle Send FAILED"
         tombstone = SlackNotifier.tombstone_blocks(
             label, f"{customer_name} ({customer_email}) — {trigger}", timestamp,
+        )
+        await slack.update_message(channel, message_ts, tombstone)
+
+    elif action_id == "approve_poq":
+        try:
+            data = json.loads(value)
+        except Exception:
+            data = {}
+        subject = data.get("subject", "Piece of the Quarter")
+        quarter_key = data.get("quarter_key", "")
+
+        body_text = ""
+        for block in payload.get("message", {}).get("blocks", []):
+            if block.get("block_id") == "poq_draft":
+                raw = block.get("text", {}).get("text", "")
+                body_text = raw.replace("*Draft:*\n", "", 1).strip()
+                break
+
+        result = {"sent": 0, "audience": 0, "failed": 0}
+        if body_text:
+            from src.customer.piece_of_quarter import PieceOfQuarter
+            try:
+                result = await PieceOfQuarter().send_batch(subject=subject, body=body_text)
+            except Exception:
+                logger.exception("POQ batch send failed")
+
+        label = f"POQ Sent ({result['sent']}/{result['audience']})"
+        tombstone = SlackNotifier.tombstone_blocks(
+            label, f"{quarter_key} — {subject}", timestamp,
+        )
+        await slack.update_message(channel, message_ts, tombstone)
+
+    elif action_id == "skip_poq":
+        tombstone = SlackNotifier.tombstone_blocks(
+            "POQ Skipped", f"Quarter {value}", timestamp,
         )
         await slack.update_message(channel, message_ts, tombstone)
 

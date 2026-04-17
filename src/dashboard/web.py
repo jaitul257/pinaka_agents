@@ -138,6 +138,7 @@ def _base_html(title: str, body: str, active: str = "") -> str:
 <body>
     <nav class="nav">
         <a href="/dashboard" class="nav-brand">Pinaka</a>
+        <a href="/dashboard/brief" class="nav-link {"active" if active == "brief" else ""}">Brief</a>
         <a href="/dashboard" class="nav-link {"active" if active == "products" else ""}">Products</a>
         <a href="/dashboard/add" class="nav-link {"active" if active == "add" else ""}">+ Add Product</a>
         <a href="/dashboard/images" class="nav-link {"active" if active == "images" else ""}">Shopify Images</a>
@@ -206,6 +207,161 @@ async def logout():
     response = RedirectResponse("/dashboard/login", status_code=303)
     response.delete_cookie("dash_token")
     return response
+
+
+# ── Daily Brief (Phase 9.3) ──
+
+def _brief_html(brief) -> str:
+    """Render DashboardBrief data as HTML."""
+    from datetime import datetime as _dt
+
+    def _obs_icon(sev: str) -> str:
+        return {"critical": "🔴", "warning": "🟡", "info": "⚪"}.get(sev, "⚪")
+
+    top_html = "".join(
+        f"""<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light);">
+          <div><div style="color:var(--text-primary);font-weight:500;">{c['name']}</div>
+               <div style="font-size:12px;color:var(--text-muted);font-family:'Geist Mono',monospace;">
+                 ${c['spend']:,.2f} &middot; {c['impressions']:,} imp &middot; CTR {c['ctr']}% &middot; {c['purchases']} 🛒
+               </div></div>
+        </div>"""
+        for c in brief.top_creatives
+    ) or "<div style='color:var(--text-muted);padding:12px 0;font-style:italic;'>No creative metrics yet — daily sync populates this.</div>"
+
+    weak_html = "".join(
+        f"""<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light);">
+          <div><div style="color:var(--text-primary);font-weight:500;">{c['name']}</div>
+               <div style="font-size:12px;color:var(--error);font-family:'Geist Mono',monospace;">
+                 CTR {c['ctr']}% on {c['impressions']:,} impressions &middot; ${c['spend']:,.2f} spent
+               </div></div>
+        </div>"""
+        for c in brief.weak_creatives
+    ) or "<div style='color:var(--text-muted);padding:12px 0;font-style:italic;'>No creatives flagged — good.</div>"
+
+    obs_html = "".join(
+        f"""<div style="padding:10px 0;border-bottom:1px solid var(--border-light);">
+          <span style="font-size:16px;margin-right:8px;">{_obs_icon(o.get('severity','info'))}</span>
+          <span style="color:var(--text-primary);">{o.get('summary','')[:180]}</span>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+            {o.get('category','—')} &middot; {o.get('created_at','')[:16]}
+          </div>
+        </div>"""
+        for o in brief.open_observations
+    ) or "<div style='color:var(--text-muted);padding:12px 0;font-style:italic;'>No open warnings.</div>"
+
+    mer_display = f"{brief.mer_14d}x" if brief.mer_14d is not None else "—"
+    mer_color = "var(--success)" if (brief.mer_14d or 0) >= 3 else ("var(--accent)" if (brief.mer_14d or 0) >= 2 else "var(--error)")
+
+    seasonal_card = ""
+    if brief.seasonal_window:
+        seasonal_card = f"""
+        <div class="card" style="background: var(--accent-subtle); border-color: var(--accent);">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div class="metric-label">SEASONAL WINDOW ACTIVE</div>
+              <div style="font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--text-primary);margin-top:4px;">{brief.seasonal_window}</div>
+              <div style="font-size:13px;color:var(--text-secondary);margin-top:4px;">{brief.seasonal_angle or ''}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="metric-label">DAYS LEFT</div>
+              <div style="font-family:'Geist Mono',monospace;font-size:32px;color:var(--accent);margin-top:4px;">{brief.days_left_in_window}</div>
+            </div>
+          </div>
+        </div>"""
+
+    return f"""
+    <h1 style="font-size:38px;margin-bottom:6px;">Brief</h1>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px;font-family:'Geist Mono',monospace;">
+      Generated {brief.generated_at.strftime('%Y-%m-%d %H:%M UTC')} &middot; {brief.window_days}-day window
+    </div>
+
+    <div class="card" style="background: var(--surface-raised); border-left: 3px solid var(--accent);">
+      <div style="white-space: pre-line; font-size:15px; line-height:1.7; color:var(--text-primary);">{brief.narrative}</div>
+    </div>
+
+    {seasonal_card}
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-label">MER ({brief.window_days}D)</div>
+        <div class="metric-value" style="color: {mer_color};">{mer_display}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">REVENUE ({brief.window_days}D)</div>
+        <div class="metric-value">${brief.revenue_14d:,.0f}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">AD SPEND ({brief.window_days}D)</div>
+        <div class="metric-value">${brief.spend_14d:,.0f}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">CREATIVES TRACKED</div>
+        <div class="metric-value">{brief.creative_count}</div>
+      </div>
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-label">LIFECYCLE EMAILS PENDING</div>
+        <div class="metric-value">{brief.pending_lifecycle_candidates}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">WELCOME COHORT DUE</div>
+        <div class="metric-value">{brief.new_welcome_cohort_count}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">OPEN WARNINGS</div>
+        <div class="metric-value" style="color: {'var(--error)' if brief.critical_count else 'var(--accent)' if brief.warning_count else 'var(--text-primary)'};">
+          {brief.critical_count + brief.warning_count}
+        </div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">NEXT SEO TOPIC</div>
+        <div style="font-family:'Geist Mono',monospace;font-size:13px;color:var(--text-primary);margin-top:8px;line-height:1.4;">
+          {brief.next_seo_topic or '—'}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+      <div class="card">
+        <h3>Top creatives by spend</h3>
+        <div style="margin-top: 12px;">{top_html}</div>
+      </div>
+      <div class="card">
+        <h3>Weak creatives (fatigue candidates)</h3>
+        <div style="margin-top: 12px;">{weak_html}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Open observations (heartbeat)</h3>
+      <div style="margin-top: 12px;">{obs_html}</div>
+    </div>
+
+    <div style="font-size:11px;color:var(--text-muted);margin-top:32px;text-align:center;">
+      <a href="/dashboard/brief" style="color:var(--text-muted);">Refresh</a>
+      &middot; auto-refresh in 30 min
+    </div>
+    <script>setTimeout(function(){{ location.reload(); }}, 30 * 60 * 1000);</script>
+    """
+
+
+@router.get("/brief", response_class=HTMLResponse)
+async def brief_page(dash_token: str | None = Cookie(None)):
+    """Daily AI brief — the founder's single pane of glass."""
+    if not _check_auth(dash_token):
+        return RedirectResponse("/dashboard/login", status_code=303)
+
+    try:
+        from src.dashboard.brief import DashboardBrief
+        brief = await DashboardBrief().build()
+        body = _brief_html(brief)
+    except Exception as e:
+        logger.exception("Brief build failed")
+        body = f'<div class="alert alert-error">Could not build brief: {e}</div>'
+
+    return HTMLResponse(_base_html("Brief", body, active="brief"))
 
 
 # ── Products List ──

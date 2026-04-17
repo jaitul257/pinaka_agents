@@ -23,7 +23,7 @@ api_version = "2025-01"
   uri = "/webhook/shopify/checkouts"
 
 [access_scopes]
-scopes = "read_orders,write_orders,read_customers,write_customers,read_products,read_checkouts,read_shipping"
+scopes = "read_orders,write_orders,read_customers,write_customers,read_products,read_checkouts,read_shipping,write_content"
 
 [auth]
 redirect_urls = [ "https://pinaka-agents-production-198b5.up.railway.app/api/auth" ]
