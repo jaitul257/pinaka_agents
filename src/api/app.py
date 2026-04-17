@@ -1844,6 +1844,43 @@ async def cron_seo_post():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/reconcile-products", dependencies=[Depends(verify_cron_secret)])
+async def cron_reconcile_products():
+    """Daily Shopify→Supabase product reconciliation — runs 6:30 AM ET.
+
+    Defence-in-depth for product webhooks. If a products/create, /update,
+    or /delete webhook misses (Shopify delivery failure, our service down),
+    this cron catches up.
+
+    Pulls every Shopify product, upserts into Supabase, deletes Supabase
+    rows whose shopify_product_id no longer exists in Shopify.
+    """
+    from src.core.shopify_sync import reconcile_products
+    try:
+        result = await reconcile_products(delete_missing=True)
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("reconcile-products cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/reconcile-customers", dependencies=[Depends(verify_cron_secret)])
+async def cron_reconcile_customers():
+    """Daily Shopify→Supabase customer reconciliation — runs 5 AM ET.
+
+    Catches up on any customer create/update webhooks that missed. Does NOT
+    delete missing rows (GDPR handling is an explicit flow, not a silent
+    reconciliation).
+    """
+    from src.core.shopify_sync import reconcile_customers
+    try:
+        result = await reconcile_customers()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("reconcile-customers cron failed")
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/cron/weekly-creative-rotation", dependencies=[Depends(verify_cron_secret)])
 async def cron_weekly_creative_rotation():
     """Weekly rotation — picks the stalest active product and generates 3 fresh variants.

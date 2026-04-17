@@ -1,73 +1,49 @@
-"""One-off backfill: pull every active Shopify product and upsert into Supabase.
+"""One-off wrapper around src/core/shopify_sync.reconcile_products().
 
-Run this once after registering the products/* webhooks to catch up on
-products that existed before webhook subscription. Idempotent — re-runs
-are safe. Uses the same translator as the live webhook so rows match.
+For normal operation, the /cron/reconcile-products endpoint runs daily
+at 6:30 AM ET. This script exists for manual runs during onboarding or
+after a long outage. Use when you want to sync NOW without waiting for
+the cron.
 
 USAGE:
     railway run .venv/bin/python scripts/backfill_shopify_products.py
+    railway run .venv/bin/python scripts/backfill_shopify_products.py --no-delete
+
+--no-delete preserves Supabase rows even if they're gone from Shopify.
+Default is to delete orphans (matches the cron behavior).
 """
 
+import argparse
 import asyncio
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import httpx
-
-from src.api.shopify_webhooks import _shopify_product_to_supabase_row
-from src.core.database import AsyncDatabase
+from src.core.shopify_sync import reconcile_products
 
 
-async def main() -> int:
-    shop = os.environ.get("SHOPIFY_SHOP_DOMAIN")
-    token = os.environ.get("SHOPIFY_ACCESS_TOKEN")
-    api_version = os.environ.get("SHOPIFY_API_VERSION", "2025-01")
-
-    if not shop or not token:
-        print("ERROR: SHOPIFY_SHOP_DOMAIN or SHOPIFY_ACCESS_TOKEN not set.")
+async def main(delete_missing: bool) -> int:
+    result = await reconcile_products(delete_missing=delete_missing)
+    if result.get("skip_reason"):
+        print(f"SKIPPED: {result['skip_reason']}")
         return 1
 
-    db = AsyncDatabase()
-
-    # Fetch ALL products (both active and draft — we mirror state, not filter)
-    url = f"https://{shop}/admin/api/{api_version}/products.json?limit=250"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, headers={"X-Shopify-Access-Token": token})
-    resp.raise_for_status()
-    products = resp.json().get("products", [])
-    print(f"Pulled {len(products)} products from Shopify")
-
-    existing_skus = {p["sku"] for p in await db.get_all_products() if p.get("sku")}
-    print(f"Supabase already has {len(existing_skus)} products")
-
-    new_count = 0
-    updated_count = 0
-    skipped_count = 0
-    for sp in products:
-        row = _shopify_product_to_supabase_row(sp)
-        if not row.get("sku"):
-            skipped_count += 1
-            print(f"  SKIP {sp.get('title')}: no SKU on first variant")
-            continue
-
-        was_new = row["sku"] not in existing_skus
-        try:
-            await db.upsert_product(row)
-            if was_new:
-                new_count += 1
-                print(f"  NEW  {row['sku']:<30} {row['name'][:50]}")
-            else:
-                updated_count += 1
-        except Exception as e:
-            print(f"  ERR  {row['sku']}: {e}")
-            skipped_count += 1
-
-    print()
-    print(f"Backfill complete: {new_count} new, {updated_count} updated, {skipped_count} skipped")
-    return 0
+    print(
+        f"Reconciled {result['shopify_total']} Shopify products:\n"
+        f"  upserted: {result['upserted']}\n"
+        f"  skipped:  {result['skipped']} (no SKU on first variant)\n"
+        f"  deleted:  {result['deleted']} (orphan Supabase rows)\n"
+        f"  errors:   {result['errors']}"
+    )
+    return 0 if result["errors"] == 0 else 2
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-delete", action="store_true",
+        help="Preserve Supabase rows even when missing from Shopify",
+    )
+    args = parser.parse_args()
+    sys.exit(asyncio.run(main(delete_missing=not args.no_delete)))
