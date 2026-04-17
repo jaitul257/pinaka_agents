@@ -203,6 +203,20 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] Anniversary capture at checkout + year-out trigger
 - [ ] All on SendGrid (skip Klaviyo until volume justifies $45+/mo)
 
+### Phase 10 — Customer Intelligence Layer — DONE (2026-04-16)
+- [x] `customer_rfm` + `customer_insights` tables + `customers.last_rfm_at/last_segment`
+- [x] Unified customer profile (`src/customer/profile.py`) + `GET /api/customer/{id}/profile` (dashboard-auth)
+- [x] RFM scorer with 7-segment ladder (champion/loyal/at_risk/new/hibernating/one_and_done/active) + LTV projection. `/cron/rfm-compute` daily 8AM ET (jobId 7495377).
+- [x] Voice-of-customer weekly theme miner (`src/customer/voc.py`) clustering emails+chats+surveys. `/cron/voc-mine` Mon 11AM ET (jobId 7495378).
+- [x] Review request automation — 5th lifecycle trigger `review_request_day20` (~5d post-delivery).
+- [x] Closed-loop Meta insights → ad creative generation: top-performers feed into Claude's prompt.
+- [x] Dashboard brief upgrade: segment distribution pills + VOC themes surfaced on /dashboard/brief.
+- [x] 30 new tests (379 → 409 passing).
+
+**Pending human setup for Phase 10:**
+- [ ] Replace `GOOGLE_REVIEW_URL` placeholder in `src/customer/lifecycle.py` with your actual Google Business Profile review URL.
+- [ ] Verify Trustpilot URL in lifecycle.py matches your actual profile (create account if needed).
+
 ### Phase 9.3 — Content & Retention Engine — DONE (2026-04-16)
 - [x] Daily AI brief at `/dashboard/brief` — password-protected, aggregates MER + creatives + observations + seasonal + pending queues + SEO. Claude writes 3-paragraph "focus today" narrative.
 - [x] `seo_topics` table + 25-keyword long-tail rotation (anniversary/comparison/education/occasion).

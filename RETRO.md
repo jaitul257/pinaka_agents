@@ -11,6 +11,44 @@ Last updated: 2026-04-16
 
 ## Push Log
 
+### 2026-04-16 (night): Phase 10 — Customer Intelligence Layer
+
+**What shipped:**
+- **Unified customer profile** (`src/customer/profile.py` + `GET /api/customer/{id}/profile`): one view joining orders, messages, post_purchase_attribution, anniversaries, lifecycle_emails_sent, welcome step + latest RFM snapshot. Dashboard-authenticated read-only endpoint. Used by concierge and future condition-based triggers.
+- **RFM scoring + LTV projection** (`src/customer/rfm.py` + `/cron/rfm-compute` daily 8 AM ET, jobId 7495377): absolute thresholds (not quintiles — too low N). 7-segment ladder: champion / loyal / at_risk / new / hibernating / one_and_done / active. at_risk beats loyal when recency is low (actionable > descriptive). Projects 365-day LTV via frequency map × avg_order × recency bonus.
+- **Voice of customer weekly theme miner** (`src/customer/voc.py` + `/cron/voc-mine` Mon 11 AM ET, jobId 7495378): Claude clusters last 7 days of emails + chats + survey text into 3-5 themes with representative quotes + suggested actions. Writes to `customer_insights` table. Silent on thin weeks.
+- **Review request automation** (5th lifecycle trigger, `review_request_day20`): fires ~5 days post-delivery assuming 15-day MTO. Email includes both Google + Trustpilot URLs. Graceful negative-review catch: "If it did not live up, reply and tell me."
+- **Closed-loop Meta insights → ad creative generation** (`src/marketing/ad_generator.py`): new `top_performers` param on `generate()` + `fetch_top_performers()` helper. When the ad-creatives dashboard pipes last-30d winners (by purchases + CTR) into the prompt, Claude mimics winning hook energy instead of drifting.
+- **Dashboard brief upgrade**: segment distribution pills + VOC themes + suggested actions now surface on `/dashboard/brief`. Brief narrative prompt also receives segment counts + top themes.
+- **Migration + 2 new cron-job.org entries** (`customer_rfm`, `customer_insights`, `customers.last_rfm_at/last_segment`).
+- **30 new tests** (379 → 409 passing).
+
+**What went well:**
+- **Segment ladder design caught its own bug in tests** — first ordering had "loyal" eating "at_risk" because loyal's definition (F≥3+M≥3) didn't require high recency. Test `test_segment_at_risk` failed fast, we flipped the ordering, added a clarifying comment block. Actionable segments should always beat descriptive ones.
+- **Absolute thresholds over quintiles was the right call.** At 30 buyers, quintiles would've made "champion" mean "top 6 customers" regardless of absolute value. A $20K-lifetime buyer and a $4K-lifetime buyer aren't comparable no matter how they rank relative to each other.
+- **Graceful fallbacks compounded:** RFM cron no-ops if no orders; VOC returns empty on thin weeks; profile returns None for unknowns. Every component stays useful even while data is still accumulating.
+- **Closed-loop insights was a 20-line change** — just an optional param on the existing generate() + a helper to fetch performers. Zero breaking impact on existing callers. This is what "good extension points" look like — add capability without forking.
+- **Dashboard brief narrative prompt now has segment context** — Claude's "focus today" para can actually say "5 at-risk customers need win-back" instead of generic platitudes. That's the payoff of building intelligence before adding features.
+
+**What was painful:**
+- **AsyncDatabase's `__getattr__` wrapper doesn't reach raw client.table() chains cleanly.** RFM, VOC, and Profile modules all had to dig into `db._sync._client` + `asyncio.to_thread(lambda: ...)`. Pattern works but is ugly. Proper fix would be to add typed methods to Database for every query shape we use. Accumulating tech debt.
+- **Claude's JSON output occasionally drifts** — sometimes includes `{` inside string values before the actual JSON payload starts. Our `text.find("{")` + `text.rfind("}")` pattern handles it but is brittle. Worth switching to strict JSON-mode response_format once Anthropic SDK supports it everywhere.
+- **Test patching `AsyncDatabase` + its `_sync._client` chain gets verbose.** Each Phase 10 test file needed 3-deep MagicMock setup. Worth extracting a fixture utility if we write more of these.
+- **Meta insights feedback loop is untestable until real data accumulates.** `fetch_top_performers` runs against `ad_creative_metrics` which is ~2 days old with minimal volume. Will start meaningfully improving generations in 30 days.
+
+**Lessons learned:**
+- **The dashboard brief is now where cost compounds.** Every new Phase 10+ signal should land there first, narrative second, feature endpoints third. Without that pane of glass, agents dissolve into Slack noise. (Second time this lesson appears — should get promoted to CLAUDE.md.)
+- **"Intelligence" means extracting patterns from accumulated data.** Each of our first 9 phases was CAPTURE infrastructure. Phase 10 was the first pure EXTRACTION phase. Ratio matters: at 10 phases, we should have 4-5 extraction phases to match 4-5 capture ones. Check that balance before adding more capture.
+- **First-match-wins segment ladders are order-sensitive by design.** Document that with explicit comments in the code (we did). The order encodes business priority, not just taxonomy.
+- **At low volume, most intelligence is still future-value.** RFM segments are small; VOC themes are thin; LTV projections are noisy. That's fine — we're planting a tree we'll harvest in 3 months. Don't rush decisions off 2 weeks of data.
+
+**Pending human:**
+- [ ] Replace `GOOGLE_REVIEW_URL` placeholder in `src/customer/lifecycle.py` with your actual Google Business Profile review URL (currently a guessed path).
+- [ ] Set up Trustpilot account if not already done, verify `TRUSTPILOT_REVIEW_URL` in lifecycle.py matches your actual profile URL.
+- [ ] Let data accumulate ~2 weeks. Segments, VOC themes, and LTV projections all sharpen with more customer volume.
+
+---
+
 ### 2026-04-16 (late evening): Phase 9.3 — Content & Retention Engine
 
 **What shipped:**

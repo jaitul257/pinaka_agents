@@ -79,7 +79,8 @@ async def test_dedupes_if_trigger_already_sent(orch):
 
 @pytest.mark.asyncio
 async def test_four_triggers_probed(orch):
-    """find_all_candidates must call DB for all three time-based triggers + anniversary."""
+    """find_all_candidates must call DB for all four time-based triggers + anniversary."""
+    from src.customer.lifecycle import REVIEW_REQUEST_DAYS
     seen_days = []
 
     async def _spy(days_since_purchase: int, window_days: int = 2) -> list:
@@ -90,7 +91,7 @@ async def test_four_triggers_probed(orch):
     orch._db.get_anniversary_candidates = AsyncMock(return_value=[])
 
     await orch.find_all_candidates()
-    assert set(seen_days) == {CARE_GUIDE_DAYS, REFERRAL_DAYS, CUSTOM_INQUIRY_DAYS}
+    assert set(seen_days) == {CARE_GUIDE_DAYS, REVIEW_REQUEST_DAYS, REFERRAL_DAYS, CUSTOM_INQUIRY_DAYS}
 
 
 @pytest.mark.asyncio

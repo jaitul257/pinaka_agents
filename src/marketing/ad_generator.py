@@ -48,6 +48,56 @@ DESCRIPTION_MAX = 30
 # Allowed domain in any output URL
 ALLOWED_DOMAINS = ("pinakajewellery.com",)
 
+
+async def fetch_top_performers(
+    db: Any, days: int = 30, limit: int = 5, min_impressions: int = 500,
+) -> list[dict[str, Any]]:
+    """Closed-loop: pull our best-performing ads from `ad_creative_metrics`.
+
+    Ranked by (purchase_count DESC, ctr DESC), filtered to ads with enough
+    impressions to be signal (default 500). Aggregates multiple per-day rows
+    into one entry per ad_name.
+
+    Returns a list of dicts with `name`, `ctr`, `purchases`, `spend` —
+    shape expected by AdCreativeGenerator.generate(..., top_performers=...).
+
+    Empty list on failure or no data. Safe to feed back into generate().
+    """
+    from datetime import date, timedelta
+    from collections import defaultdict
+    try:
+        rows = await db.get_creative_metrics_range(
+            date.today() - timedelta(days=days), date.today(),
+        )
+    except Exception:
+        logger.exception("fetch_top_performers: DB query failed (non-fatal)")
+        return []
+
+    by_name: dict[str, dict[str, Any]] = defaultdict(lambda: {
+        "name": "", "impressions": 0, "clicks": 0, "spend": 0.0, "purchases": 0,
+    })
+    for r in rows or []:
+        name = r.get("ad_name") or r.get("creative_name") or r.get("meta_ad_id") or ""
+        if not name:
+            continue
+        agg = by_name[name]
+        agg["name"] = name
+        agg["impressions"] += int(r.get("impressions") or 0)
+        agg["clicks"] += int(r.get("clicks") or 0)
+        agg["spend"] += float(r.get("spend") or 0)
+        agg["purchases"] += int(r.get("purchase_count") or 0)
+
+    qualified = []
+    for item in by_name.values():
+        if item["impressions"] < min_impressions:
+            continue
+        item["ctr"] = round(item["clicks"] / item["impressions"] * 100, 2) if item["impressions"] else 0.0
+        item["spend"] = round(item["spend"], 2)
+        qualified.append(item)
+
+    qualified.sort(key=lambda x: (x["purchases"], x["ctr"]), reverse=True)
+    return qualified[:limit]
+
 # User field length cap before inclusion in prompt (prompt injection defense)
 USER_FIELD_MAX_CHARS = 2000
 
@@ -140,8 +190,18 @@ Example:
 Return ONLY the JSON array. No markdown fences, no commentary, no preamble."""
 
 
-def _build_user_prompt(product: dict[str, Any], n_variants: int) -> str:
-    """Build the user prompt with product data wrapped in injection-defense delimiters."""
+def _build_user_prompt(
+    product: dict[str, Any],
+    n_variants: int,
+    top_performers: list[dict[str, Any]] | None = None,
+) -> str:
+    """Build the user prompt with product data wrapped in injection-defense delimiters.
+
+    `top_performers` (optional, Phase 10.E): list of dicts with keys `name`, `ctr`,
+    `purchases`, `spend` representing our best-performing live ads in the last
+    30 days. Inject as a "what's been working" hint so Claude mimics winning
+    patterns instead of drifting. Falsy = skip the block (backward compatible).
+    """
     # Pull fields safely with truncation
     name = _truncate(str(product.get("name", "")), 200)
     category = _truncate(str(product.get("category", "")), 100)
@@ -162,6 +222,28 @@ def _build_user_prompt(product: dict[str, Any], n_variants: int) -> str:
     if isinstance(cert, dict) and cert.get("grading_lab"):
         cert_info = f"{cert.get('grading_lab','')} certified"
 
+    # Closed-loop insights block — only included when the caller gives us data.
+    # Wrapped in delimiters (same injection-defense pattern as product data).
+    performers_block = ""
+    if top_performers:
+        lines = []
+        for p in top_performers[:5]:
+            lines.append(
+                f"- {_truncate(str(p.get('name', '')), 120)}: "
+                f"CTR {float(p.get('ctr', 0)):.2f}% · "
+                f"{int(p.get('purchases', 0))} purchases · "
+                f"${float(p.get('spend', 0)):.2f} spent"
+            )
+        if lines:
+            performers_block = (
+                "\n\n<top_performing_ads_last_30d>\n"
+                "These are OUR best-performing live ads from the last 30 days (by CTR + purchases). "
+                "Study what's working, then generate new variants that echo those angles — "
+                "do not copy names verbatim, but match the hook energy:\n"
+                + "\n".join(lines)
+                + "\n</top_performing_ads_last_30d>"
+            )
+
     return f"""Generate exactly {n_variants} distinct ad variants for this product.
 
 Each variant should lead with a different emotional angle (e.g., A = occasion/gifting,
@@ -176,7 +258,7 @@ total_carat: {total_carat}
 occasions: {occasions_str}
 certification: {cert_info}
 story: {story}
-</product_data>
+</product_data>{performers_block}
 
 Return only the JSON array of {n_variants} variants. Nothing else."""
 
@@ -298,9 +380,18 @@ class AdCreativeGenerator:
         self._client = client or anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
     def generate(
-        self, product: dict[str, Any], n_variants: int = 3, dna: BrandDNA | None = None
+        self,
+        product: dict[str, Any],
+        n_variants: int = 3,
+        dna: BrandDNA | None = None,
+        top_performers: list[dict[str, Any]] | None = None,
     ) -> tuple[list[AdVariant], str, str]:
         """Generate N variants for a product.
+
+        `top_performers` (Phase 10.E closed-loop): optional list of our
+        best-performing live ads in the last 30 days. Each dict should carry
+        `name`, `ctr`, `purchases`, `spend`. When provided, Claude is prompted
+        to echo the winning pattern. Omit or pass None for the old behavior.
 
         Returns:
             (variants, generation_batch_id, brand_dna_hash)
@@ -325,7 +416,7 @@ class AdCreativeGenerator:
             )
 
         system = _build_system_prompt(dna)
-        user = _build_user_prompt(product, actual_n)
+        user = _build_user_prompt(product, actual_n, top_performers=top_performers)
 
         variants = self._generate_once(system, user, dna, actual_n)
 

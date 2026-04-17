@@ -211,6 +211,91 @@ async def logout():
 
 # ── Daily Brief (Phase 9.3) ──
 
+def _segment_and_voc_html(brief) -> str:
+    """Customer segment distribution + latest VOC themes (Phase 10)."""
+    segment_colors = {
+        "champion": "var(--success)",
+        "loyal": "var(--accent)",
+        "at_risk": "var(--error)",
+        "hibernating": "var(--text-muted)",
+        "new": "var(--accent)",
+        "one_and_done": "var(--text-secondary)",
+        "active": "var(--text-secondary)",
+    }
+
+    # Segment pills
+    if not brief.segment_counts:
+        segment_html = (
+            "<div style='color:var(--text-muted);padding:12px 0;font-style:italic;'>"
+            "RFM hasn't run yet — first scoring arrives tomorrow 8 AM ET.</div>"
+        )
+    else:
+        pills = []
+        ordered = sorted(
+            brief.segment_counts.items(), key=lambda kv: kv[1], reverse=True
+        )
+        for seg, count in ordered:
+            color = segment_colors.get(seg, "var(--text-muted)")
+            pills.append(
+                f"""<div style="display:inline-block;padding:8px 14px;margin:4px 8px 4px 0;
+                    background:var(--surface-raised);border:1px solid var(--border);border-radius:9999px;
+                    font-size:13px;">
+                  <span style="color:{color};font-weight:600;">{seg.replace('_',' ')}</span>
+                  <span style="color:var(--text-muted);margin-left:8px;font-family:'Geist Mono',monospace;">
+                    {count}
+                  </span>
+                </div>"""
+            )
+        segment_html = "".join(pills)
+
+    # VOC themes
+    if not brief.voc_themes:
+        voc_html = (
+            "<div style='color:var(--text-muted);padding:12px 0;font-style:italic;'>"
+            "No themes mined yet — weekly cron runs Mondays 11 AM ET.</div>"
+        )
+    else:
+        voc_items = []
+        for t in brief.voc_themes[:3]:
+            theme = t.get("theme") or "Unnamed"
+            quote = (t.get("representative_quote") or "").strip()
+            count = t.get("count") or "—"
+            action = t.get("suggested_action") or ""
+            voc_items.append(
+                f"""<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">
+                  <div style="color:var(--text-primary);font-weight:600;">{theme}
+                    <span style="color:var(--text-muted);font-weight:400;font-family:'Geist Mono',monospace;font-size:12px;margin-left:8px;">
+                      ×{count}
+                    </span>
+                  </div>
+                  <div style="color:var(--text-secondary);font-size:13px;font-style:italic;margin:4px 0;">
+                    "{quote[:180]}"
+                  </div>
+                  <div style="color:var(--accent);font-size:12px;">→ {action}</div>
+                </div>"""
+            )
+        voc_html = "".join(voc_items)
+
+    voc_date = f"week ending {brief.voc_week_ending}" if brief.voc_week_ending else ""
+
+    return f"""
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+      <div class="card">
+        <h3>Customer segments <span style="color:var(--text-muted);font-weight:400;font-size:12px;margin-left:8px;">
+          {brief.total_customers} total
+        </span></h3>
+        <div style="margin-top: 12px;">{segment_html}</div>
+      </div>
+      <div class="card">
+        <h3>Voice of customer <span style="color:var(--text-muted);font-weight:400;font-size:12px;margin-left:8px;">
+          {voc_date}
+        </span></h3>
+        <div style="margin-top: 12px;">{voc_html}</div>
+      </div>
+    </div>
+    """
+
+
 def _brief_html(brief) -> str:
     """Render DashboardBrief data as HTML."""
     from datetime import datetime as _dt
@@ -333,6 +418,8 @@ def _brief_html(brief) -> str:
         <div style="margin-top: 12px;">{weak_html}</div>
       </div>
     </div>
+
+    {_segment_and_voc_html(brief)}
 
     <div class="card">
       <h3>Open observations (heartbeat)</h3>

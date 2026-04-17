@@ -1830,6 +1830,78 @@ async def cron_seo_post():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/rfm-compute", dependencies=[Depends(verify_cron_secret)])
+async def cron_rfm_compute():
+    """Daily RFM scoring for all past buyers — runs 8 AM ET.
+
+    Upserts one row per customer per day into customer_rfm. Updates
+    customers.last_segment + customers.last_rfm_at so the dashboard brief
+    can read segment counts without joining.
+    """
+    from src.customer.rfm import RFMScorer
+
+    try:
+        scorer = RFMScorer()
+        result = await scorer.run_daily()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.exception("RFM compute cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/voc-mine", dependencies=[Depends(verify_cron_secret)])
+async def cron_voc_mine():
+    """Weekly voice-of-customer theme miner — runs Monday 11 AM ET.
+
+    Claude clusters last 7 days of customer text (emails, chats, surveys)
+    into 3-5 themes. Posts to Slack + writes one row per week to
+    customer_insights.
+    """
+    from src.customer.voc import VoiceOfCustomer
+
+    try:
+        voc = VoiceOfCustomer()
+        result = await voc.run_weekly()
+        return {
+            "status": "ok",
+            "week_ending": result.week_ending.isoformat(),
+            "themes": len(result.themes),
+            "messages_analyzed": result.messages_analyzed,
+            "chats_analyzed": result.chats_analyzed,
+            "survey_responses": result.survey_responses,
+        }
+    except Exception as e:
+        logger.exception("VOC mine cron failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.get("/api/customer/{customer_id}/profile")
+async def get_customer_profile(customer_id: int, request: Request):
+    """Unified customer profile (Phase 10.A). Dashboard-authenticated.
+
+    Joins orders, messages, attribution, anniversaries, lifecycle state,
+    and latest RFM snapshot. Read-only. Cached for 60s on the client (ETag).
+    """
+    # Reuse dashboard auth — the dash_token cookie guards all /api/customer/*
+    from src.dashboard.web import _check_auth
+    dash_token = request.cookies.get("dash_token")
+    if not _check_auth(dash_token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    from src.customer.profile import CustomerProfileBuilder
+    try:
+        builder = CustomerProfileBuilder()
+        profile = await builder.for_customer(customer_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        return builder.to_json(profile)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Customer profile build failed for %d", customer_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/cron/lifecycle-daily", dependencies=[Depends(verify_cron_secret)])
 async def cron_lifecycle_daily():
     """Post-purchase lifecycle orchestrator — runs daily 10 AM ET.

@@ -33,15 +33,19 @@ logger = logging.getLogger(__name__)
 # ── Trigger definitions ──
 
 CARE_GUIDE_DAYS = 10
+REVIEW_REQUEST_DAYS = 20     # Phase 10: ~5d post-delivery assuming 15-day made-to-order window
 REFERRAL_DAYS = 60
 CUSTOM_INQUIRY_DAYS = 180
 
 TRIGGER_CARE = "care_guide_day10"
+TRIGGER_REVIEW = "review_request_day20"
 TRIGGER_REFERRAL = "referral_day60"
 TRIGGER_CUSTOM = "custom_inquiry_day180"
 TRIGGER_ANNIVERSARY = "anniversary_year1"
 
 REFERRAL_CREDIT = 250  # $ — from Phase 9.1 retro: "fine-jewelry referrals need real money"
+GOOGLE_REVIEW_URL = "https://g.page/r/pinaka-jewellery/review"  # founder to replace with actual place ID
+TRUSTPILOT_REVIEW_URL = "https://www.trustpilot.com/review/pinakajewellery.com"
 
 LIFECYCLE_SYSTEM_PROMPT = f"""You are drafting a personal follow-up email for Pinaka Jewellery \
 from the founder, Jaitul. The customer bought a handcrafted diamond tennis bracelet \
@@ -103,10 +107,11 @@ class LifecycleOrchestrator:
         """Scan orders + anniversaries for anyone due for a lifecycle email today."""
         candidates: list[LifecycleCandidate] = []
         candidates.extend(await self._find_time_based(CARE_GUIDE_DAYS, TRIGGER_CARE))
+        candidates.extend(await self._find_time_based(REVIEW_REQUEST_DAYS, TRIGGER_REVIEW))
         candidates.extend(await self._find_time_based(REFERRAL_DAYS, TRIGGER_REFERRAL))
         candidates.extend(await self._find_time_based(CUSTOM_INQUIRY_DAYS, TRIGGER_CUSTOM))
         candidates.extend(await self._find_anniversary())
-        logger.info("Lifecycle: %d total candidates (across 4 triggers)", len(candidates))
+        logger.info("Lifecycle: %d total candidates (across 5 triggers)", len(candidates))
         return candidates
 
     async def _find_time_based(
@@ -203,6 +208,8 @@ class LifecycleOrchestrator:
 def _default_subject(c: LifecycleCandidate) -> str:
     if c.trigger == TRIGGER_CARE:
         return "Caring for your bracelet"
+    if c.trigger == TRIGGER_REVIEW:
+        return "One small favor, if you have a moment"
     if c.trigger == TRIGGER_REFERRAL:
         return f"A ${REFERRAL_CREDIT} thank-you, yours to pass on"
     if c.trigger == TRIGGER_CUSTOM:
@@ -220,6 +227,15 @@ def _fallback_body(c: LifecycleCandidate) -> str:
             "wipe with a soft cloth after wear, store in the pouch it came in, and bring it to any jeweler "
             "once a year for a polish. That is it. It is built to last.\n\n"
             "If anything feels off, just reply. I read every one.\n\n"
+            f"Warm,\n{settings.founder_name}"
+        )
+    if c.trigger == TRIGGER_REVIEW:
+        return (
+            f"Your bracelet has been with you for a few days now. If it lives up to what you hoped, "
+            f"a short honest review helps people like you find us.\n\n"
+            f"Google: {GOOGLE_REVIEW_URL}\n"
+            f"Trustpilot: {TRUSTPILOT_REVIEW_URL}\n\n"
+            "Either one helps. If it did not live up — reply and tell me. I will make it right.\n\n"
             f"Warm,\n{settings.founder_name}"
         )
     if c.trigger == TRIGGER_REFERRAL:
@@ -257,6 +273,17 @@ def _build_user_prompt(c: LifecycleCandidate) -> str:
             f"Days since delivery (roughly): {c.days_since_purchase}\n\n"
             "Write a short care-guide email. Tell them 2-3 specific things to do, 1 thing NOT to do. "
             "Warm, practical. Closes with an invitation to reply if anything is off."
+        )
+    if c.trigger == TRIGGER_REVIEW:
+        return (
+            f"Trigger: {TRIGGER_REVIEW}\n"
+            f"Customer: {c.customer_name}\n"
+            f"Their bracelet: {c.last_order_items}\n"
+            f"Days since order: {c.days_since_purchase} (roughly 5 days after delivery)\n\n"
+            f"Write a warm, low-pressure review request. Include BOTH of these exact URLs on separate lines: "
+            f"Google: {GOOGLE_REVIEW_URL} | Trustpilot: {TRUSTPILOT_REVIEW_URL}. "
+            "Add: 'If it did not live up, reply and tell me — I will make it right.' "
+            "Under 120 words. No 'we would love a review' filler."
         )
     if c.trigger == TRIGGER_REFERRAL:
         return (

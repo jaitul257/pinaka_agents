@@ -70,6 +70,11 @@ class BriefData:
     new_welcome_cohort_count: int = 0
     # Content
     next_seo_topic: str | None = None
+    # Customer intelligence (Phase 10)
+    segment_counts: dict[str, int] = field(default_factory=dict)
+    total_customers: int = 0
+    voc_themes: list[dict[str, Any]] = field(default_factory=list)
+    voc_week_ending: str | None = None
     # Narrative
     narrative: str = ""
 
@@ -95,6 +100,7 @@ class DashboardBrief:
         await self._load_observations(brief)
         self._load_seasonal(brief, today)
         await self._load_pipeline(brief)
+        await self._load_customer_intelligence(brief)
         brief.next_seo_topic = _next_seo_topic_guess()
         brief.narrative = await self._narrate(brief)
 
@@ -163,6 +169,47 @@ class DashboardBrief:
                 brief.seasonal_angle = win["angle"]
                 brief.days_left_in_window = (end - today).days
                 return
+
+    async def _load_customer_intelligence(self, brief: BriefData) -> None:
+        """Segment counts from customer_rfm + latest VOC themes."""
+        # Segment distribution — uses customers.last_segment (pointer updated by RFM cron)
+        try:
+            client = self._db._sync._client
+            import asyncio
+            resp = await asyncio.to_thread(
+                lambda: client.table("customers").select("last_segment").execute()
+            )
+            counts: dict[str, int] = {}
+            total = 0
+            for row in resp.data or []:
+                seg = row.get("last_segment")
+                total += 1
+                if seg:
+                    counts[seg] = counts.get(seg, 0) + 1
+            brief.segment_counts = counts
+            brief.total_customers = total
+        except Exception:
+            logger.exception("Brief: segment counts load failed")
+
+        # Latest VOC themes (one row per week in customer_insights)
+        try:
+            client = self._db._sync._client
+            import asyncio
+            resp = await asyncio.to_thread(
+                lambda: (
+                    client.table("customer_insights")
+                    .select("week_ending,themes")
+                    .order("week_ending", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+            )
+            if resp.data:
+                row = resp.data[0]
+                brief.voc_week_ending = str(row.get("week_ending") or "")
+                brief.voc_themes = row.get("themes") or []
+        except Exception:
+            logger.exception("Brief: VOC themes load failed")
 
     async def _load_pipeline(self, brief: BriefData) -> None:
         try:
@@ -265,7 +312,10 @@ Seasonal: {brief.seasonal_window or 'No active window'} \
 {f"({brief.days_left_in_window}d left)" if brief.days_left_in_window else ''}
 Pending lifecycle emails awaiting approval: {brief.pending_lifecycle_candidates}
 Welcome cohort customers waiting for next step: {brief.new_welcome_cohort_count}
-Next SEO topic up: {brief.next_seo_topic or 'rotation empty'}"""
+Next SEO topic up: {brief.next_seo_topic or 'rotation empty'}
+
+Customer segments ({brief.total_customers} total): {brief.segment_counts or 'not yet computed'}
+Voice-of-customer themes this week: {', '.join((t.get('theme','—') for t in brief.voc_themes[:3])) or 'no themes yet'}"""
 
 
 def _fallback_narrative(brief: BriefData) -> str:
