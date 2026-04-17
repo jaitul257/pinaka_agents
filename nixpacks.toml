@@ -1,0 +1,9 @@
+# Force nixpacks to use the Python provider only. The root package.json
+# exists for Shopify CLI (used locally for `shopify app deploy`), but
+# Railway doesn't need Node — the checkout UI extension is deployed via
+# Shopify directly, not through our container.
+#
+# Without this, nixpacks auto-detects Node, runs `npm ci` + `npm run build`,
+# and fails on missing `shopify` CLI.
+
+providers = ["python"]
