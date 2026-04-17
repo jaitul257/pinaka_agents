@@ -11,6 +11,43 @@ Last updated: 2026-04-16
 
 ## Push Log
 
+### 2026-04-16 (evening): Phase 9.1 — Creative Intelligence
+
+**What shipped:**
+- **`ad_creative_metrics` table**: per-ad daily rows from Meta Insights (level=ad) — impressions, reach, clicks, spend, CTR, CPM, CPC, frequency, view_content/atc/ic/purchase counts. Indexed by date, ad_id, creative_id.
+- **Meta Insights per-creative pull**: `MetaAdsClient.get_creative_insights(date)` + a follow-up `ads?fields=creative{id,name}` batch to attach creative_id (Insights doesn't return it). New `/cron/sync-creative-metrics` runs daily 7 AM ET.
+- **Creative fatigue detector** (`src/marketing/creative_fatigue.py`): 4 rules in severity order — `dead_spend` ($50+ spend, 0 purchases, 5K+ imp), `high_freq` (>3.5 frequency), `ctr_decay` (≥30% WoW with ≥500 imp each week), `weak_ctr` (<0.5% on 2K+ imp). One flag per ad, new/low-volume ads auto-skipped.
+- **`/cron/creative-health`** (daily 9:15 AM ET) posts Slack alerts per fatigued ad + writes observations. Honest choice to NOT auto-draft replacements — keeps founder-in-the-loop.
+- **UGC brief generator** (`src/marketing/ugc_brief.py`): `/cron/ugc-brief` Sunday 6 PM ET. One Claude call (~$0.02) generates 3 phone-shot video briefs with archetype diversity (style-reaction, atelier-process, founder-talking-head, etc.), setup, hook line, 3 script beats, why-it-works. Context: seasonal window + recent products + top-spending ad name.
+- **Competitor brief** (`src/marketing/competitor_brief.py`): `/cron/competitor-brief` Monday 10 AM ET. Anthropic's native `web_search_20250305` tool (max 12 searches) surveys Vrai/Catbird/Mejuri/Aurate/Mateo and returns 3-5 sharp observations with who/what/why/action. ~$0.15-0.25/run.
+- **Per-creative breakdown in weekly ROAS report**: `AdsTracker.run_weekly_roas_report()` now appends each active ad's spend/CTR/impressions/purchases to the Slack report.
+- **29 new tests** (300 → 329). 4 cron-job.org entries created (7494767-770).
+
+**What went well:**
+- Research-first scoping saved 30+ min. The "competitor daily scraping" idea from the original roadmap sounded clean but broke on contact with Meta Ad Library (no public commercial API; scraping blocked). Pivoting to weekly Claude+WebSearch was honest and cheap — shipped in 20 min vs days of fragile scraper work.
+- Fatigue detector's `_aggregate` function had a real bug on first run (used raw impressions/reach for weekly frequency, inflating freq to 8-9 on healthy ads). Caught by the `test_healthy_ad_not_flagged` test immediately, fixed with max-daily-frequency. Good pytest invalidation case.
+- Severity ordering in rules (`dead_spend` wins over `high_freq`) was the right call — the most actionable finding surfaces first.
+- `max_tokens=2500` on competitor brief was the right allowance — Claude's tool-use responses bloat with tool results, need headroom for the final JSON.
+
+**What was painful:**
+- Shopify CLI's `--template=checkout_ui --flavor=preact` rejects with "Expected flavor one of vanilla-js|react|typescript|typescript-react|wasm|rust" — but the checkout_ui extension type ONLY accepts `preact`. Workaround: drop `--flavor` entirely, CLI derives preact itself. Undocumented. 10 min lost.
+- Meta Insights `/insights?level=ad` does NOT return `creative.id`/`creative.name` even when asked (Meta doesn't expose creative from insights edge). Required a second `/ads?ids=X,Y&fields=creative{id,name}` batch call. Extra round-trip but cheap.
+- Meta blocks optimization_goal + attribution_spec edits on published ad sets (both "Can't Make Edits to Published Ad Set" AND "Attribution Window Update Is No Longer Supported"). Documented in Phase 9.0 retro — still relevant; the new Insights-level work at least gives us data from the existing published ad set.
+- `cron-job.org` API is helpful but one of four creation calls randomly timed out (JSONDecodeError on empty body). Retried successfully. Suggest always retrying once on PUT to cron-job.org.
+
+**Lessons learned:**
+- **Claude WebSearch > HTML scraping for competitor intelligence at our scale.** Meta Ad Library has no public commercial API, and HTML scraping is fragile + blocked. WebSearch tool is: robust (Anthropic keeps it working), cheap ($0.01/search), flexible (Claude chooses what to search), and gives us narrative synthesis not raw HTML. Use this pattern for any "what's happening with X out there?" agent.
+- **Per-ad "frequency" approximated from daily rows needs max-not-sum.** Weekly reach ≠ sum(daily_reach) and ≠ max(daily_reach) — both are wrong. When Meta Insights gives daily frequency directly, take max across days. It's the "on the worst day, average user saw it X times" — exactly the saturation signal.
+- **"Shopify CLI type vs template vs flavor" naming is broken.** The `--type` flag is deprecated, `--template` replaces it with the SAME values (extension types like `checkout_ui`), and `--flavor` is the language/framework. But validating `--flavor` against "preact" — which IS the valid choice for checkout_ui — fails because the CLI's flavor validation doesn't read from the template's allow-list. Omit `--flavor` and it works.
+- **Creative fatigue: severity order matters more than detection accuracy.** Getting 100% right on "is this fatigued" is noise. Getting "what's the ONE reason a human should care" right is signal. That's why rules return after first match.
+- **Founder-in-the-loop beats auto-draft at our stage.** Auto-drafting a replacement ad on fatigue sounds efficient but noise-amplifies at 2-creative volume. Slack alert + "go to dashboard" is better — founder retains context and can choose to generate, kill, or ignore.
+
+**Pending human (2 clicks):**
+- [ ] Microsoft Clarity signup at https://clarity.microsoft.com → paste ID into Theme customize → Analytics (if you haven't yet).
+- [ ] The four new cron jobs will start firing on schedule — first UGC brief lands Sunday 6 PM ET, first competitor brief Monday 10 AM. First creative-health run is ~12 hours after next sync-creative-metrics (needs data first).
+
+---
+
 ### 2026-04-16: Phase 9.0 — Measurement Foundation (marketing agent upgrade)
 
 **What shipped:**

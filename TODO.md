@@ -169,11 +169,18 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] **Evaluate iAugment virtual try-on app** — https://apps.shopify.com/iaugment-virtual-try-on (free tier, 100 try-ons, bracelet support). AI-based try-on was abandoned — not realistic enough.
 - [ ] **Product photography** — studio shots on cream linen with directional light
 
-### Phase 9.1 — Creative Intelligence (next up)
-- [ ] Per-variant CTR + fatigue detection (flag if CTR ↓30% WoW → auto-draft replacement)
-- [ ] Daily Meta Ad Library scraper (Vrai, Catbird, Mejuri, Aurate, Mateo) → Slack digest
-- [ ] Founder-UGC brief generator (3 phone-shot prompts/week in Slack)
-- [ ] `ad_creative_metrics` table + per-creative ROAS breakdown
+### Phase 9.1 — Creative Intelligence — DONE (2026-04-16)
+- [x] `ad_creative_metrics` table + indexes
+- [x] Meta Insights per-ad daily pull (`MetaAdsClient.get_creative_insights`)
+- [x] `/cron/sync-creative-metrics` (daily 7 AM ET, jobId 7494767)
+- [x] Creative fatigue detector (4 rules: dead_spend, high_freq, ctr_decay, weak_ctr)
+- [x] `/cron/creative-health` (daily 9:15 AM ET, jobId 7494768) — Slack alerts per fatigued ad
+- [x] UGC brief generator + `/cron/ugc-brief` (Sunday 6 PM ET, jobId 7494769)
+- [x] Weekly competitor brief via Claude WebSearch + `/cron/competitor-brief` (Monday 10 AM ET, jobId 7494770)
+- [x] Per-creative breakdown appended to weekly ROAS Slack report
+- [x] 29 new tests (300 → 329 passing)
+- **Note:** original plan had "daily Meta Ad Library scraper" — pivoted to weekly Claude+WebSearch. Meta Ad Library has no public commercial API; HTML scraping is fragile/blocked. Weekly synthesis is the honest scope at our budget.
+- **Note:** original plan had "auto-draft replacement on fatigue" — decided to keep founder-in-the-loop (Slack alert → manually generate at /dashboard/ad-creatives). Auto-draft noise-amplifies at our 2-creative volume.
 
 ### Phase 9.2 — Lifecycle Orchestration (after 9.1)
 - [ ] Welcome-educational flow (5 emails, no discount — 4Cs + atelier story)

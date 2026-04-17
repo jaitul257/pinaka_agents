@@ -1553,6 +1553,203 @@ async def cron_marketing_weekly():
         return {"status": "error", "error": str(e)}
 
 
+@app.post("/cron/competitor-brief", dependencies=[Depends(verify_cron_secret)])
+async def cron_competitor_brief():
+    """Weekly competitor intelligence brief — runs Monday 10 AM ET.
+
+    Claude + native WebSearch tool surveys Vrai/Catbird/Mejuri/Aurate/Mateo
+    and produces 3-5 sharp observations on messaging/offers/press moves.
+    Not daily scraping — weekly synthesis is the honest scope at our budget.
+
+    Cost: ~$0.15-0.25/run (WebSearch tool + Claude tokens).
+    """
+    from src.marketing.competitor_brief import CompetitorBrief
+
+    try:
+        brief = CompetitorBrief()
+        result = await brief.run_weekly()
+        return {
+            "status": "ok",
+            "observations": len(result.observations),
+        }
+    except Exception as e:
+        logger.exception("Competitor brief failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/ugc-brief", dependencies=[Depends(verify_cron_secret)])
+async def cron_ugc_brief():
+    """Weekly UGC filming brief — runs Sunday 6 PM ET.
+
+    Claude generates 3 phone-shot video prompts for the founder to film during
+    the week. Each brief: setup, hook line, 3 script beats, why-it-works. Uses
+    seasonal calendar + recent products + top-spending ad name as context.
+
+    One Claude call (~$0.02/run). Cheap weekly, not daily.
+    """
+    from src.marketing.ugc_brief import UGCBriefGenerator
+
+    try:
+        gen = UGCBriefGenerator()
+        result = await gen.run_weekly()
+        return {
+            "status": "ok",
+            "briefs_generated": len(result.briefs),
+            "seasonal_window": result.seasonal_window,
+            "top_archetype": result.top_archetype_last_14d,
+        }
+    except Exception as e:
+        logger.exception("UGC brief generation failed")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/creative-health", dependencies=[Depends(verify_cron_secret)])
+async def cron_creative_health():
+    """Daily creative fatigue check. Posts Slack alerts for any ad that's
+    decaying. Runs 9 AM ET after sync-creative-metrics.
+
+    Rules in src/marketing/creative_fatigue.py — dead_spend, high_freq,
+    ctr_decay, weak_ctr. At most one flag per ad. New/low-volume ads
+    (<500 impressions) are skipped to avoid false positives.
+    """
+    from zoneinfo import ZoneInfo
+    from src.marketing.creative_fatigue import detect_fatigue
+    from src.agents.observations import observe
+
+    tz = ZoneInfo(settings.business_timezone)
+    today = datetime.now(tz).date()
+    db = AsyncDatabase()
+
+    rows = await db.get_creative_metrics_range(today - timedelta(days=14), today)
+    flags = detect_fatigue(rows, today)
+
+    if not flags:
+        logger.info("Creative health: no fatigue detected across %d rows", len(rows))
+        return {"status": "ok", "flags": 0, "rows_analyzed": len(rows)}
+
+    # Group by reason for Slack summary
+    reason_icon = {
+        "dead_spend": ":fire:",
+        "high_freq": ":repeat:",
+        "ctr_decay": ":chart_with_downwards_trend:",
+        "weak_ctr": ":zzz:",
+    }
+    reason_label = {
+        "dead_spend": "Dead spend",
+        "high_freq": "High frequency",
+        "ctr_decay": "CTR decay",
+        "weak_ctr": "Weak CTR",
+    }
+
+    blocks: list[dict] = [
+        {"type": "header", "text": {"type": "plain_text", "text": ":broken_heart: Creative Fatigue Detected"}},
+        {"type": "context", "elements": [{
+            "type": "mrkdwn",
+            "text": f"*{len(flags)} ad(s)* need attention. "
+                    f"Generate replacements at /dashboard/ad-creatives.",
+        }]},
+        {"type": "divider"},
+    ]
+
+    for flag in flags[:10]:  # cap at 10 per alert — more means something bigger is wrong
+        icon = reason_icon.get(flag.reason, ":warning:")
+        label = reason_label.get(flag.reason, flag.reason)
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"{icon} *{label}* — `{flag.ad_name or flag.meta_ad_id}`\n"
+                    f"{flag.detail}"
+                ),
+            },
+        })
+
+    slack = SlackNotifier()
+    await slack.send_blocks(blocks, text=f"Creative fatigue: {len(flags)} ad(s) need attention")
+
+    # Write observation per flag for heartbeat awareness
+    for flag in flags:
+        await observe(
+            source="cron:creative_health",
+            category="marketing",
+            severity="warning" if flag.reason == "dead_spend" else "info",
+            summary=f"Creative fatigue ({flag.reason}): {flag.ad_name or flag.meta_ad_id} — {flag.detail}",
+            entity_type="ad_creative",
+            entity_id=flag.meta_ad_id,
+            data={"reason": flag.reason, "metrics": flag.metrics, "creative_id": flag.meta_creative_id},
+        )
+
+    return {
+        "status": "ok",
+        "flags": len(flags),
+        "rows_analyzed": len(rows),
+        "by_reason": {r: sum(1 for f in flags if f.reason == r) for r in reason_icon},
+    }
+
+
+@app.post("/cron/sync-creative-metrics", dependencies=[Depends(verify_cron_secret)])
+async def cron_sync_creative_metrics():
+    """Pull yesterday's per-ad metrics from Meta Insights (level=ad) and upsert
+    into ad_creative_metrics. Daily 7 AM ET (after sync-ad-spend).
+
+    Feeds creative fatigue detector + per-creative breakdown in weekly report.
+    """
+    from zoneinfo import ZoneInfo
+    from src.marketing.meta_ads import MetaAdsClient, MetaAdsError
+
+    tz = ZoneInfo(settings.business_timezone)
+    yesterday = datetime.now(tz).date() - timedelta(days=1)
+
+    meta = MetaAdsClient()
+    if not meta.is_configured:
+        return {"status": "skipped", "reason": "Meta Ads not configured"}
+
+    try:
+        insights = await meta.get_creative_insights(yesterday)
+    except MetaAdsError as e:
+        logger.error("Creative insights pull failed: %s", e)
+        return {"status": "error", "error": str(e)}
+
+    db = AsyncDatabase()
+    rows_written = 0
+    for ins in insights:
+        try:
+            await db.upsert_creative_metrics({
+                "date": ins.date.isoformat(),
+                "meta_ad_id": ins.meta_ad_id,
+                "meta_creative_id": ins.meta_creative_id,
+                "meta_adset_id": ins.meta_adset_id,
+                "meta_campaign_id": ins.meta_campaign_id,
+                "ad_name": ins.ad_name,
+                "creative_name": ins.creative_name,
+                "impressions": ins.impressions,
+                "reach": ins.reach,
+                "clicks": ins.clicks,
+                "spend": ins.spend,
+                "ctr": ins.ctr,
+                "cpm": ins.cpm,
+                "cpc": ins.cpc,
+                "frequency": ins.frequency,
+                "view_content_count": ins.view_content_count,
+                "atc_count": ins.atc_count,
+                "ic_count": ins.ic_count,
+                "purchase_count": ins.purchase_count,
+                "purchase_value": ins.purchase_value,
+                "raw": ins.raw,
+            })
+            rows_written += 1
+        except Exception:
+            logger.exception("Failed to upsert metrics for ad %s", ins.meta_ad_id)
+
+    return {
+        "status": "ok",
+        "date": yesterday.isoformat(),
+        "ads_with_data": len(insights),
+        "rows_written": rows_written,
+    }
+
+
 @app.post("/cron/attribution-synthesize", dependencies=[Depends(verify_cron_secret)])
 async def cron_attribution_synthesize():
     """Weekly post-purchase survey synthesizer — runs Monday 9:30 AM ET.

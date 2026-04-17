@@ -891,6 +891,31 @@ class Database:
         )
         return result.data or []
 
+    # ── Ad Creative Metrics (Phase 9.1) ──
+
+    def upsert_creative_metrics(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Insert or update per-ad daily metrics. Keyed on (date, meta_ad_id)."""
+        result = (
+            self._client.table("ad_creative_metrics")
+            .upsert(row, on_conflict="date,meta_ad_id")
+            .execute()
+        )
+        return result.data[0] if result.data else {}
+
+    def get_creative_metrics_range(
+        self, start_date: date, end_date: date
+    ) -> list[dict[str, Any]]:
+        """All per-ad metric rows in a date range (inclusive)."""
+        result = (
+            self._client.table("ad_creative_metrics")
+            .select("*")
+            .gte("date", start_date.isoformat())
+            .lte("date", end_date.isoformat())
+            .order("date", desc=False)
+            .execute()
+        )
+        return result.data or []
+
 
 class AsyncDatabase:
     """Async wrapper around Database. Delegates all calls via asyncio.to_thread().

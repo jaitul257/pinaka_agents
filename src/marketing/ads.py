@@ -50,6 +50,46 @@ class MERResult:
     mer: float
 
 
+def _aggregate_creatives(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group per-ad daily metrics into per-ad-name weekly summaries.
+
+    Returns list sorted by spend desc. Name is taken from `ad_name` or
+    `creative_name` falling back to ad_id. Only includes ads with ≥1
+    impression this week.
+    """
+    from collections import defaultdict
+
+    agg: dict[str, dict[str, Any]] = defaultdict(lambda: {
+        "name": "", "impressions": 0, "clicks": 0,
+        "spend": 0.0, "purchases": 0, "purchase_value": 0.0,
+    })
+    for r in rows:
+        key = r.get("meta_ad_id") or ""
+        if not key:
+            continue
+        item = agg[key]
+        # Keep first non-empty name seen (they shouldn't vary for a single ad_id)
+        if not item["name"]:
+            item["name"] = r.get("ad_name") or r.get("creative_name") or key
+        item["impressions"] += int(r.get("impressions") or 0)
+        item["clicks"] += int(r.get("clicks") or 0)
+        item["spend"] += float(r.get("spend") or 0)
+        item["purchases"] += int(r.get("purchase_count") or 0)
+        item["purchase_value"] += float(r.get("purchase_value") or 0)
+
+    result: list[dict[str, Any]] = []
+    for item in agg.values():
+        if item["impressions"] == 0:
+            continue
+        item["ctr"] = round(item["clicks"] / item["impressions"] * 100, 2)
+        item["spend"] = round(item["spend"], 2)
+        item["purchase_value"] = round(item["purchase_value"], 2)
+        result.append(item)
+
+    result.sort(key=lambda x: x["spend"], reverse=True)
+    return result
+
+
 class AdsTracker:
     """Track ad performance and recommend budget adjustments."""
 
@@ -127,7 +167,7 @@ class AdsTracker:
             return "pause", 0.0
 
     async def run_weekly_roas_report(self) -> ROASResult:
-        """Pull stats from DB, calculate ROAS, send Slack summary."""
+        """Pull stats from DB, calculate ROAS, send Slack summary with per-creative breakdown."""
         tz = ZoneInfo(settings.business_timezone)
         end = datetime.now(tz).date()
         start = end - timedelta(days=settings.roas_window_days)
@@ -135,17 +175,28 @@ class AdsTracker:
         daily_stats = await self._db.get_stats_range(start, end)
         result = self.calculate_roas(daily_stats, settings.roas_window_days)
 
-        await self._send_roas_slack(result)
+        # Per-creative breakdown from ad_creative_metrics (silently skipped if table empty)
+        try:
+            creative_rows = await self._db.get_creative_metrics_range(start, end)
+            creative_breakdown = _aggregate_creatives(creative_rows)
+        except Exception:
+            logger.exception("Per-creative breakdown failed (non-fatal)")
+            creative_breakdown = []
+
+        await self._send_roas_slack(result, creative_breakdown)
         logger.info(
-            "Weekly ROAS report: %.2fx over %d days (spend=$%.2f, rev=$%.2f)",
+            "Weekly ROAS report: %.2fx over %d days (spend=$%.2f, rev=$%.2f, %d creatives)",
             result.roas,
             result.window_days,
             result.total_ad_spend,
             result.total_revenue,
+            len(creative_breakdown),
         )
         return result
 
-    async def _send_roas_slack(self, result: ROASResult) -> None:
+    async def _send_roas_slack(
+        self, result: ROASResult, creative_breakdown: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Send ROAS summary to Slack with budget recommendation."""
         emoji = {
             "increase": ":chart_with_upwards_trend:",
@@ -212,4 +263,24 @@ class AdsTracker:
                 ],
             })
 
-        await self._slack.send_blocks(blocks, text=f"Weekly Ads: ROAS {result.roas}x")
+        # Per-creative breakdown — only shown when we have data
+        if creative_breakdown:
+            blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn",
+                         "text": "*Creative performance (last %d days)*" % result.window_days},
+            })
+            for c in creative_breakdown[:10]:
+                blocks.append({"type": "section", "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"• *{c['name']}* — "
+                        f"${c['spend']:,.2f} spent, "
+                        f"{c['impressions']:,} imp, "
+                        f"CTR {c['ctr']:.2f}%, "
+                        f"{c['purchases']} 🛒"
+                    ),
+                }})
+
+        await self._slack.send_blocks(blocks, text=f"Weekly Ads: MER {result.mer}x")
