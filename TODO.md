@@ -22,11 +22,11 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 
 ## Phase 12-13 follow-ups (v2 work that builds on what's shipped)
 
-- [ ] Wire `capture_edit()` into Slack modal submissions — today, edits in Slack aren't captured. Need a view_submission handler that stores `{original, edited}` to approval_feedback. Low volume today makes this nice-to-have, but it's the input that powers 12.5's learning loop.
-- [ ] Inject `founder_style_for(agent, trigger)` into ContextAssembler prompts. Scaffolded but not wired — once 10+ edits accumulate per trigger and the Sunday cron rolls them, agents should auto-use the style guidance.
-- [ ] Promote/demote AUTO actions based on 30d flag_rate. Add a cron that reviews `auto_flag_rate_30d()` and either logs "this should go back to REVIEW" (>10% flag) or "this REVIEW action is ready for AUTO" (<5% edits when captured).
-- [ ] Fix backfilled Shopify products failing Pydantic Product schema at startup (spams logs). Either: make Product schema fields optional for Shopify-sourced rows, or skip ChromaDB embedding for rows without full metadata.
-- [ ] Clean up root directory (`.gitignore` for catalog/stories, freepik-tests, *.mp4 at root, supabase/.temp).
+- [x] Wire `capture_edit()` into Slack modal submissions → DONE 2026-04-18 (commit 1c8abcc). `edit_*` buttons now open a views.open modal; on submit `_handle_slack_modal_submit` captures the diff and runs the corresponding approve path with the edited text.
+- [x] Inject `founder_style_for(agent, trigger)` into draft generation → DONE 2026-04-18 (commit 1c8abcc). `augment_system_prompt()` appends the rolled style rule with "rules win" precedence. Wired into `customer.classifier.draft_response`.
+- [x] AUTO/REVIEW tier audit (flag_rate evidence) → DONE 2026-04-18 (commit 1c8abcc). `/cron/tier-audit` runs Sundays 10 PM ET (jobId 7500882); writes demote warnings + promote candidates to observations table (heartbeat surfaces to Slack). Never auto-mutates AUTO_ACTIONS — policy stays with founder.
+- [x] Fix backfilled Shopify products failing Pydantic validation at startup → DONE 2026-04-18 (commit 921f58e). Pre-checks materials fields; logs one INFO summary instead of 7 stack traces.
+- [x] Clean up root directory via `.gitignore` → DONE 2026-04-18 (commit 921f58e). catalog/stories, freepik-tests, *.mp4 at root, supabase/.temp all ignored.
 - [x] **Phase 13.1 follow-up**: wire `custom_args={agent_name, action_type, audit_log_id}` into EmailSender. DONE 2026-04-18 (commit 48c7c77) — all 6 agent-owned wrappers carry attribution; CLAUDE.md rule #14 locks in the invariant for new email paths.
 - [x] **Phase 13.1 follow-up**: configure SendGrid Event Webhook → DONE 2026-04-18 (configured via SendGrid v3 API, not admin UI — id `7e4d27fb-a360-479c-9ddf-44fe3438a3b7`, delivered/open/click/bounce/dropped/spam_report all enabled).
 - [x] **Phase 13.3 follow-up**: harden `/webhook/sendgrid` with ECDSA signature verification. DONE 2026-04-18 (commit 48c7c77) — set `SENDGRID_WEBHOOK_PUBLIC_KEY` on Railway to flip on verification; unset = accept unsigned (current behavior).
@@ -259,11 +259,11 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] Additional ad creatives — Meta recommends 3-5 per ad set, currently 2
 
 ### Low Priority (tech debt)
-- [ ] `apply_budget_change` Slack button: auto-change Meta/Google budgets (intentional defer)
-- [ ] `datetime.utcnow()` deprecation warnings (cosmetic, Python 3.12+)
-- [ ] Health endpoint: add real DB/Shopify connectivity test
-- [ ] CI/CD pipeline (tests run locally, Railway auto-deploys on push)
-- [ ] pytest-cov integration
+- [ ] `apply_budget_change` Slack button: auto-change Meta/Google budgets (intentional defer — requires scoped Meta + Google Ads API approvals to edit ad set budgets; current flow Slack-acks only)
+- [x] `datetime.utcnow()` deprecation warnings → DONE 2026-04-18 (commit 921f58e). 38 → 0 warnings across src/ and tests/.
+- [x] Health endpoint: real DB/Shopify connectivity test → DONE 2026-04-18 (commit 921f58e). Returns 503 on degraded stack.
+- [x] CI workflow + pytest-cov → DONE 2026-04-18 (commit 921f58e). `.github/workflows/tests.yml` runs pytest + coverage on push/PR; ruff lint in continue-on-error.
+- [ ] Raise `--cov-fail-under=50` once baseline coverage measured (currently lenient)
 
 ---
 

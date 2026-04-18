@@ -162,6 +162,10 @@ These are non-negotiable patterns the Phase 13 research + production incidents v
 
 14. **Every agent-attributable email carries SendGrid `custom_args`.** `EmailSender.send()` accepts `custom_args={agent_name, action_type, audit_log_id, entity_type, entity_id}` — all agent-caused wrappers (`send_crafting_update`, `send_welcome_email`, `send_lifecycle_email`, `send_cart_recovery`, `send_service_reply`, `send_reorder_reminder`) set them. Without attribution, SendGrid events (`/webhook/sendgrid`) can't correlate back to the agent run that caused the email, and `outcomes` rows become anonymous. See `src/core/email.py:_build_email_context`. If you add a new email path, set attribution or outcomes data becomes unusable.
 
+15. **All datetimes are timezone-aware; parse with `"Z" → "+00:00"`.** Never use `datetime.utcnow()` (deprecated in 3.12, naive, crashes when subtracted from Supabase's tz-aware TIMESTAMPTZ values). Use `datetime.now(timezone.utc)` for current time. Parse stored timestamps with `datetime.fromisoformat(s.replace("Z", "+00:00"))` and fall back to `replace(tzinfo=timezone.utc)` when `tzinfo is None` (old rows may be naive). `datetime.fromisoformat(s.replace("Z", ""))` — the old pattern — silently drifts time by whatever offset the server is in and is always wrong.
+
+16. **Surface evidence, never auto-mutate policy.** Signals that could suggest policy changes (tier promotion, rubric tuning, model swap) write observations to `observations` (severity warning/info) — they do NOT edit the policy file. Founder reviews via heartbeat → Slack → hand-edits `src/agents/approval_tiers.py` etc. See `src/agents/tier_audit.py` for the canonical pattern. Applies anywhere an automated audit might be tempted to "self-heal" — don't.
+
 ## Testing Conventions
 
 - Unit tests mock `AsyncDatabase` (not `Database`)
