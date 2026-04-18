@@ -178,7 +178,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 
 **Pending human (3 clicks):**
 - [ ] **Paste Shopify thank-you survey widget** — Shopify admin → Settings → Checkout → "Order status page" → Additional scripts. Copy from `shopify-theme/order-status-additional-scripts.html`. No API exists on Basic plan.
-- [ ] **Sign up Microsoft Clarity** (free) — https://clarity.microsoft.com → create project → paste ID via Theme customize → Analytics → Clarity project ID.
+- [x] **Sign up Microsoft Clarity** (free) — DONE 2026-04-18 (project created, ID pasted via Theme customize → Analytics)
 - [ ] **Decide on ATC ad set switch** — Meta blocks optimization edits on published ad sets. Current `Pinaka — US Purchase — Auto` optimizes for PURCHASE (stuck in learning at 1-2 orders/week). To switch: create new ATC ad set + pause old (doubles spend during overlap). Call when ready.
 
 ### High Priority (blockers / revenue)
