@@ -27,11 +27,12 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] Promote/demote AUTO actions based on 30d flag_rate. Add a cron that reviews `auto_flag_rate_30d()` and either logs "this should go back to REVIEW" (>10% flag) or "this REVIEW action is ready for AUTO" (<5% edits when captured).
 - [ ] Fix backfilled Shopify products failing Pydantic Product schema at startup (spams logs). Either: make Product schema fields optional for Shopify-sourced rows, or skip ChromaDB embedding for rows without full metadata.
 - [ ] Clean up root directory (`.gitignore` for catalog/stories, freepik-tests, *.mp4 at root, supabase/.temp).
-- [ ] **Phase 13.1 follow-up**: wire `custom_args={agent_name, action_type, audit_log_id}` into every EmailSender.send() call so SendGrid events can correlate back to the specific agent run that caused the email. Infra is ready; writers aren't attached yet.
+- [x] **Phase 13.1 follow-up**: wire `custom_args={agent_name, action_type, audit_log_id}` into EmailSender. DONE 2026-04-18 (commit 48c7c77) — all 6 agent-owned wrappers carry attribution; CLAUDE.md rule #14 locks in the invariant for new email paths.
 - [ ] **Phase 13.1 follow-up**: configure SendGrid Event Webhook to POST to `https://pinaka-agents-production-198b5.up.railway.app/webhook/sendgrid`. Operator step in SendGrid admin.
-- [ ] **Phase 13.3 follow-up**: harden `/webhook/sendgrid` with SG's HMAC signature verification (X-Twilio-Email-Event-Webhook-Signature) — currently accepted unsigned (URL obscurity only).
-- [ ] **Phase 13.3 follow-up**: monitor skeptic `block_override_rate_pct` on `/dashboard/skeptic` — if >25% after ~20 blocks, tune the SYSTEM_PROMPT rubric or raise the confidence gate before calling it.
-- [ ] **Phase 13.4 follow-up**: consider wiring `get_my_memory` into ContextAssembler as an optional automatic inject for agents with > N runs in the past week — currently strictly opt-in via tool call.
+- [x] **Phase 13.3 follow-up**: harden `/webhook/sendgrid` with ECDSA signature verification. DONE 2026-04-18 (commit 48c7c77) — set `SENDGRID_WEBHOOK_PUBLIC_KEY` on Railway to flip on verification; unset = accept unsigned (current behavior).
+- [ ] **Phase 13.3 follow-up**: monitor skeptic `block_override_rate_pct` on `/dashboard/skeptic` — if >25% after ~20 blocks, tune the SYSTEM_PROMPT rubric or raise the confidence gate before calling it. (Ongoing, not actionable code.)
+- [x] **Phase 13.4 decision**: `get_my_memory` stays opt-in via tool, NOT auto-injected into context. DONE 2026-04-18 (CLAUDE.md rule #13).
+- [ ] **Phase 13.3 operator step**: copy public key from SendGrid admin → Settings → Mail Settings → Event Webhook → "Signed Event Webhook Requests" → View public key → `railway variables set SENDGRID_WEBHOOK_PUBLIC_KEY=<base64>`. Until this is set, webhook accepts unsigned.
 
 ---
 

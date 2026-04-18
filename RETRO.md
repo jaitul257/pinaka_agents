@@ -11,6 +11,32 @@ Last updated: 2026-04-17
 
 ## Push Log
 
+### 2026-04-18: Phase 13 wrap — SendGrid attribution + webhook hardening
+
+**What shipped (commit 48c7c77):**
+- **SendGrid `custom_args` + `category` on every agent-attributable email.** `EmailSender.send()` now accepts custom_args + category; all 6 agent-owned wrappers (`send_crafting_update`, `send_welcome_email`, `send_lifecycle_email`, `send_cart_recovery`, `send_service_reply`, `send_reorder_reminder`) set them. Callers in Slack approval handlers + welcome cron pass customer_id through. Without this, 13.1 outcomes couldn't correlate back to the run that caused the email — rows would be anonymous and useless.
+- **`/webhook/sendgrid` ECDSA signature verification.** SendGrid calls it "Signed Event Webhook" (not HMAC despite the naming); it's ECDSA on prime256v1 over (timestamp + raw_body). Verifier is soft — never raises; any crypto exception = reject, not 500. Fallback behavior when env var unset: accept unsigned with a debug log. Set `SENDGRID_WEBHOOK_PUBLIC_KEY` on Railway to flip verification on without code changes.
+- **Phase 13.4 auto-inject decision made.** `get_my_memory` + `get_entity_memory` stay opt-in via tool call, NOT auto-injected into context. Reason: most runs are cold-utility where a 500-word memory adds only context bloat. Documented as CLAUDE.md rule #13.
+- **CLAUDE.md rules #13 and #14** added: memory is opt-in; every agent email carries attribution.
+- **Tests 514 → 527** (+13 hardening + attribution contracts).
+- **TODO cleanup**: duplicate Phase 9.2 section and stale review-automation entries removed; Microsoft Clarity, thank-you survey, per-size pricing, Meta domain verify, product photography all marked done.
+
+**What went well:**
+- **Soft-fail-open generalized cleanly.** Rule #3 "secondary reviewers soft-fail PASS" originally framed for the skeptic also applies to the ECDSA verifier: any crypto exception → reject (not 500). Same principle, different failure modes. Adding the rule to CLAUDE.md once and reusing it across subsystems was high leverage.
+- **`None` vs empty-dict distinction matters.** `_build_email_context()` returns None when nothing's provided — NOT an empty dict. Empty custom_args would ship to SendGrid as an empty field, confusing the webhook parser. A 2-line test locked this in.
+- **Test-first on crypto.** Wrote "garbage input doesn't crash" tests BEFORE touching the verifier. Standard mistake: crypto code that raises on malformed inputs becomes a DDoS vector. All 5 defensive tests plus 2 round-trip tests landed green first try.
+- **Opt-in vs auto-inject for memory was a real decision, not default.** At the volume where auto-inject is wrong (most runs don't need memory, 10% bloat is real), opt-in wins. If agents empirically fail to call when they should, tighten docs — don't switch to auto-inject. Documented so the decision survives future sessions.
+
+**What was painful:**
+- **SendGrid docs are misleading.** Called "HMAC Signature Verification" in the admin UI but it's actually ECDSA. Spent time confirming via SendGrid's official sample code before writing verifier. Rule added to RETRO: when a platform says "HMAC" in the UI, verify against code samples before implementing.
+- **One welcome test failed on the new positional arg.** Easy fix (assert_called_once_with updated), but the failure mode reinforced why we have integration tests — the unit mock didn't care, but the behavior contract shifted and the test caught it.
+
+**Lessons learned:**
+- **Attribution has to happen at the WRITER, not the RECEIVER.** It was tempting to infer agent_name from SendGrid category alone (we have `_infer_agent_from_category`), but that's fragile — a category is a fuzzy string match. Setting custom_args at send time is the hard link; category is only the fallback. Same pattern applies to any webhook system: set attribution upstream, not inference downstream.
+- **Defensive crypto code is a small test suite.** Five lines of "garbage doesn't crash" tests protect against a surprisingly large class of bugs. Worth the cost.
+
+---
+
 ### 2026-04-17 (late evening): Phase 13.1 + 13.3 + 13.4 — outcomes, skeptic, agent memory
 
 **What shipped:**
