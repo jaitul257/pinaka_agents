@@ -78,7 +78,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] Dark mode support for all custom sections
 - [x] Trust badges, Atelier Ledger section, Craft Timeline
 - [x] Product photography: studio shots on cream linen with directional light — DONE 2026-04-18
-- [ ] Slide-in cart drawer
+- [ ] Slide-in cart drawer  <!-- also listed under Medium Priority — keep one canonical entry there -->
 - **Ref:** DESIGN.md has full specs.
 
 ### 6.1 Automated Ad Creative Generation — DONE (2026-04-05)
