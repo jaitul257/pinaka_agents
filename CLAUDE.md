@@ -158,6 +158,10 @@ These are non-negotiable patterns the Phase 13 research + production incidents v
 
 12. **Wire the route BEFORE writing the handler body.** A cron handler that imports cleanly but has no `@app.post` decorator fails silently — tests pass, curl returns 404. Learned from `b741a97` → `8a0d5ff`. Pattern: add the decorator + a one-line stub FIRST, confirm route registers, THEN write the body.
 
+13. **Memory is opt-in via tool, NOT auto-injected into context.** `get_my_memory` (agent self-memory) and `get_entity_memory` (customer/product/seasonal) are registered as tools the agent CHOOSES to call when relevance warrants the extra tokens. They are never inserted into the default context. Reason: most agent runs are cold-utility (single-order webhook processing, lifecycle eligibility check) where a 500-word memory note adds no signal, only 10% context bloat. Karpathy's "smallest set of high-signal tokens" is the principle. If we later observe that agents never call the tool when they should, tighten the tool's when-to-call guidance — don't switch to auto-inject.
+
+14. **Every agent-attributable email carries SendGrid `custom_args`.** `EmailSender.send()` accepts `custom_args={agent_name, action_type, audit_log_id, entity_type, entity_id}` — all agent-caused wrappers (`send_crafting_update`, `send_welcome_email`, `send_lifecycle_email`, `send_cart_recovery`, `send_service_reply`, `send_reorder_reminder`) set them. Without attribution, SendGrid events (`/webhook/sendgrid`) can't correlate back to the agent run that caused the email, and `outcomes` rows become anonymous. See `src/core/email.py:_build_email_context`. If you add a new email path, set attribution or outcomes data becomes unusable.
+
 ## Testing Conventions
 
 - Unit tests mock `AsyncDatabase` (not `Database`)

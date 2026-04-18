@@ -130,6 +130,50 @@ _SENDGRID_EVENT_TO_OUTCOME: dict[str, str] = {
 }
 
 
+def verify_sendgrid_signature(
+    payload: bytes, signature_b64: str, timestamp: str, public_key_b64: str,
+) -> bool:
+    """Verify a SendGrid Event Webhook request.
+
+    SendGrid calls this feature "Signed Event Webhook Requests" — the
+    signature is ECDSA on prime256v1 (a.k.a. secp256r1 / P-256), not an
+    HMAC. Payload signed is exactly `timestamp + raw_body` — do not mutate.
+
+    Returns True on valid signature, False otherwise. Never raises: a
+    verification error is ALWAYS a reject, not a crash.
+
+    Dependency-light: uses `cryptography` which is already an indirect dep
+    via httpx/supabase. If it's not available we fall back to "accept"
+    with a warning log, so operator misconfiguration doesn't take the
+    webhook offline.
+    """
+    if not (signature_b64 and timestamp and public_key_b64):
+        return False
+    try:
+        import base64
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        pem = base64.b64decode(public_key_b64)
+        key = serialization.load_der_public_key(pem) if pem.startswith(b"0") \
+            else serialization.load_pem_public_key(pem)
+        if not isinstance(key, ec.EllipticCurvePublicKey):
+            logger.warning("sendgrid webhook public key is not EC")
+            return False
+
+        signature = base64.b64decode(signature_b64)
+        signed = timestamp.encode("utf-8") + payload
+        try:
+            key.verify(signature, signed, ec.ECDSA(hashes.SHA256()))
+            return True
+        except InvalidSignature:
+            return False
+    except Exception:
+        logger.exception("sendgrid signature verify failed")
+        return False
+
+
 async def record_sendgrid_events(events: list[dict[str, Any]]) -> dict[str, int]:
     """Handle a SendGrid event webhook payload.
 

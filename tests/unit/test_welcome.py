@@ -45,7 +45,9 @@ async def test_sends_next_step_to_due_candidate(engine):
 
     assert result["sent"] == 1
     assert result["candidates"] == 1
-    engine._email.send_welcome_email.assert_called_once_with("new@example.com", "New", 2)
+    # Phase 13.1: customer_id is threaded through so SendGrid events correlate
+    # back via custom_args — verify both the call and the new positional arg.
+    engine._email.send_welcome_email.assert_called_once_with("new@example.com", "New", 2, 1)
     engine._db.mark_welcome_step_sent.assert_awaited_once_with(1, 2)
 
 

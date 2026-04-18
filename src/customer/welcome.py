@@ -48,7 +48,8 @@ class WelcomeSeriesEngine:
             if not email_addr or not customer_id or step not in WELCOME_STEPS:
                 continue
 
-            ok = await _send_welcome_step(self._email, email_addr, name, step)
+            ok = await _send_welcome_step(self._email, email_addr, name, step,
+                                           customer_id=customer_id)
             if ok is None:
                 skipped += 1
                 continue
@@ -87,7 +88,11 @@ class WelcomeSeriesEngine:
 
 
 async def _send_welcome_step(
-    email: EmailSender, to_email: str, name: str, step: int
+    email: EmailSender,
+    to_email: str,
+    name: str,
+    step: int,
+    customer_id: int | str | None = None,
 ) -> bool | None:
     """Thin async wrapper around the sync SendGrid call.
 
@@ -107,5 +112,5 @@ async def _send_welcome_step(
         return None
 
     return await asyncio.to_thread(
-        email.send_welcome_email, to_email, name, step,
+        email.send_welcome_email, to_email, name, step, customer_id,
     )

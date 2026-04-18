@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     sendgrid_delivery_confirmation_template_id: str = ""
     sendgrid_refund_confirmation_template_id: str = ""
     sendgrid_reorder_reminder_template_id: str = ""
+    # Phase 13.1: SendGrid Event Webhook signature (optional; when set, the
+    # webhook handler verifies X-Twilio-Email-Event-Webhook-Signature using
+    # this public key. Base64-encoded PEM — copy from SendGrid admin →
+    # Settings → Mail Settings → Event Webhook → "Signed Event Webhook
+    # Requests" → View public key.)
+    sendgrid_webhook_public_key: str = ""
     # Phase 9.2: post-purchase lifecycle + welcome series
     sendgrid_lifecycle_template_id: str = ""
     sendgrid_welcome_1_template_id: str = ""

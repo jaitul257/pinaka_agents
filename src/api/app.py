@@ -1951,20 +1951,44 @@ async def cron_verify_outcomes():
 async def webhook_sendgrid(request: Request):
     """SendGrid event webhook — captures delivery / open / click / bounce.
 
-    SendGrid signs requests with X-Twilio-Email-Event-Webhook-Signature
-    when the feature is enabled, but we accept unsigned in the first
-    version and rely on URL obscurity. Payload is a JSON array of events.
-    Idempotency handled downstream via sg_event_id.
+    Signature verification (Phase 13.3 hardening): if
+    SENDGRID_WEBHOOK_PUBLIC_KEY is set, we verify ECDSA-SHA256 over
+    `X-Twilio-Email-Event-Webhook-Timestamp + raw_body` using the PEM/DER
+    public key copied from SendGrid admin. Missing or invalid signature
+    on a configured env returns 401.
+
+    If the env var is NOT set, we accept unsigned with a startup-time
+    warning (URL-obscurity-only, pre-hardening behavior). Set the key
+    on Railway to flip on verification without changing code.
+
+    Payload is a JSON array of events. Idempotency handled downstream
+    via sg_event_id.
     """
     import json as _json
-    from src.agents.outcomes import record_sendgrid_events
+    from src.agents.outcomes import record_sendgrid_events, verify_sendgrid_signature
+
+    body = await request.body()
+
+    # Verify if a public key is configured
+    if settings.sendgrid_webhook_public_key:
+        signature = request.headers.get("X-Twilio-Email-Event-Webhook-Signature", "")
+        timestamp = request.headers.get("X-Twilio-Email-Event-Webhook-Timestamp", "")
+        if not verify_sendgrid_signature(
+            body, signature, timestamp, settings.sendgrid_webhook_public_key,
+        ):
+            logger.warning("sendgrid webhook: signature verification failed")
+            raise HTTPException(status_code=401, detail="invalid signature")
+    else:
+        logger.debug("sendgrid webhook: accepting unsigned (SENDGRID_WEBHOOK_PUBLIC_KEY not set)")
+
     try:
-        body = await request.body()
         events = _json.loads(body) if body else []
         if not isinstance(events, list):
             return {"status": "error", "error": "expected JSON array"}
         result = await record_sendgrid_events(events)
         return {"status": "ok", **result}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("sendgrid webhook failed")
         return {"status": "error", "error": str(e)}
@@ -2798,6 +2822,7 @@ async def webhook_slack(request: Request):
                 customer_name=target.get("buyer_name", ""),
                 subject=target.get("subject", "Re: Your inquiry"),
                 email_body=target["ai_draft"],
+                customer_id=target.get("customer_id"),
             )
             await db.update_message_status(target["id"], "sent", human_approved=True)
 
@@ -2822,6 +2847,7 @@ async def webhook_slack(request: Request):
                 customer_name=cart.get("customer_email", "").split("@")[0],
                 cart_items=item_names,
                 cart_value=float(cart.get("cart_value", 0)),
+                customer_id=cart.get("customer_id"),
             )
             await db.upsert_cart_event({
                 "shopify_checkout_token": cart["shopify_checkout_token"],
@@ -2941,6 +2967,8 @@ async def webhook_slack(request: Request):
                 to_email=customer_email,
                 customer_name=customer_name,
                 email_body=draft_text,
+                customer_id=customer_id,
+                interval_days=reorder_data.get("interval_days"),
             )
             if customer_id:
                 await db.update_customer_reorder_sent(int(customer_id))
@@ -2985,6 +3013,8 @@ async def webhook_slack(request: Request):
                 customer_name=customer_name,
                 subject=subject,
                 email_body=body_text,
+                customer_id=customer_id,
+                trigger=trigger or "lifecycle_email",
             )
 
         if ok and customer_id and trigger:
