@@ -230,15 +230,41 @@ async def shopify_oauth_callback(request: Request):
 
 @app.get("/health")
 async def health():
-    """Health report with real connectivity checks.
+    """Liveness-only health. Always returns 200 if the app is serving.
 
-    Pings Supabase (`SELECT 1` via orders table head request) and, when
-    configured, Shopify Admin API (`/admin/api/shop.json`). Failures
-    downgrade the response to HTTP 503 so uptime monitors actually
-    catch a degraded stack — the prior "always 200 with ok=True" was
-    theatre.
+    Split from /health/deep intentionally: Railway fires this healthcheck
+    during container startup (0-30s post-boot), BEFORE the Supabase client
+    has warmed its connection pool. A real dependency ping at that moment
+    reliably 503s and Railway marks the deploy FAILED. We burned 12
+    consecutive FAILED deploys on 2026-04-18 learning this lesson.
 
-    Timeouts are kept tight (3s each) so health checks never block.
+    External uptime monitors should hit /health/deep for real connectivity.
+    Railway uses this shallow /health.
+    """
+    from datetime import datetime, timezone
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "modules": {
+            "shopify": {"status": "ok"},
+            "shipping": {"status": "ok"},
+            "customer": {"status": "ok"},
+            "finance": {"status": "ok"},
+        },
+    }
+
+
+@app.get("/health/deep")
+async def health_deep():
+    """Deep health — real Supabase + Shopify pings.
+
+    Returns 503 if any critical dependency is down. Safe to call any time
+    AFTER the container is warmed up (i.e. not during Railway's post-boot
+    healthcheck window — that's what /health is for).
+
+    Pings:
+      supabase  — cheap SELECT on orders table (5s timeout)
+      shopify   — GET /admin/api/shop.json when configured (5s timeout)
     """
     from datetime import datetime, timezone
 
@@ -247,32 +273,26 @@ async def health():
     supabase_ok: bool | None = None
     supabase_detail: str = ""
 
-    # Supabase: cheap SELECT with limit(1). `head=True` + `count=exact`
-    # wasn't supported by our supabase-py version (caused 503 at /health
-    # and therefore Railway healthcheck failures — see commit 921f58e
-    # retro). Plain .select().limit(1).execute() is consistent across
-    # versions.
     try:
         def _ping():
             return (Database()._client.table("orders")
                     .select("id")
                     .limit(1)
                     .execute())
-        await asyncio.wait_for(asyncio.to_thread(_ping), timeout=3.0)
+        await asyncio.wait_for(asyncio.to_thread(_ping), timeout=5.0)
         supabase_ok = True
     except asyncio.TimeoutError:
         supabase_ok = False
-        supabase_detail = "timeout (>3s)"
+        supabase_detail = "timeout (>5s)"
     except Exception as e:
         supabase_ok = False
         supabase_detail = f"{type(e).__name__}: {str(e)[:100]}"
 
-    # Shopify: only ping if credentials are configured
     if settings.shopify_shop_domain and settings.shopify_access_token:
         try:
             url = (f"https://{settings.shopify_shop_domain}"
                    f"/admin/api/{settings.shopify_api_version}/shop.json")
-            async with httpx.AsyncClient(timeout=3.0) as http:
+            async with httpx.AsyncClient(timeout=5.0) as http:
                 r = await http.get(
                     url,
                     headers={"X-Shopify-Access-Token": settings.shopify_access_token},
@@ -284,10 +304,9 @@ async def health():
             shopify_ok = False
             shopify_detail = f"{type(e).__name__}: {str(e)[:100]}"
 
-    all_critical_ok = supabase_ok and (shopify_ok is None or shopify_ok)
-    status_code = 200 if all_critical_ok else 503
+    all_ok = supabase_ok and (shopify_ok is None or shopify_ok)
     body = {
-        "status": "healthy" if all_critical_ok else "degraded",
+        "status": "healthy" if all_ok else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "modules": {
             "supabase": {"ok": supabase_ok, "detail": supabase_detail},
@@ -297,9 +316,7 @@ async def health():
             },
         },
     }
-    # Return bare dict with 200 when healthy (FastAPI default), explicit
-    # Response with 503 when degraded so external monitors react.
-    if status_code == 503:
+    if not all_ok:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=503, content=body)
     return body

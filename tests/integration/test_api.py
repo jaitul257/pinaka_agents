@@ -43,24 +43,30 @@ def client():
 # ── Health ──
 
 def test_health_endpoint(client):
-    """Health endpoint reports real connectivity.
+    """Shallow /health used by Railway's post-boot healthcheck.
 
-    In tests the Supabase + Shopify clients are mocked, so the pings will
-    either succeed (mocked response) or fail (unreachable). Either way the
-    response must have the new schema (`ok: bool` per module) and a
-    documented status (`healthy` or `degraded`).
+    Always returns 200 — no dependency pings happen here because Railway
+    fires this check during container warmup. External monitors should
+    call /health/deep for real connectivity (see test below).
     """
     response = client.get("/health")
-    # Accept 200 (mocked clients happy) or 503 (mocks return errors) — either
-    # is a valid health report with the new schema.
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "modules" in data
+
+
+def test_health_deep_endpoint_schema(client):
+    """/health/deep reports real Supabase + Shopify ping results."""
+    response = client.get("/health/deep")
+    # 200 (clients happy) or 503 (degraded) — both are valid shapes
     assert response.status_code in (200, 503)
     data = response.json()
     assert data["status"] in ("healthy", "degraded")
-    assert "modules" in data
     assert "supabase" in data["modules"]
     assert "shopify" in data["modules"]
     for module in data["modules"].values():
-        assert "ok" in module  # new schema uses explicit `ok` bool
+        assert "ok" in module
 
 
 # ── Cron Auth ──
