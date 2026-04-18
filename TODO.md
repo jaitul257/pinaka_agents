@@ -247,7 +247,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 **Pending human setup for Phase 9.3:**
 - [x] Shopify `write_content` scope → DONE (verified 2026-04-18 via `/admin/oauth/access_scopes.json`). All required scopes granted: read_checkouts, read_customers, read_orders, read_products, read_shipping, write_content, write_customers, write_orders, read_content.
 - [x] `SHOPIFY_BLOG_ID` → DONE. Set to 103804764418 ("News" blog, confirmed reachable via `/admin/api/2025-01/blogs/{id}.json`). SEO auto-publish flow is unblocked.
-- [ ] Create Pinterest Business account → dev app at developers.pinterest.com → generate access token with `pins:write` + `boards:read` → paste PINTEREST_ACCESS_TOKEN + PINTEREST_BOARD_ID on Railway.
+- [x] Pinterest Business account + dev app + `pins:write` access token → DONE 2026-04-18. OAuth flow via `scripts/pinterest_oauth.py` on Trial Access (Standard Access not needed for single-tenant use). Token + refresh token set on Railway. Verified: BUSINESS account `pinakajewellery` (341 pins, 2 boards), target board `406309266321868425` confirmed owned.
 - [ ] Install Pinterest Tag — ads.pinterest.com → Conversions → get tag ID → paste in Theme customize → Analytics → Pinterest Tag ID. Separate from API posting.
 
 ### Medium Priority (improvements)
