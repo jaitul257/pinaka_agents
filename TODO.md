@@ -232,7 +232,8 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] 30 new tests (379 → 409 passing).
 
 **Pending human setup for Phase 10:**
-- [x] `GOOGLE_REVIEW_URL` / `TRUSTPILOT_REVIEW_URL` moved to env vars (commit dff12ef) — set on Railway once real Google Business Profile + Trustpilot accounts exist. Defaults redirect to "claim this business" until then.
+- [x] `GOOGLE_REVIEW_URL` / `TRUSTPILOT_REVIEW_URL` moved to env vars (commit dff12ef). Once the real URLs are available, set via Railway CLI.
+- [ ] **Google Business Profile — verification in review (up to 5 days, started 2026-04-18).** Profile submitted: name=Pinaka Jewellery, category=Jewelry store, service-area only (no physical location). Google's doing manual review. When approved, get the review URL from Home → "Share review form" → paste to set `GOOGLE_REVIEW_URL`.
 
 ### Phase 9.3 — Content & Retention Engine — DONE (2026-04-16)
 - [x] Daily AI brief at `/dashboard/brief` — password-protected, aggregates MER + creatives + observations + seasonal + pending queues + SEO. Claude writes 3-paragraph "focus today" narrative.
