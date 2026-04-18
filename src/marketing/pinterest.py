@@ -103,8 +103,11 @@ async def refresh_access_token() -> dict[str, Any]:
                 data={
                     "grant_type": "refresh_token",
                     "refresh_token": settings.pinterest_refresh_token,
-                    # Ask for the same scopes we originally authorized
-                    "scope": "pins:write,boards:read,user_accounts:read",
+                    # Must match the superset we originally authorized in
+                    # scripts/pinterest_oauth.py. Pinterest's /v5/pins POST
+                    # required boards:write + pins:read even for plain
+                    # create — learned the hard way 2026-04-18.
+                    "scope": "pins:read,pins:write,boards:read,boards:write,user_accounts:read",
                 },
             )
     except Exception as e:

@@ -40,13 +40,36 @@ def _slugify(name: str) -> str:
     return slug.strip("-")
 
 
-def _get_retail_price(pricing: dict | None) -> float | None:
-    """Extract first variant's retail price from pricing JSONB."""
-    if not pricing or not isinstance(pricing, dict):
-        return None
-    for variant_data in pricing.values():
-        if isinstance(variant_data, dict) and "retail" in variant_data:
-            return float(variant_data["retail"])
+def _get_retail_price(
+    pricing: dict | None,
+    variant_options: list | None = None,
+) -> float | None:
+    """Return the smallest retail price we can find.
+
+    Tries in order:
+      1. pricing.{variant}.retail (legacy shape from manually-added products)
+      2. variant_options[].price (current Shopify-webhook-synced shape)
+
+    Returns the MIN price across variants — GMC expects a single "from"
+    price per product, and the smallest size variant is what the customer
+    starts seeing on a Shopping ad.
+    """
+    if pricing and isinstance(pricing, dict):
+        for variant_data in pricing.values():
+            if isinstance(variant_data, dict) and "retail" in variant_data:
+                return float(variant_data["retail"])
+    if variant_options and isinstance(variant_options, list):
+        prices: list[float] = []
+        for v in variant_options:
+            if isinstance(v, dict):
+                p = v.get("price")
+                try:
+                    if p is not None:
+                        prices.append(float(p))
+                except (ValueError, TypeError):
+                    continue
+        if prices:
+            return min(prices)
     return None
 
 
@@ -61,7 +84,8 @@ def map_product_to_merchant_item(product: dict[str, Any]) -> dict[str, Any] | No
         return None
 
     pricing = product.get("pricing") or {}
-    retail_price = _get_retail_price(pricing)
+    variant_options = product.get("variant_options")
+    retail_price = _get_retail_price(pricing, variant_options=variant_options)
     if retail_price is None:
         logger.warning("Product %s has no retail price, skipping merchant sync", sku)
         return None

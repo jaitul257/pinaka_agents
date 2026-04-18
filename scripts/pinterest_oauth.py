@@ -36,7 +36,11 @@ import webbrowser
 APP_ID = os.environ.get("PINTEREST_APP_ID", "").strip()
 APP_SECRET = os.environ.get("PINTEREST_APP_SECRET", "").strip()
 REDIRECT_URI = "http://localhost:8765/callback"
-SCOPES = "pins:write,boards:read,user_accounts:read"
+# Pinterest v5 requires more scopes than the obvious minimum:
+# POST /v5/pins returns a 401 "Missing: ['boards:write', 'pins:read']"
+# even though creating a pin logically shouldn't need boards:write.
+# Safest: request all pin+board read+write scopes.
+SCOPES = "pins:read,pins:write,boards:read,boards:write,user_accounts:read"
 
 if not APP_ID or not APP_SECRET:
     print("ERROR: set PINTEREST_APP_ID and PINTEREST_APP_SECRET env vars first.")
@@ -65,8 +69,9 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
                     f"<p>Return to your terminal for details.</p>").encode()
             self.server.result = {"error": error}  # type: ignore
         elif code:
-            body = (b"<h1>Got the code — you can close this tab.</h1>"
-                    b"<p>Return to your terminal to see the access token.</p>")
+            body = ("<h1>Got the code - you can close this tab.</h1>"
+                    "<p>Return to your terminal to see the access token.</p>"
+                   ).encode("utf-8")
             self.server.result = {"code": code}  # type: ignore
         else:
             body = b"<h1>No code received</h1>"
