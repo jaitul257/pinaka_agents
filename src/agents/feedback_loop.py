@@ -209,6 +209,33 @@ async def _mark_incorporated(ids: list[int]) -> None:
         logger.exception("mark_incorporated failed for %d ids", len(ids))
 
 
+async def augment_system_prompt(
+    base_prompt: str, agent_name: str, trigger_type: str,
+) -> str:
+    """Append the latest founder_style rule (if any) to a system prompt.
+
+    Drafting functions call this at request time so that once the Sunday
+    roll_founder_style() cron has distilled 10+ edits into a rule, future
+    drafts automatically pick it up. No rule yet → returns base_prompt
+    unchanged (zero extra tokens).
+
+    Intentionally async: the lookup is a single indexed SELECT, but
+    making callers await it keeps the implementation free to add caching
+    or remote fetches later without signature churn.
+    """
+    style = await founder_style_for(agent_name, trigger_type)
+    if not style:
+        return base_prompt
+    return (
+        f"{base_prompt}\n\n"
+        f"## Founder voice rules (learned from prior edits)\n"
+        f"{style}\n\n"
+        f"Follow these rules tightly — they reflect the founder's own edits "
+        f"to prior drafts. When the rules conflict with the base prompt, the "
+        f"rules win."
+    )
+
+
 async def founder_style_for(agent_name: str, trigger_type: str) -> str | None:
     """Fetch the latest rolled style guidance for a trigger. Used by
     ContextAssembler to inject into prompts."""

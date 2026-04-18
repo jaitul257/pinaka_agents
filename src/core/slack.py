@@ -52,6 +52,67 @@ class SlackNotifier:
         )
         return response.data
 
+    async def open_edit_modal(
+        self,
+        trigger_id: str,
+        action_id: str,
+        value: str,
+        original_text: str,
+        channel: str = "",
+        message_ts: str = "",
+    ) -> dict[str, Any]:
+        """Open a prefilled text-edit modal (Phase 12.5a).
+
+        `action_id` is one of edit_response / edit_cart_recovery /
+        edit_crafting_update / edit_listing. Founder tweaks the text and
+        submits; Slack posts a `view_submission` payload to /webhook/slack
+        which routes to `_handle_slack_modal_submit`.
+
+        `original_text` is both prefilled in the textarea AND stashed in
+        private_metadata so the submit handler can diff without re-querying.
+        """
+        metadata = json.dumps({
+            "value": str(value),
+            # Slack caps private_metadata at 3000 chars. Originals longer
+            # than that are truncated — the diff still captures edits on
+            # the portion we kept.
+            "original_text": original_text[:2600],
+            "channel": channel,
+            "message_ts": message_ts,
+        })
+        view = {
+            "type": "modal",
+            "callback_id": f"modal_{action_id}",
+            "private_metadata": metadata,
+            "title": {"type": "plain_text", "text": "Edit draft"},
+            "submit": {"type": "plain_text", "text": "Send edited"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": [
+                {
+                    "type": "context",
+                    "elements": [
+                        {"type": "mrkdwn",
+                         "text": f":pencil2: Editing *{action_id}* for `#{value}`. "
+                                 "Submit to send; your edits are captured for style learning."},
+                    ],
+                },
+                {
+                    "type": "input",
+                    "block_id": "edited_text_block",
+                    "label": {"type": "plain_text", "text": "Email body"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "edited_text",
+                        "multiline": True,
+                        "initial_value": (original_text or "")[:2900],
+                        "max_length": 2900,
+                    },
+                },
+            ],
+        }
+        response = await self._client.views_open(trigger_id=trigger_id, view=view)
+        return response.data
+
     # ── Message Templates ──
 
     async def send_customer_response_review(

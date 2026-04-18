@@ -98,6 +98,11 @@ Reply with ONLY the category name, nothing else.""",
 
         customer_context includes: name, order count, LTV, lifecycle stage, notes.
         The AI uses this to personalize responses (e.g., "Welcome back, Sarah").
+
+        Phase 12.5b: if 10+ founder edits have accumulated for this trigger
+        type and the Sunday cron has rolled them into a founder_style rule,
+        that rule is appended to the system prompt so drafts match Jaitul's
+        actual voice without us hand-tuning the prompt.
         """
         context_parts = [f"Message category: {category}"]
         if customer_context:
@@ -108,11 +113,15 @@ Reply with ONLY the category name, nothing else.""",
             context_parts.append(f"Order details:\n{order_context}")
 
         context = "\n\n".join(context_parts)
+        system = await _augment_with_founder_style(
+            SYSTEM_PROMPT, agent_name="customer_service",
+            trigger_type="customer_response",
+        )
 
         response = await self._client.messages.create(
             model=settings.claude_model,
             max_tokens=512,
-            system=SYSTEM_PROMPT,
+            system=system,
             messages=[
                 {
                     "role": "user",
@@ -134,3 +143,16 @@ Draft a response:""",
         urgent_keywords = ["damaged", "broken", "wrong", "missing", "refund", "dispute", "angry"]
         message_lower = message.lower()
         return any(word in message_lower for word in urgent_keywords)
+
+
+async def _augment_with_founder_style(
+    base: str, agent_name: str, trigger_type: str,
+) -> str:
+    """Wrapper to keep the classifier's Anthropic-call dependency on
+    feedback_loop soft — if the loop module is missing or the DB is
+    unreachable, drafts still generate from the base prompt."""
+    try:
+        from src.agents.feedback_loop import augment_system_prompt
+        return await augment_system_prompt(base, agent_name, trigger_type)
+    except Exception:
+        return base
