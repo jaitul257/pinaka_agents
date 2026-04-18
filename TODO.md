@@ -76,7 +76,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] AI concierge chat widget live on all pages
 - [x] Dark mode support for all custom sections
 - [x] Trust badges, Atelier Ledger section, Craft Timeline
-- [ ] Product photography: studio shots on cream linen with directional light
+- [x] Product photography: studio shots on cream linen with directional light — DONE 2026-04-18
 - [ ] Slide-in cart drawer
 - **Ref:** DESIGN.md has full specs.
 
@@ -194,7 +194,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [ ] **More products from catalog** — remaining bracelets need Pomelli photos → upload → publish
 - [ ] **Unpause Meta Campaign when ready** — Campaign ID: 120244523278190359. Ads A + B ready, all fixes applied.
 - [ ] **Evaluate iAugment virtual try-on app** — https://apps.shopify.com/iaugment-virtual-try-on (free tier, 100 try-ons, bracelet support). AI-based try-on was abandoned — not realistic enough.
-- [ ] **Product photography** — studio shots on cream linen with directional light
+- [x] **Product photography** — DONE 2026-04-18 (studio shots on cream linen with directional light)
 
 ### Phase 9.2 — Lifecycle Orchestration — DONE (2026-04-16)
 - [x] `customer_anniversaries` table + `customers.lifecycle_emails_sent` JSONB + `customers.welcome_started_at/welcome_step`
