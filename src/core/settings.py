@@ -125,6 +125,14 @@ class Settings(BaseSettings):
     google_service_account_path: str = ""  # Local path to JSON key
     google_service_account_json: str = ""  # JSON content (for Railway)
 
+    # ── Review-request URLs (Phase 9/10 review_request_day20 trigger) ──
+    # Set on Railway once the real Google Business Profile / Trustpilot
+    # accounts exist. Defaults are the standard URL formats — they still
+    # route the customer to "claim this business" landing pages, which
+    # is a benign degradation until the profiles are live.
+    google_review_url: str = "https://g.page/r/pinaka-jewellery/review"
+    trustpilot_review_url: str = "https://www.trustpilot.com/review/pinakajewellery.com"
+
     # ── Module thresholds ──
     # Shipping
     insurance_required_above: float = 500.0

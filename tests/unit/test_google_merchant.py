@@ -57,7 +57,9 @@ def test_map_product_full():
     assert item["condition"] == "new"
     assert item["brand"] == "Pinaka Jewellery"
     assert item["googleProductCategory"] == "Apparel & Accessories > Jewelry"
-    assert item["productType"] == "Bracelets"
+    # Content API v2.1 expects `productTypes` (array). Prior camelCase
+    # singular was silently rejected by Google.
+    assert item["productTypes"] == ["Bracelets"]
     assert item["channel"] == "online"
     assert item["targetCountry"] == "US"
     assert "pinakajewellery.com/products/" in item["link"]

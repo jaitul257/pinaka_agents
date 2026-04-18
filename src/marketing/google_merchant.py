@@ -99,7 +99,11 @@ def map_product_to_merchant_item(product: dict[str, Any]) -> dict[str, Any] | No
         "price": {"value": str(retail_price), "currency": "USD"},
         "brand": "Pinaka Jewellery",
         "googleProductCategory": "Apparel & Accessories > Jewelry",
-        "productType": category,
+        # Content API v2.1 expects `productTypes` (array, plural), not
+        # `productType`. Previously rejected every batch with
+        # "Unknown name productType". Multiple entries are allowed — we
+        # send our single category in a one-element list.
+        "productTypes": [category] if category else [],
         "shipping": [{
             "country": "US",
             "service": "Standard",

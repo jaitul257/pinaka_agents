@@ -44,8 +44,12 @@ TRIGGER_CUSTOM = "custom_inquiry_day180"
 TRIGGER_ANNIVERSARY = "anniversary_year1"
 
 REFERRAL_CREDIT = 250  # $ — from Phase 9.1 retro: "fine-jewelry referrals need real money"
-GOOGLE_REVIEW_URL = "https://g.page/r/pinaka-jewellery/review"  # founder to replace with actual place ID
-TRUSTPILOT_REVIEW_URL = "https://www.trustpilot.com/review/pinakajewellery.com"
+# URLs are settable via Railway env vars (GOOGLE_REVIEW_URL /
+# TRUSTPILOT_REVIEW_URL) in case the real profiles haven't been
+# configured yet — defaults in settings.py are harmless placeholders
+# that redirect to the generic "claim this business" page.
+GOOGLE_REVIEW_URL = settings.google_review_url
+TRUSTPILOT_REVIEW_URL = settings.trustpilot_review_url
 
 LIFECYCLE_SYSTEM_PROMPT = f"""You are drafting a personal follow-up email for Pinaka Jewellery \
 from the founder, Jaitul. The customer bought a handcrafted diamond tennis bracelet \
