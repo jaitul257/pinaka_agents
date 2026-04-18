@@ -196,10 +196,13 @@ def test_pinterest_unconfigured():
 
 @pytest.mark.asyncio
 async def test_pick_product_rotates(pin_client):
+    # Products must have HTTPS image URLs to be pinnable (Pinterest API
+    # rejects plain http and empty arrays). Pre-2026-04-18 the cron fired
+    # on empty-image products and erroring; now pick_product filters them.
     pin_client._db.get_all_products = AsyncMock(return_value=[
-        {"name": "A", "status": "active"},
-        {"name": "B", "status": "active"},
-        {"name": "C", "status": "active"},
+        {"name": "A", "status": "active", "images": ["https://cdn.example.com/a.jpg"]},
+        {"name": "B", "status": "active", "images": ["https://cdn.example.com/b.jpg"]},
+        {"name": "C", "status": "active", "images": ["https://cdn.example.com/c.jpg"]},
     ])
     p0 = await pin_client.pick_product(day_index=0)
     p1 = await pin_client.pick_product(day_index=1)
@@ -209,6 +212,28 @@ async def test_pick_product_rotates(pin_client):
     assert p1["name"] == "B"
     assert p2["name"] == "C"
     assert p3["name"] == "A"  # wraps
+
+
+@pytest.mark.asyncio
+async def test_pick_product_skips_products_without_https_image(pin_client):
+    """Products with empty or http-only images must be excluded —
+    Pinterest rejects those at upload."""
+    pin_client._db.get_all_products = AsyncMock(return_value=[
+        {"name": "no_images", "status": "active", "images": []},
+        {"name": "http_only", "status": "active", "images": ["http://cdn.example.com/a.jpg"]},
+        {"name": "ok", "status": "active", "images": ["https://cdn.example.com/b.jpg"]},
+    ])
+    p = await pin_client.pick_product(day_index=0)
+    assert p["name"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_pick_product_returns_none_when_all_empty(pin_client):
+    pin_client._db.get_all_products = AsyncMock(return_value=[
+        {"name": "A", "status": "active", "images": []},
+        {"name": "B", "status": "active"},  # images key absent
+    ])
+    assert await pin_client.pick_product(day_index=0) is None
 
 
 @pytest.mark.asyncio

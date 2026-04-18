@@ -1788,11 +1788,13 @@ async def cron_pinterest_pins():
 
     product = await client.pick_product(day_index=day_index)
     if not product:
-        return {"status": "error", "error": "No products to pin"}
+        # Clean no-op when no product with an HTTPS image exists.
+        return {"status": "skipped", "reason": "No pinnable products (need HTTPS image)"}
 
     draft = await client.draft_copy(product)
     if not draft:
-        return {"status": "error", "error": "Could not draft pin for product"}
+        return {"status": "error", "error": "Could not draft pin for product",
+                "sku": product.get("sku")}
 
     result = await client.create_pin(draft)
 

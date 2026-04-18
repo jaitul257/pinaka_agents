@@ -134,16 +134,26 @@ class PinterestClient:
         return bool(self._token and self._board_id)
 
     async def pick_product(self, day_index: int = 0) -> dict[str, Any] | None:
-        """Round-robin through active products based on the day counter.
+        """Round-robin through pinnable products.
 
-        day_index can be any stable integer (e.g. days since epoch). We modulo
-        it against the product count to rotate through the catalog.
+        A product is pinnable only if it has at least one HTTPS image URL —
+        Pinterest rejects plain-http or signed-url images at upload time
+        (see draft_copy filter). Filtering here makes the cron a no-op
+        when there's nothing to pin instead of cycling through empty-image
+        SKUs and logging errors.
+
+        day_index is modulo'd against the pinnable set so rotation is
+        stable across days without starving any single product.
         """
         products = await self._db.get_all_products()
-        active = [p for p in (products or []) if p.get("status") == "active"] or products or []
-        if not active:
+        pinnable = [
+            p for p in (products or [])
+            if _has_https_image(p) and (p.get("status") == "active" or p.get("status") is None)
+        ]
+        if not pinnable:
+            logger.info("pick_product: no products with HTTPS images available")
             return None
-        return active[day_index % len(active)]
+        return pinnable[day_index % len(pinnable)]
 
     async def draft_copy(self, product: dict[str, Any]) -> PinDraft | None:
         """Claude drafts pin title + description + alt_text for one product."""
@@ -256,3 +266,21 @@ def _slugify(value: str) -> str:
     s = re.sub(r"[^a-z0-9\s-]", "", s)
     s = re.sub(r"\s+", "-", s)
     return re.sub(r"-+", "-", s).strip("-")
+
+
+def _has_https_image(product: dict[str, Any]) -> bool:
+    """True when the product has at least one HTTPS image URL.
+
+    Accepts `images` as a flat list of URLs OR a list of dicts with
+    `src`/`url` keys (Shopify shape). Rejects plain HTTP and empty arrays
+    because Pinterest rejects both at upload time.
+    """
+    images = product.get("images") or []
+    if not isinstance(images, list):
+        return False
+    for img in images:
+        url = img if isinstance(img, str) else (img.get("src") or img.get("url") or "") \
+            if isinstance(img, dict) else ""
+        if url and url.startswith("https://"):
+            return True
+    return False
