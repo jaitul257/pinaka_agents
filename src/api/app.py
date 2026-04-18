@@ -274,6 +274,7 @@ async def health_deep():
     supabase_detail: str = ""
 
     try:
+        from src.core.database import Database
         def _ping():
             return (Database()._client.table("orders")
                     .select("id")
