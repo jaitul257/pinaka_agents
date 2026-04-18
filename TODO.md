@@ -1,6 +1,6 @@
 # TODO — Pinaka Agents
 
-Last updated: 2026-04-17
+Last updated: 2026-04-18
 
 ## Phases 1-8.4: COMPLETE
 
@@ -111,12 +111,11 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - **State:** 2 creatives live on Meta (`959138700395572`, `1679259843246920`), 0 Ads (blocked), 1 variant pending_review (Variant C of batch ddeea2d8).
 - **Why:** Collapses the "attach creative to ad set" manual step that used to require a trip to Ads Manager after every approval. One click from draft to impressions (after first-time setup).
 
-### 6.3 Review Request Automation
-- [ ] Post-delivery review solicitation via email (7-14 days after delivery)
-- [ ] Platform-specific links (Google Reviews, Trustpilot)
-- [ ] Slack approval before sending
-- [ ] Track review rate and sentiment
-- **Why:** Social proof drives DTC conversion. Automate the ask.
+### 6.3 Review Request Automation — DONE (2026-04-16, shipped in Phase 10)
+- [x] Post-delivery review solicitation via email (5d post-delivery, `review_request_day20` lifecycle trigger)
+- [x] Platform-specific links (Google Reviews, Trustpilot) — see `src/customer/lifecycle.py`
+- [x] Slack approval before sending (via existing lifecycle approval flow)
+- [x] Track review rate and sentiment (via VOC theme miner in Phase 10)
 
 ---
 
@@ -177,7 +176,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] 37 new tests (263 → 300 passing)
 
 **Pending human (3 clicks):**
-- [ ] **Paste Shopify thank-you survey widget** — Shopify admin → Settings → Checkout → "Order status page" → Additional scripts. Copy from `shopify-theme/order-status-additional-scripts.html`. No API exists on Basic plan.
+- [x] **Paste Shopify thank-you survey widget** — DONE 2026-04-18 (pasted into Shopify admin → Settings → Checkout → Additional scripts). No post-install orders yet to produce submissions; first real customer order will populate `post_purchase_attribution`.
 - [x] **Sign up Microsoft Clarity** (free) — DONE 2026-04-18 (project created, ID pasted via Theme customize → Analytics)
 - [ ] **Decide on ATC ad set switch** — Meta blocks optimization edits on published ad sets. Current `Pinaka — US Purchase — Auto` optimizes for PURCHASE (stuck in learning at 1-2 orders/week). To switch: create new ATC ad set + pause old (doubles spend during overlap). Call when ready.
 
@@ -191,7 +190,6 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] ~~Remove "Free Lifetime Care"~~ — stripped from all modules, tests, theme. Done 2026-04-16.
 - [x] **Verify `pinakajewellery.com` domain in Meta Business Settings** — DONE 2026-04-18
 - [x] **Set per-size pricing on pipeline products** — DONE 2026-04-18 (prices set via /dashboard/edit-shopify/{id} after bootstrap; all 7 pipeline SKUs have 4-size pricing in $2.1k-$5.7k range)
-- [ ] **More products from catalog** — remaining bracelets need Pomelli photos → upload → publish
 - [ ] **Unpause Meta Campaign when ready** — Campaign ID: 120244523278190359. Ads A + B ready, all fixes applied.
 - [ ] **Evaluate iAugment virtual try-on app** — https://apps.shopify.com/iaugment-virtual-try-on (free tier, 100 try-ons, bracelet support). AI-based try-on was abandoned — not realistic enough.
 - [x] **Product photography** — DONE 2026-04-18 (studio shots on cream linen with directional light)
@@ -221,14 +219,6 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] 29 new tests (300 → 329 passing)
 - **Note:** original plan had "daily Meta Ad Library scraper" — pivoted to weekly Claude+WebSearch. Meta Ad Library has no public commercial API; HTML scraping is fragile/blocked. Weekly synthesis is the honest scope at our budget.
 - **Note:** original plan had "auto-draft replacement on fatigue" — decided to keep founder-in-the-loop (Slack alert → manually generate at /dashboard/ad-creatives). Auto-draft noise-amplifies at our 2-creative volume.
-
-### Phase 9.2 — Lifecycle Orchestration (after 9.1)
-- [ ] Welcome-educational flow (5 emails, no discount — 4Cs + atelier story)
-- [ ] Browse-abandon flow (2h delay, "still thinking?" + 4Cs PDF)
-- [ ] Cart-abandon flow (1h delay, "call Jaitul" CTA at $4.9K)
-- [ ] Post-purchase 6-email arc (shipping → unboxing → care → anniversary → referral → custom inquiry)
-- [ ] Anniversary capture at checkout + year-out trigger
-- [ ] All on SendGrid (skip Klaviyo until volume justifies $45+/mo)
 
 ### Phase 10 — Customer Intelligence Layer — DONE (2026-04-16)
 - [x] `customer_rfm` + `customer_insights` tables + `customers.last_rfm_at/last_segment`
@@ -263,9 +253,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 ### Medium Priority (improvements)
 - [ ] Google Ads developer token approval (in review since 2026-04-04)
 - [ ] Google Ads OAuth2 setup (after token approved)
-- [ ] Review request automation (post-delivery email, 7-14 days after delivery)
 - [ ] Slide-in cart drawer for mobile
-- [ ] Closed-loop Meta insights feedback into ad creative generation
 - [ ] 3-campaign structure (Prospecting/Retargeting/Retention) — currently single campaign
 - [ ] Additional ad creatives — Meta recommends 3-5 per ad set, currently 2
 
