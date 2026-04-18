@@ -10,7 +10,7 @@ import hmac
 import base64
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, Request
@@ -199,8 +199,8 @@ async def _persist_order_and_customer(order_data: dict[str, Any]) -> None:
             "accepts_marketing": customer_data.get("accepts_marketing", False),
             "order_count": customer_data.get("orders_count", 1),
             "lifetime_value": float(customer_data.get("total_spent", "0")),
-            "first_order_date": datetime.utcnow().isoformat(),
-            "last_order_date": datetime.utcnow().isoformat(),
+            "first_order_date": datetime.now(timezone.utc).isoformat(),
+            "last_order_date": datetime.now(timezone.utc).isoformat(),
         })
 
         # Update lifecycle stage
@@ -230,7 +230,7 @@ async def _persist_order_and_customer(order_data: dict[str, Any]) -> None:
         "shipping_cost": float(order_data.get("total_shipping_price_set", {}).get("shop_money", {}).get("amount", "0")),
         "status": "paid",
         "checkout_token": order_data.get("checkout_token", ""),
-        "created_at": order_data.get("created_at", datetime.utcnow().isoformat()),
+        "created_at": order_data.get("created_at", datetime.now(timezone.utc).isoformat()),
         **{k: v for k, v in attribution.items() if v is not None},
     })
 
@@ -386,8 +386,8 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
             "accepts_marketing": customer_data.get("accepts_marketing", False),
             "order_count": customer_data.get("orders_count", 1),
             "lifetime_value": float(customer_data.get("total_spent", "0")),
-            "first_order_date": datetime.utcnow().isoformat(),
-            "last_order_date": datetime.utcnow().isoformat(),
+            "first_order_date": datetime.now(timezone.utc).isoformat(),
+            "last_order_date": datetime.now(timezone.utc).isoformat(),
         })
 
         # Update lifecycle stage
@@ -417,7 +417,7 @@ async def _process_order_inner(order_data: dict[str, Any]) -> None:
         "shipping_cost": float(order_data.get("total_shipping_price_set", {}).get("shop_money", {}).get("amount", "0")),
         "status": "paid",
         "checkout_token": order_data.get("checkout_token", ""),
-        "created_at": order_data.get("created_at", datetime.utcnow().isoformat()),
+        "created_at": order_data.get("created_at", datetime.now(timezone.utc).isoformat()),
         **{k: v for k, v in attribution.items() if v is not None},
     })
 

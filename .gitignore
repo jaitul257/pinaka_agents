@@ -26,3 +26,19 @@ pinaka-jewellery-*.json
 # Claude Code / gstack local tooling
 .claude/
 .gstack/
+
+# Freepik experiments + catalog story assets (large binaries, WIP)
+catalog/stories/
+catalog/flux_tasks.json
+freepik-tests/
+freepik-test-*.mp4
+
+# Video assets shouldn't sit at repo root
+/*.mp4
+
+# Legacy design-consultation artifacts
+design-consultation-preview-*.html
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/

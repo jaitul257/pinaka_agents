@@ -12,7 +12,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from src.core.settings import settings
@@ -225,9 +225,13 @@ class EmailRateLimitPolicy(Policy):
             if last_sent:
                 try:
                     last_dt = datetime.fromisoformat(last_sent)
+                    # Normalize: old rows may be naive. Treat naive as UTC.
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    now = datetime.now(timezone.utc)
                     cooldown = timedelta(days=settings.reorder_cooldown_days)
-                    if datetime.utcnow() - last_dt < cooldown:
-                        days_left = (cooldown - (datetime.utcnow() - last_dt)).days
+                    if now - last_dt < cooldown:
+                        days_left = (cooldown - (now - last_dt)).days
                         return PolicyDecision(
                             action="deny",
                             reason=f"Reorder cooldown: {days_left} days remaining (180-day minimum)",

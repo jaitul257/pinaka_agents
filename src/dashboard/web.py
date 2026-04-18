@@ -2375,10 +2375,10 @@ async def ad_creatives_generate(
     from fastapi import BackgroundTasks
     import hashlib
     import uuid
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # Idempotency key stable within a 1-minute window
-    minute_bucket = datetime.utcnow().strftime("%Y%m%d%H%M")
+    minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
     idempotency_key = hashlib.sha1(f"{sku}|{minute_bucket}".encode()).hexdigest()
 
     db = _get_db()

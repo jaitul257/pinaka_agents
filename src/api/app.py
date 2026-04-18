@@ -8,7 +8,7 @@ import io
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -52,7 +52,12 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Pinaka Agents starting up")
 
-    # Rebuild ChromaDB embeddings from Supabase so RAG works immediately
+    # Rebuild ChromaDB embeddings from Supabase so RAG works immediately.
+    # Shopify-sourced rows often lack full metadata (weight_grams, metal,
+    # diamond_type) needed by the Product schema — we skip those cleanly
+    # rather than log a stack trace per row. Only rows with the required
+    # fields get embedded; the rest are tracked as "skipped_incomplete"
+    # and reported as a single INFO line at the end.
     try:
         from src.product.embeddings import ProductEmbeddings
 
@@ -61,13 +66,19 @@ async def lifespan(app: FastAPI):
         if products:
             embeddings = ProductEmbeddings()
             count = 0
+            skipped_incomplete = 0
+            errored = 0
             for p in products:
+                materials = p.get("materials") or {}
+                if not all(k in materials for k in ("metal", "weight_grams", "diamond_type")):
+                    skipped_incomplete += 1
+                    continue
                 try:
                     product_obj = Product(
                         sku=p["sku"],
                         name=p["name"],
                         category=p.get("category", ""),
-                        materials=p.get("materials", {}),
+                        materials=materials,
                         pricing=p.get("pricing", {}),
                         story=p.get("story", ""),
                         care_instructions=p.get("care_instructions", ""),
@@ -78,8 +89,13 @@ async def lifespan(app: FastAPI):
                     embeddings.embed_product(product_obj)
                     count += 1
                 except Exception:
-                    logger.exception("Failed to embed product %s on startup", p.get("sku"))
-            logger.info("Startup: embedded %d products in ChromaDB", count)
+                    errored += 1
+                    logger.debug("embed error for %s (materials=%s)",
+                                  p.get("sku"), list(materials.keys()))
+            logger.info(
+                "Startup: embedded %d products, skipped %d incomplete, %d errored",
+                count, skipped_incomplete, errored,
+            )
         else:
             logger.info("Startup: no products in Supabase to embed")
     except Exception:
@@ -129,7 +145,7 @@ async def _verify_slack_request(request: Request, body: bytes) -> None:
     if not timestamp or not signature:
         raise HTTPException(status_code=401, detail="Missing Slack signature headers")
 
-    if abs(datetime.utcnow().timestamp() - float(timestamp)) > 300:
+    if abs(datetime.now(timezone.utc).timestamp() - float(timestamp)) > 300:
         raise HTTPException(status_code=401, detail="Request too old")
 
     sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
@@ -156,7 +172,7 @@ async def shopify_app_root(request: Request):
     # Keep this string aligned with shopify.app.toml::access_scopes.
     scopes = "read_checkouts,read_customers,read_orders,read_products,read_shipping,write_customers,write_orders,write_products,write_shipping,write_content"
     redirect_uri = f"https://pinaka-agents-production-198b5.up.railway.app/api/auth"
-    nonce = hashlib.sha256(f"{shop}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:16]
+    nonce = hashlib.sha256(f"{shop}{datetime.now(timezone.utc).isoformat()}".encode()).hexdigest()[:16]
 
     auth_url = (
         f"https://{shop}/admin/oauth/authorize"
@@ -214,17 +230,75 @@ async def shopify_oauth_callback(request: Request):
 
 @app.get("/health")
 async def health():
-    """Per-module health status reporting."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+    """Health report with real connectivity checks.
+
+    Pings Supabase (`SELECT 1` via orders table head request) and, when
+    configured, Shopify Admin API (`/admin/api/shop.json`). Failures
+    downgrade the response to HTTP 503 so uptime monitors actually
+    catch a degraded stack — the prior "always 200 with ok=True" was
+    theatre.
+
+    Timeouts are kept tight (3s each) so health checks never block.
+    """
+    from datetime import datetime, timezone
+
+    shopify_ok: bool | None = None
+    shopify_detail: str = ""
+    supabase_ok: bool | None = None
+    supabase_detail: str = ""
+
+    # Supabase: cheap head request against `orders`
+    try:
+        def _ping():
+            return (Database()._client.table("orders")
+                    .select("id", head=True, count="exact")
+                    .limit(1)
+                    .execute())
+        await asyncio.wait_for(asyncio.to_thread(_ping), timeout=3.0)
+        supabase_ok = True
+    except asyncio.TimeoutError:
+        supabase_ok = False
+        supabase_detail = "timeout (>3s)"
+    except Exception as e:
+        supabase_ok = False
+        supabase_detail = f"{type(e).__name__}: {str(e)[:100]}"
+
+    # Shopify: only ping if credentials are configured
+    if settings.shopify_shop_domain and settings.shopify_access_token:
+        try:
+            url = (f"https://{settings.shopify_shop_domain}"
+                   f"/admin/api/{settings.shopify_api_version}/shop.json")
+            async with httpx.AsyncClient(timeout=3.0) as http:
+                r = await http.get(
+                    url,
+                    headers={"X-Shopify-Access-Token": settings.shopify_access_token},
+                )
+            shopify_ok = 200 <= r.status_code < 300
+            if not shopify_ok:
+                shopify_detail = f"http {r.status_code}"
+        except Exception as e:
+            shopify_ok = False
+            shopify_detail = f"{type(e).__name__}: {str(e)[:100]}"
+
+    all_critical_ok = supabase_ok and (shopify_ok is None or shopify_ok)
+    status_code = 200 if all_critical_ok else 503
+    body = {
+        "status": "healthy" if all_critical_ok else "degraded",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "modules": {
-            "shopify": {"status": "ok"},
-            "shipping": {"status": "ok"},
-            "customer": {"status": "ok"},
-            "finance": {"status": "ok"},
+            "supabase": {"ok": supabase_ok, "detail": supabase_detail},
+            "shopify": {
+                "ok": shopify_ok,
+                "detail": shopify_detail or ("not configured" if shopify_ok is None else ""),
+            },
         },
     }
+    # Return bare dict with 200 when healthy (FastAPI default), explicit
+    # Response with 503 when degraded so external monitors react.
+    if status_code == 503:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 # ── Storefront Concierge ──
@@ -1043,7 +1117,7 @@ async def cron_reconcile_orders():
     reconciled = 0
 
     try:
-        since = (datetime.utcnow() - timedelta(minutes=35)).isoformat()
+        since = (datetime.now(timezone.utc) - timedelta(minutes=35)).isoformat()
         orders = await shopify.get_orders(created_at_min=since, limit=50)
 
         for order in orders:
@@ -1144,8 +1218,10 @@ async def cron_crafting_updates():
         days_since = 0
         if order_created:
             try:
-                created = datetime.fromisoformat(order_created.replace("Z", ""))
-                days_since = (datetime.utcnow() - created).days
+                created = datetime.fromisoformat(order_created.replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                days_since = (datetime.now(timezone.utc) - created).days
             except (ValueError, TypeError):
                 pass
 
@@ -1238,8 +1314,10 @@ async def cron_abandoned_carts():
         time_since = "unknown"
         if created_at:
             try:
-                cart_time = datetime.fromisoformat(created_at.replace("Z", ""))
-                hours = int((datetime.utcnow() - cart_time).total_seconds() / 3600)
+                cart_time = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                if cart_time.tzinfo is None:
+                    cart_time = cart_time.replace(tzinfo=timezone.utc)
+                hours = int((datetime.now(timezone.utc) - cart_time).total_seconds() / 3600)
                 time_since = f"{hours}h" if hours < 24 else f"{hours // 24}d"
             except (ValueError, TypeError):
                 pass
@@ -2836,7 +2914,7 @@ async def webhook_slack(request: Request):
     value = action.get("value", "")
     channel = payload.get("channel", {}).get("id", "")
     message_ts = payload.get("message", {}).get("ts", "")
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     slack = SlackNotifier()
     db = AsyncDatabase()
@@ -3312,7 +3390,7 @@ async def _handle_slack_modal_submit(payload: dict[str, Any]) -> dict[str, str]:
     # Tombstone the original Slack message
     if channel and message_ts:
         try:
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             tombstone = SlackNotifier.tombstone_blocks(
                 "Edited & Sent", f"{action_id} #{value}", timestamp,
             )

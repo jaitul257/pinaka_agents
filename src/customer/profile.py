@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from src.core.database import AsyncDatabase
@@ -121,7 +121,7 @@ class CustomerProfileBuilder:
             welcome_step=int(c.get("welcome_step") or 0),
             welcome_started_at=c.get("welcome_started_at"),
             lifecycle_emails_sent=c.get("lifecycle_emails_sent") or {},
-            generated_at=datetime.utcnow().isoformat(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
         # 2. Orders

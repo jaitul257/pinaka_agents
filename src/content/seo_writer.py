@@ -22,7 +22,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import anthropic
@@ -177,7 +177,7 @@ class SEOWriter:
         client = self._db._sync._client
         import asyncio
         updates = {
-            "last_used_at": datetime.utcnow().isoformat(),
+            "last_used_at": datetime.now(timezone.utc).isoformat(),
             "times_used": None,  # we'll bump below via RPC-free pattern
         }
         # Supabase Python client doesn't expose atomic increment — read-modify-write

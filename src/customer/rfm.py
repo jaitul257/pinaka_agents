@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from src.core.database import AsyncDatabase
@@ -211,7 +211,7 @@ class RFMScorer:
             lambda: (
                 client.table("customers")
                 .update({
-                    "last_rfm_at": datetime.utcnow().isoformat(),
+                    "last_rfm_at": datetime.now(timezone.utc).isoformat(),
                     "last_segment": segment,
                 })
                 .eq("id", customer_id)

@@ -1,0 +1,86 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project + dev deps
+        # Project uses pyproject.toml [project.optional-dependencies].dev.
+        # Editable install + the dev extra covers pytest/pytest-asyncio/
+        # pytest-httpx/ruff. pytest-cov is installed explicitly since it's
+        # not in the pyproject today (added here so coverage numbers land
+        # without forcing every local env to pull it).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pytest-cov
+
+      - name: Run tests with coverage
+        # --cov-fail-under=50 is intentionally lenient for now; raise once
+        # we've measured baseline. Goal is to make coverage a visible metric
+        # per-PR, not to impose a hard bar on day one.
+        env:
+          # Prevent any test that calls out to real services from half-succeeding.
+          # Tests that need external APIs should use @patch; these placeholders
+          # ensure an accidental real-call surfaces as a clear failure.
+          ANTHROPIC_API_KEY: sk-test-ci-placeholder
+          OPENAI_API_KEY: sk-test-ci-placeholder
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_KEY: ci-placeholder
+          SENDGRID_API_KEY: SG.ci-placeholder
+          SENDGRID_FROM_EMAIL: ci@example.com
+          SLACK_BOT_TOKEN: xoxb-ci-placeholder
+          SLACK_CHANNEL_ID: C000000000
+          CRON_SECRET: ci-cron-secret
+        run: |
+          python -m pytest tests/ \
+            --cov=src \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=xml \
+            --cov-fail-under=50
+
+      - name: Upload coverage xml
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff check (warnings only for now)
+        # Don't block merges on ruff yet — we've accumulated style drift.
+        # continue-on-error lets the job stay green while surfacing issues.
+        continue-on-error: true
+        run: ruff check src/ tests/

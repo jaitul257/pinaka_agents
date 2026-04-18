@@ -144,7 +144,8 @@ def test_aggregate_by_ad_skips_zero_impressions():
 def test_fallback_narrative_healthy_mer():
     from src.dashboard.brief import BriefData
     from datetime import datetime as _dt
-    brief = BriefData(generated_at=_dt.utcnow(), mer_14d=4.5)
+    from datetime import timezone as _tz
+    brief = BriefData(generated_at=_dt.now(_tz.utc), mer_14d=4.5)
     narr = _fallback_narrative(brief)
     assert "4.5x" in narr
     assert "healthy" in narr.lower()
@@ -153,7 +154,8 @@ def test_fallback_narrative_healthy_mer():
 def test_fallback_narrative_leaking_mer():
     from src.dashboard.brief import BriefData
     from datetime import datetime as _dt
-    brief = BriefData(generated_at=_dt.utcnow(), mer_14d=1.2)
+    from datetime import timezone as _tz
+    brief = BriefData(generated_at=_dt.now(_tz.utc), mer_14d=1.2)
     narr = _fallback_narrative(brief)
     assert "leaking" in narr.lower()
 

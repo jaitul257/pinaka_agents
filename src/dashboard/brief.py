@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import anthropic
@@ -93,7 +93,7 @@ class DashboardBrief:
         today = date.today()
         start = today - timedelta(days=window_days)
 
-        brief = BriefData(generated_at=datetime.utcnow(), window_days=window_days)
+        brief = BriefData(generated_at=datetime.now(timezone.utc), window_days=window_days)
 
         await self._load_money(brief, start, today)
         await self._load_creatives(brief, start, today)

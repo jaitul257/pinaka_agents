@@ -10,7 +10,7 @@ use in FastAPI async handlers.
 import asyncio
 import functools
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from supabase import create_client
@@ -132,7 +132,7 @@ class Database:
         Bounded window prevents re-picking up old orders forever. Excludes
         already-sent and cancelled/refunded statuses.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff_upper = (now - __import__("datetime").timedelta(days=days_old)).isoformat()
         cutoff_lower = (now - __import__("datetime").timedelta(days=days_old + 3)).isoformat()
         result = (
@@ -225,7 +225,7 @@ class Database:
 
     def get_shipped_orders_pending_delivery(self, shipped_before_days: int = 7) -> list[dict[str, Any]]:
         """Get orders that shipped but haven't been marked delivered yet."""
-        cutoff = (datetime.utcnow() - __import__("datetime").timedelta(days=shipped_before_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=shipped_before_days)).isoformat()
         result = (
             self._client.table("orders")
             .select("*")
@@ -239,7 +239,7 @@ class Database:
     def mark_evidence_collected(self, shopify_order_id: int) -> None:
         """Mark that chargeback evidence has been collected for an order."""
         self._client.table("orders").update(
-            {"evidence_collected_at": datetime.utcnow().isoformat()}
+            {"evidence_collected_at": datetime.now(timezone.utc).isoformat()}
         ).eq("shopify_order_id", shopify_order_id).execute()
 
     # ── Refunds ──
@@ -282,7 +282,7 @@ class Database:
 
             update_data: dict[str, Any] = {
                 "refund_amount": min(total_refunded, order_total),
-                "refunded_at": refund_data.get("created_at", datetime.utcnow().isoformat()),
+                "refunded_at": refund_data.get("created_at", datetime.now(timezone.utc).isoformat()),
             }
             # Set status to "refunded" only if fully refunded
             if total_refunded >= order_total:
@@ -305,7 +305,7 @@ class Database:
         from datetime import timedelta
 
         # Target window: orders placed days_since_purchase ago (+/- 7 days)
-        target_date = datetime.utcnow() - timedelta(days=days_since_purchase)
+        target_date = datetime.now(timezone.utc) - timedelta(days=days_since_purchase)
         window_start = (target_date - timedelta(days=7)).isoformat()
         window_end = (target_date + timedelta(days=7)).isoformat()
 
@@ -318,7 +318,7 @@ class Database:
         )
 
         candidates = []
-        cooldown_cutoff = (datetime.utcnow() - timedelta(days=cooldown_days)).isoformat()
+        cooldown_cutoff = (datetime.now(timezone.utc) - timedelta(days=cooldown_days)).isoformat()
 
         for customer in customers_result.data or []:
             # Skip if recently emailed
@@ -347,7 +347,7 @@ class Database:
     def update_customer_reorder_sent(self, customer_id: int) -> None:
         """Mark that a reorder reminder was sent to this customer."""
         self._client.table("customers").update(
-            {"last_reorder_email_at": datetime.utcnow().isoformat()}
+            {"last_reorder_email_at": datetime.now(timezone.utc).isoformat()}
         ).eq("id", customer_id).execute()
 
     # ── Voice Examples ──
@@ -718,7 +718,7 @@ class Database:
             .update({
                 "status": "publishing",
                 "approved_by": approved_by or "dashboard",
-                "approved_at": datetime.utcnow().isoformat(),
+                "approved_at": datetime.now(timezone.utc).isoformat(),
             })
             .eq("id", creative_id)
             .eq("status", "pending_review")
@@ -877,7 +877,7 @@ class Database:
 
         Returns the number of carts marked as abandoned.
         """
-        cutoff = (datetime.utcnow() - timedelta(minutes=delay_minutes)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=delay_minutes)).isoformat()
         result = (
             self._client.table("cart_events")
             .update({"event_type": "abandoned"})
@@ -926,7 +926,7 @@ class Database:
             self._client.table("orders")
             .select("id", count="exact")
             .eq("buyer_email", buyer_email)
-            .gte("created_at", (datetime.utcnow().replace(hour=0, minute=0, second=0)).isoformat())
+            .gte("created_at", (datetime.now(timezone.utc).replace(hour=0, minute=0, second=0)).isoformat())
             .execute()
         )
         return result.count or 0
@@ -1082,7 +1082,7 @@ class Database:
         the lifecycle_emails_sent JSONB.
         """
         from datetime import timedelta as _td
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         upper = (now - _td(days=days_since_purchase)).isoformat()
         lower = (now - _td(days=days_since_purchase + window_days)).isoformat()
         result = (
@@ -1132,7 +1132,7 @@ class Database:
             .execute()
         )
         rows = result.data or []
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         hits: list[dict[str, Any]] = []
         for r in rows:
             if r.get("order_count", 0) > 0:

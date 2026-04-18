@@ -198,10 +198,10 @@ class TestPolicyEngine:
 
     async def test_email_rate_reorder_cooldown(self):
         """Reorder reminder within cooldown is denied."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         policy = EmailRateLimitPolicy()
-        recent_date = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        recent_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         context = {"last_reorder_email_at": recent_date}
         decision = await policy.evaluate("send_reorder_reminder", {}, context)
         assert decision is not None

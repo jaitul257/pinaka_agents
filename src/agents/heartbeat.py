@@ -20,7 +20,7 @@ When issues are found, Claude reasons about them and decides:
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import anthropic
@@ -101,7 +101,7 @@ class Heartbeat:
 
     async def beat(self) -> dict[str, Any]:
         """Run one heartbeat cycle. Returns a summary of actions taken."""
-        start = datetime.utcnow()
+        start = datetime.now(timezone.utc)
         issues: list[dict[str, Any]] = []
 
         # ── Cheap SQL checks (no LLM) ──
@@ -160,7 +160,7 @@ class Heartbeat:
             "dispatches": dispatches,
             "monitored": monitored,
             "no_action": no_action,
-            "duration_ms": int((datetime.utcnow() - start).total_seconds() * 1000),
+            "duration_ms": int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
         }
         logger.info(
             "Heartbeat: %d items, %d alerts, %d dispatches, %d monitor, %d no-action",
@@ -172,7 +172,7 @@ class Heartbeat:
 
     async def _check_stuck_orders(self) -> list[dict]:
         """Orders in 'paid' status for > 48 hours with no ShipStation ID."""
-        cutoff = (datetime.utcnow() - timedelta(hours=48)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
         result = await asyncio.to_thread(
             lambda: self._db._client.table("orders")
             .select("shopify_order_id, buyer_name, total, created_at, status")
@@ -195,7 +195,7 @@ class Heartbeat:
 
     async def _check_unanswered_messages(self) -> list[dict]:
         """Customer messages in pending_review for > 2 hours."""
-        cutoff = (datetime.utcnow() - timedelta(hours=2)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         result = await asyncio.to_thread(
             lambda: self._db._client.table("messages")
             .select("id, customer_email, category, created_at")
@@ -217,7 +217,7 @@ class Heartbeat:
 
     async def _check_shipping_delays(self) -> list[dict]:
         """Orders shipped > 7 days ago with no delivery confirmation."""
-        cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         result = await asyncio.to_thread(
             lambda: self._db._client.table("orders")
             .select("shopify_order_id, buyer_name, total, shipped_at, tracking_number")
@@ -263,7 +263,7 @@ class Heartbeat:
 
     async def _check_agent_failures(self) -> list[dict]:
         """Agent runs that failed or escalated in the last 6 hours."""
-        cutoff = (datetime.utcnow() - timedelta(hours=6)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
         result = await asyncio.to_thread(
             lambda: self._db._client.table("agent_audit_log")
             .select("agent_name, task_summary, result, escalated, created_at")
@@ -391,7 +391,7 @@ class Heartbeat:
             try:
                 await asyncio.to_thread(
                     lambda: self._db._client.table("observations")
-                    .update({"acted_on": True, "acted_at": datetime.utcnow().isoformat(), "action_taken": "heartbeat_processed"})
+                    .update({"acted_on": True, "acted_at": datetime.now(timezone.utc).isoformat(), "action_taken": "heartbeat_processed"})
                     .in_("id", obs_ids)
                     .execute()
                 )
@@ -402,7 +402,7 @@ class Heartbeat:
         try:
             await asyncio.to_thread(
                 lambda: self._db._client.table("heartbeat_state")
-                .upsert({"key": key, "value": value, "updated_at": datetime.utcnow().isoformat()})
+                .upsert({"key": key, "value": value, "updated_at": datetime.now(timezone.utc).isoformat()})
                 .execute()
             )
         except Exception:
