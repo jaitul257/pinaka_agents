@@ -189,8 +189,8 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] ~~Meta Ads audit~~ — fixed spend cap, destination type, interest targeting, pixel linking, Variant B URL. Done 2026-04-13.
 - [x] ~~Crafting update cron fix~~ — removed broken Claude draft, bounded query window, test orders cancelled. Done 2026-04-16.
 - [x] ~~Remove "Free Lifetime Care"~~ — stripped from all modules, tests, theme. Done 2026-04-16.
-- [ ] **Verify `pinakajewellery.com` domain in Meta Business Settings** — https://business.facebook.com/settings/owned-domains → add domain → add DNS TXT record in Cloudflare → verify
-- [ ] **Set per-size pricing on pipeline products** — products from pipeline have $0 prices
+- [x] **Verify `pinakajewellery.com` domain in Meta Business Settings** — DONE 2026-04-18
+- [x] **Set per-size pricing on pipeline products** — DONE 2026-04-18 (prices set via /dashboard/edit-shopify/{id} after bootstrap; all 7 pipeline SKUs have 4-size pricing in $2.1k-$5.7k range)
 - [ ] **More products from catalog** — remaining bracelets need Pomelli photos → upload → publish
 - [ ] **Unpause Meta Campaign when ready** — Campaign ID: 120244523278190359. Ads A + B ready, all fixes applied.
 - [ ] **Evaluate iAugment virtual try-on app** — https://apps.shopify.com/iaugment-virtual-try-on (free tier, 100 try-ons, bracelet support). AI-based try-on was abandoned — not realistic enough.
