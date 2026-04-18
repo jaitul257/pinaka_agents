@@ -250,6 +250,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] `SHOPIFY_BLOG_ID` → DONE. Set to 103804764418 ("News" blog, confirmed reachable via `/admin/api/2025-01/blogs/{id}.json`). SEO auto-publish flow is unblocked.
 - [x] Pinterest Business account + dev app + `pins:write` access token → DONE 2026-04-18. OAuth flow via `scripts/pinterest_oauth.py` on Trial Access (Standard Access not needed for single-tenant use). Token + refresh token set on Railway. Verified: BUSINESS account `pinakajewellery` (341 pins, 2 boards), target board `406309266321868425` confirmed owned.
 - [ ] Install Pinterest Tag — ads.pinterest.com → Conversions → get tag ID → paste in Theme customize → Analytics → Pinterest Tag ID. Separate from API posting.
+- [ ] **Pinterest Standard Access approval** (in review since 2026-04-18) — Trial Access CANNOT post pins to production regardless of OAuth scopes (Pinterest returns `code:29` "Apps with Trial access may not create Pins in production"). Auth/token/scopes/board/refresh cron are all wired and ready; the `/cron/pinterest-pins` endpoint returns `status=skipped, reason=pinterest_trial_access_blocks_production` cleanly until approval. Check status at https://developers.pinterest.com/apps/ → Upgrade to Standard access section.
 
 ### Medium Priority (improvements)
 - [ ] Google Ads developer token approval (in review since 2026-04-04)

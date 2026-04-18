@@ -166,6 +166,10 @@ These are non-negotiable patterns the Phase 13 research + production incidents v
 
 16. **Surface evidence, never auto-mutate policy.** Signals that could suggest policy changes (tier promotion, rubric tuning, model swap) write observations to `observations` (severity warning/info) — they do NOT edit the policy file. Founder reviews via heartbeat → Slack → hand-edits `src/agents/approval_tiers.py` etc. See `src/agents/tier_audit.py` for the canonical pattern. Applies anywhere an automated audit might be tempted to "self-heal" — don't.
 
+17. **`/health` is shallow for Railway, `/health/deep` is real for monitors.** Railway runs its deploy healthcheck during container startup (0–30s post-boot), before HTTP clients / DB pools are warmed. A real Supabase/Shopify ping at that moment reliably 503s and Railway marks the deploy FAILED. We burned 12 consecutive FAILED deploys learning this on 2026-04-18. Keep `/health` liveness-only (returns 200 as long as the process is serving). Put real dependency pings in `/health/deep`. External uptime monitors (cron-job.org, Pingdom, etc.) call the deep variant; Railway never does.
+
+18. **Verify external API credentials with a direct call before declaring a grant done.** Third-party APIs routinely return misleading error messages — Pinterest's "Missing: ['boards:write', 'pins:read']" turned out to mean "Trial Access blocks production entirely, regardless of scopes." Google Merchant 401 "User cannot access account" means "service account not added as MC user," NOT a credential bug. Rule: after every env-var change or permission grant, do the simplest possible direct API call (`curl https://...` with just `Authorization: Bearer <token>`) before kicking off downstream crons. One probe saves an hour.
+
 ## Testing Conventions
 
 - Unit tests mock `AsyncDatabase` (not `Database`)

@@ -1796,7 +1796,27 @@ async def cron_pinterest_pins():
         return {"status": "error", "error": "Could not draft pin for product",
                 "sku": product.get("sku")}
 
+    # Pre-flight: Pinterest Trial Access can't post to production at all,
+    # regardless of OAuth scopes. Detect from a prior error or by probing
+    # the account's access tier via the verified user_account call — but
+    # the create_pin call itself returns a clean code:29 message when the
+    # app is still on Trial. We catch that below and return a 'skipped'
+    # (not error) so cron-job.org doesn't alert and logs stay clean until
+    # Standard Access is approved.
+
     result = await client.create_pin(draft)
+
+    # Detect Trial Access block — Pinterest returns code 29 for Trial apps
+    # calling production. The OAuth scopes are fine; the access tier isn't.
+    # Return 'skipped' so cron-job.org doesn't alert, and SUPPRESS the
+    # Slack failure message (founder knows Standard Access is pending).
+    if result.error and "\"code\":29" in result.error:
+        return {
+            "status": "skipped",
+            "reason": "pinterest_trial_access_blocks_production",
+            "detail": "Standard Access approval pending. Cron is no-op until granted.",
+            "product": result.product_name,
+        }
 
     slack = SlackNotifier()
     if result.pin_id:

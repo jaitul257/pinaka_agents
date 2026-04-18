@@ -11,6 +11,44 @@ Last updated: 2026-04-17
 
 ## Push Log
 
+### 2026-04-18 (evening): deploy pipeline rescue + GMC/Pinterest unblock
+
+**What shipped (8 commits):**
+
+- `c239781` — first /health Supabase ping attempt (FAILED deploy, but informative)
+- `e5047a6` — split /health (shallow, Railway) + /health/deep (monitors) — **real fix**
+- `fcf994e` + `9df24d3` — docs + Database import fix for /health/deep
+- `9df88eb` — Pinterest pick_product filters non-pinnable SKUs (need HTTPS images)
+- `6d438c7` — GMC `_get_retail_price` falls back to `variant_options[].price` (handles Shopify-webhook shape)
+- (WIP this commit) — Pinterest Trial Access code:29 handled as clean skip; refresh cron scheduled (jobId 7501092 Sun 10 AM ET)
+
+**Running status at end of session:**
+- ✅ Deploy pipeline unstuck (12 FAILED → 3 SUCCESS in a row)
+- ✅ `/health` 200, `/health/deep` both modules ok=true
+- ✅ GMC: 7/7 synced, 0 failed
+- ✅ Pinterest auth/token/scopes wired and verified; cron returns clean `skipped` until Pinterest approves Standard Access
+- ✅ Product duplicates cleaned: 7 base-SKU empty rows deleted; 7 variant-SKU rows with full images remain
+- ✅ Pinterest refresh-token cron scheduled
+
+**What went well:**
+- **Diagnosing the 12-deploy FAILED streak by reading one log.** `railway logs --deployment <id>` showed `/health HTTP/1.1 503` immediately after startup — container wasn't warmed up yet when Railway's healthcheck fired. The split between shallow `/health` (Railway) and `/health/deep` (monitors) is now a CLAUDE.md principle worth a rule (coming).
+- **Discovering Pinterest's misleading error messages.** Pinterest returned "Missing: ['boards:write', 'pins:read']" THREE times — I re-OAuthed with wider scopes, still failed. Direct POST with the new token revealed the real cause: `code:29` "Trial access may not create Pins in production." The API was lying about scopes. Handle with a clean `status=skipped` gate rather than error spam.
+- **Data duplicates found by joining Supabase vs Shopify.** Cross-checked `shopify_product_id` — same ID appearing twice, once with empty images (base SKU from pipeline publish) and once with 4 images (variant SKU from webhook sync). Deleting the base-SKU rows cleaned the catalog in 30 seconds.
+- **Every layer of fail taught us something new.** GMC 401 → service account wasn't added to Merchant Center; GMC 0-synced → pricing read wrong field; Pinterest missing-scopes → actually Trial Access policy. Each fix was small but only visible after the prior one resolved.
+
+**What was painful:**
+- **12 consecutive Railway deploys FAILED silently.** Railway's `status` column showed FAILED but the running container kept serving the last SUCCESS — no alert, no dashboard warning, just production running multi-commits-behind. Only the `railway deployment list --json` query surfaced it.
+- **Pinterest scope errors were misleading** for ~2 hours of debugging. "Missing ['boards:write']" was actually "Trial Access can't use production API at all." Lesson: always do a direct API call with the new credential before declaring the grant done.
+- **Stdout buffering on background tasks** — initial OAuth script output was blank because Python buffers stdout when not a TTY. Fixed with `-u` + `PYTHONUNBUFFERED=1`. Rule of thumb: any CLI script expected to be consumed via file redirect should force unbuffered from the first line.
+
+**Lessons learned:**
+- **Railway healthchecks run during container warmup. Deep pings must live elsewhere.** Added to CLAUDE.md (rule 17 below) — `/health` returns 200 on any liveness, `/health/deep` runs real connectivity checks for uptime monitors. Don't confuse the two.
+- **Trust-but-verify external error messages.** Pinterest's scope complaint was a symptom, not a cause. Direct API probe revealed the policy wall. Applies to any 401/403 from a third-party API: do the simplest possible direct call with known-good credentials before chasing configuration fixes.
+- **Check `railway deployment list --json` when anything seems off.** Running code != most recent commit. Railway UX does not make this obvious.
+- **Pipeline-published products create duplicate rows in Supabase** (base SKU, no images) vs webhook-synced (variant SKU, with images). Long-term fix: make the pipeline publish flow skip Supabase upsert entirely since the webhook will create the "real" row on Shopify's push. Short-term fix: periodic dedupe cron. Not urgent until more products come online.
+
+---
+
 ### 2026-04-18 (afternoon): Phase 12.5 wiring + polish batch
 
 **What shipped (3 commits: 1c8abcc, 921f58e, this):**
