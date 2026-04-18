@@ -247,11 +247,15 @@ async def health():
     supabase_ok: bool | None = None
     supabase_detail: str = ""
 
-    # Supabase: cheap head request against `orders`
+    # Supabase: cheap SELECT with limit(1). `head=True` + `count=exact`
+    # wasn't supported by our supabase-py version (caused 503 at /health
+    # and therefore Railway healthcheck failures — see commit 921f58e
+    # retro). Plain .select().limit(1).execute() is consistent across
+    # versions.
     try:
         def _ping():
             return (Database()._client.table("orders")
-                    .select("id", head=True, count="exact")
+                    .select("id")
                     .limit(1)
                     .execute())
         await asyncio.wait_for(asyncio.to_thread(_ping), timeout=3.0)
@@ -2121,6 +2125,75 @@ async def cron_weekly_agent_retros():
     except Exception as e:
         logger.exception("weekly-agent-retros cron failed")
         return {"status": "error", "error": str(e)}
+
+
+@app.post("/cron/refresh-pinterest-token", dependencies=[Depends(verify_cron_secret)])
+async def cron_refresh_pinterest_token():
+    """Weekly — refresh Pinterest access token before its 30-day expiry.
+
+    Runs every Sunday 10 AM ET. Even though the token is 30-day, refreshing
+    weekly gives us 4 tries before expiry with plenty of overlap. On
+    success, DMs the founder via Slack with exact
+    `railway variables --set` commands to run (we can't update Railway env
+    vars programmatically without a management API token — operator
+    intervention is by design).
+
+    Signals failure via Slack alert so it's impossible to miss.
+    """
+    from src.marketing.pinterest import refresh_access_token
+    try:
+        result = await refresh_access_token()
+    except Exception as e:
+        logger.exception("pinterest refresh cron crashed")
+        return {"status": "error", "error": str(e)}
+
+    slack = SlackNotifier()
+    if "error" in result:
+        # Alert — refresh failed, manual OAuth needed
+        await slack.send_blocks(
+            [
+                {"type": "header", "text": {"type": "plain_text",
+                                             "text": ":warning: Pinterest token refresh FAILED"}},
+                {"type": "section", "text": {"type": "mrkdwn",
+                    "text": f"*Error:* `{result.get('error')}`\n"
+                            f"*Detail:* {result.get('detail', '')[:500]}"}},
+                {"type": "section", "text": {"type": "mrkdwn",
+                    "text": "Run `scripts/pinterest_oauth.py` locally to "
+                            "generate a new token + refresh token. See "
+                            "CLAUDE.md rule #14 and commit d9a9c86 for the "
+                            "one-shot flow."}},
+            ],
+            text="Pinterest token refresh failed",
+        )
+        return {"status": "failed", **result}
+
+    new_access = result.get("access_token", "")
+    new_refresh = result.get("refresh_token", "")
+    expires_in = result.get("expires_in", 0)
+    # Post the set-commands to Slack for the founder to copy
+    cmds = [f'railway variables --set "PINTEREST_ACCESS_TOKEN={new_access}"']
+    if new_refresh and new_refresh != settings.pinterest_refresh_token:
+        cmds.append(f'railway variables --set "PINTEREST_REFRESH_TOKEN={new_refresh}"')
+
+    await slack.send_blocks(
+        [
+            {"type": "header", "text": {"type": "plain_text",
+                                         "text": ":arrows_counterclockwise: Pinterest token refreshed"}},
+            {"type": "section", "text": {"type": "mrkdwn",
+                "text": f"New access token expires in *{expires_in // 86400}d*. "
+                        f"Paste these into your terminal to update Railway:"}},
+            {"type": "section", "text": {"type": "mrkdwn",
+                "text": "```\n" + "\n".join(cmds) + "\n```"}},
+            {"type": "context", "elements": [{"type": "mrkdwn",
+                "text": "_Current env vars stay valid until you update — no urgency._"}]},
+        ],
+        text="Pinterest token refreshed, paste commands to update Railway",
+    )
+    return {
+        "status": "ok",
+        "expires_in_days": expires_in // 86400,
+        "rotated_refresh_token": bool(new_refresh),
+    }
 
 
 @app.post("/cron/tier-audit", dependencies=[Depends(verify_cron_secret)])

@@ -65,6 +65,58 @@ class PinDraft:
     error: str | None = None
 
 
+async def refresh_access_token() -> dict[str, Any]:
+    """Exchange the long-lived refresh_token for a fresh access_token.
+
+    Pinterest access tokens expire after 30 days. Refresh tokens last
+    1 year and can mint new access tokens indefinitely (until the refresh
+    token itself expires — hence the once-per-year operator step).
+
+    Returns the Pinterest response dict on success. Caller is responsible
+    for persisting the new `access_token` into PINTEREST_ACCESS_TOKEN
+    (and optionally the rotated `refresh_token` if returned).
+
+    Fails open: returns {"error": ...} when any field is missing. Never
+    raises — callers log and optionally Slack-alert on error.
+    """
+    import base64
+
+    if not (settings.pinterest_refresh_token
+            and settings.pinterest_app_id
+            and settings.pinterest_app_secret):
+        return {"error": "missing_credentials",
+                "detail": "PINTEREST_REFRESH_TOKEN / PINTEREST_APP_ID / "
+                          "PINTEREST_APP_SECRET not all set on Railway"}
+
+    basic = base64.b64encode(
+        f"{settings.pinterest_app_id}:{settings.pinterest_app_secret}".encode()
+    ).decode()
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                f"{PINTEREST_API}/oauth/token",
+                headers={
+                    "Authorization": f"Basic {basic}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": settings.pinterest_refresh_token,
+                    # Ask for the same scopes we originally authorized
+                    "scope": "pins:write,boards:read,user_accounts:read",
+                },
+            )
+    except Exception as e:
+        return {"error": "network", "detail": str(e)[:200]}
+
+    if resp.status_code != 200:
+        return {"error": f"http_{resp.status_code}",
+                "detail": resp.text[:300]}
+
+    return resp.json()
+
+
 class PinterestClient:
     """Create pins via Pinterest API v5."""
 
