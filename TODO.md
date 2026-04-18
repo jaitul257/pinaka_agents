@@ -51,8 +51,8 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] Configured shipping (15 day handling + 2-5 day transit, free insured) and returns policy
 - [x] First product synced (Diamond Tennis Bracelet - Lab Grown) with age_group/gender/color/mpn metafields
 - [x] Old duplicate Merchant Center 5757278712 superseded (can delete later, low priority)
-- [ ] Create service account in Google Cloud Console (for API-based sync, currently using Shopify native app)
-- [ ] Set Railway env vars: `GOOGLE_SERVICE_ACCOUNT_PATH` (already set: `GOOGLE_MERCHANT_ID=5759598456`)
+- [x] Create service account in Google Cloud Console → DONE (audit 2026-04-18): `GOOGLE_SERVICE_ACCOUNT_JSON` set on Railway, code uses it directly via `from_service_account_info`, no file needed at startup.
+- [x] Set Railway env vars → DONE. `GOOGLE_MERCHANT_ID=5759598456` + `GOOGLE_SERVICE_ACCOUNT_JSON` configured. `GOOGLE_SERVICE_ACCOUNT_PATH` is unused when JSON is set. GMC sync cron now working end-to-end after `productType` → `productTypes` payload fix (commit dff12ef).
 
 ### Google Ads Conversion Action (blocks server-side conversion tracking)
 - [ ] Create conversion action in Google Ads → Tools → Conversions → Import → Upload clicks
@@ -232,8 +232,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] 30 new tests (379 → 409 passing).
 
 **Pending human setup for Phase 10:**
-- [ ] Replace `GOOGLE_REVIEW_URL` placeholder in `src/customer/lifecycle.py` with your actual Google Business Profile review URL.
-- [ ] Verify Trustpilot URL in lifecycle.py matches your actual profile (create account if needed).
+- [x] `GOOGLE_REVIEW_URL` / `TRUSTPILOT_REVIEW_URL` moved to env vars (commit dff12ef) — set on Railway once real Google Business Profile + Trustpilot accounts exist. Defaults redirect to "claim this business" until then.
 
 ### Phase 9.3 — Content & Retention Engine — DONE (2026-04-16)
 - [x] Daily AI brief at `/dashboard/brief` — password-protected, aggregates MER + creatives + observations + seasonal + pending queues + SEO. Claude writes 3-paragraph "focus today" narrative.
@@ -246,8 +245,8 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 - [x] 29 new tests (350 → 379)
 
 **Pending human setup for Phase 9.3:**
-- [ ] Re-install Shopify app to grant `write_content` scope (enables SEO auto-publish). Without it, SEO posts fall back to Slack-paste mode (still works).
-- [ ] After scope re-auth, run `railway run python scripts/setup_shopify_blog.py` to discover + set `SHOPIFY_BLOG_ID`.
+- [x] Shopify `write_content` scope → DONE (verified 2026-04-18 via `/admin/oauth/access_scopes.json`). All required scopes granted: read_checkouts, read_customers, read_orders, read_products, read_shipping, write_content, write_customers, write_orders, read_content.
+- [x] `SHOPIFY_BLOG_ID` → DONE. Set to 103804764418 ("News" blog, confirmed reachable via `/admin/api/2025-01/blogs/{id}.json`). SEO auto-publish flow is unblocked.
 - [ ] Create Pinterest Business account → dev app at developers.pinterest.com → generate access token with `pins:write` + `boards:read` → paste PINTEREST_ACCESS_TOKEN + PINTEREST_BOARD_ID on Railway.
 - [ ] Install Pinterest Tag — ads.pinterest.com → Conversions → get tag ID → paste in Theme customize → Analytics → Pinterest Tag ID. Separate from API posting.
 
