@@ -261,7 +261,7 @@ All core infrastructure + agentic layer + product pipeline shipped and deployed.
 ### Low Priority (tech debt)
 - [ ] `apply_budget_change` Slack button: auto-change Meta/Google budgets (intentional defer — requires scoped Meta + Google Ads API approvals to edit ad set budgets; current flow Slack-acks only)
 - [x] `datetime.utcnow()` deprecation warnings → DONE 2026-04-18 (commit 921f58e). 38 → 0 warnings across src/ and tests/.
-- [x] Health endpoint: real DB/Shopify connectivity test → DONE 2026-04-18 (commit 921f58e). Returns 503 on degraded stack.
+- [x] Health endpoint: split into shallow `/health` (Railway) + `/health/deep` (external monitors) → DONE 2026-04-18 (commits 921f58e / e5047a6). Learned the hard way: real connectivity pings can't live behind Railway's deploy healthcheck because containers aren't warmed up yet. 12 consecutive FAILED deploys before the split.
 - [x] CI workflow + pytest-cov → DONE 2026-04-18 (commit 921f58e). `.github/workflows/tests.yml` runs pytest + coverage on push/PR; ruff lint in continue-on-error.
 - [ ] Raise `--cov-fail-under=50` once baseline coverage measured (currently lenient)
 
